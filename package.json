@@ -1,0 +1,38 @@
+{
+  "name": "obsidian-eqh-calendar",
+  "version": "0.9.0",
+  "type": "module",
+  "description": "Examined Human dashboards and guarded native EQH data import",
+  "main": "main.js",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "node esbuild.config.mjs",
+    "build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production",
+    "test": "node --test",
+    "lint": "eslint src",
+    "typecheck": "tsc -noEmit -skipLibCheck",
+    "check": "npm run lint && npm run typecheck && npm test",
+    "release:check": "npm run check && npm run build && node scripts/check-release.mjs",
+    "validate:database": "node scripts/validate-database.mjs",
+    "validate:historical-import": "node scripts/validate-historical-import.mjs",
+    "validate:notes": "node scripts/validate-native-notes.mjs"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.4",
+    "@eslint/json": "^0.14.0",
+    "@types/node": "^16.11.6",
+    "@types/sql.js": "^1.4.9",
+    "esbuild": "^0.25.12",
+    "eslint": "^9.39.4",
+    "eslint-plugin-obsidianmd": "^0.4.1",
+    "obsidian": "^1.8.7",
+    "tslib": "2.4.0",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.54.0"
+  },
+  "dependencies": {
+    "sql.js": "^1.13.0"
+  }
+}
