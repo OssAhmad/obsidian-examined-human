@@ -1,0 +1,160 @@
+import { moment, WorkspaceLeaf } from 'obsidian';
+import {
+  createDashboardMetric,
+  createDashboardPanel,
+  DashboardViewBase,
+  formatDashboardDate,
+  formatDashboardDuration,
+  formatDashboardNumber,
+  humanizeDashboardCode,
+  renderDashboardBars,
+  renderDashboardTrend,
+} from './DashboardViewBase.ts';
+import { renderDismissibleWarning } from './dismissible-warning.ts';
+import type EqhCalendarPlugin from './main.ts';
+import type { ExerciseDashboardQueryResult } from './eqh-query.ts';
+import { DASHBOARD_WARNING_KEYS } from './warning-preferences.ts';
+
+export const EQH_EXERCISE_DASHBOARD_VIEW_TYPE = 'eqh-exercise-dashboard';
+
+export class ExerciseDashboardView extends DashboardViewBase<ExerciseDashboardQueryResult> {
+  constructor(leaf: WorkspaceLeaf, plugin: EqhCalendarPlugin) {
+    super(leaf, plugin);
+  }
+
+  getViewType(): string {
+    return EQH_EXERCISE_DASHBOARD_VIEW_TYPE;
+  }
+
+  getDisplayText(): string {
+    return 'EH Dashboards — Exercise';
+  }
+
+  getIcon(): string {
+    return 'dumbbell';
+  }
+
+  protected dashboardTitle(): string {
+    return 'Exercise';
+  }
+
+  protected loadDashboard(startDate: string | null, endDate: string): Promise<ExerciseDashboardQueryResult> {
+    return this.plugin.database.exerciseDashboard(this.plugin.settings.databasePath, startDate, endDate);
+  }
+
+  protected renderDashboard(result: ExerciseDashboardQueryResult): void {
+    this.renderToolbar(`${this.periodLabel()} · Canonical workouts and optional set-level detail`);
+    const metrics = this.contentEl.createDiv({ cls: 'eqh-domain-metrics' });
+    createDashboardMetric(metrics, 'Workouts', formatDashboardNumber(result.workoutCount, 0), `${result.trainingDays} training days`);
+    createDashboardMetric(metrics, 'Logged time', formatDashboardDuration(result.totalMinutes), 'Canonical workout session duration');
+    createDashboardMetric(metrics, 'Detailed workouts', formatDashboardNumber(result.detailedWorkoutCount, 0), `${result.workoutCount - result.detailedWorkoutCount} without exercise rows`);
+    createDashboardMetric(metrics, 'Sets', formatDashboardNumber(result.totalSets, 0), `${result.exercises.length} distinct exercises`);
+    createDashboardMetric(
+      metrics,
+      'Measured sets',
+      formatDashboardNumber(result.totalSets - result.setsWithoutMeasurements, 0),
+      `${result.setsWithoutMeasurements} sets without load, reps, distance, or duration`,
+      result.setsWithoutMeasurements > 0 ? 'warning' : 'positive',
+    );
+    createDashboardMetric(metrics, 'Pain observations', formatDashboardNumber(result.painRecordedSets, 0), 'Set-level pain values recorded');
+
+    if (result.detailedWorkoutCount < result.workoutCount) {
+      renderDismissibleWarning(
+        this.contentEl,
+        this.plugin,
+        DASHBOARD_WARNING_KEYS.exerciseIncompleteDetails,
+        `${result.workoutCount - result.detailedWorkoutCount} workout sessions have time evidence but no structured exercise details. They remain included in workout and duration totals.`,
+        'eqh-domain-warning',
+      );
+    }
+
+    const panels = this.contentEl.createDiv({ cls: 'eqh-domain-panel-grid' });
+    this.renderActivityTrend(panels, result);
+    this.renderExerciseMix(panels, result);
+    this.renderMuscleCoverage(panels, result);
+    this.renderPerformanceTable(panels, result);
+    this.renderRecentWorkouts(panels, result);
+  }
+
+  private renderActivityTrend(container: HTMLElement, result: ExerciseDashboardQueryResult): void {
+    const records = result.daily.slice(-20);
+    const panel = createDashboardPanel(container, 'Workout duration', 'Latest 20 training days in the selected period');
+    renderDashboardTrend(panel, records.map((day) => ({
+      label: moment(day.date, 'YYYY-MM-DD', true).format('MMM D'),
+      value: day.totalMinutes,
+      displayValue: formatDashboardDuration(day.totalMinutes),
+      ariaLabel: `${formatDashboardDate(day.date)}, ${day.workoutCount} workouts and ${day.setCount} sets`,
+    })));
+  }
+
+  private renderExerciseMix(container: HTMLElement, result: ExerciseDashboardQueryResult): void {
+    const panel = createDashboardPanel(container, 'Exercise volume', 'Set counts; load volume appears in the performance table');
+    renderDashboardBars(panel, result.exercises.slice(0, 14).map((exercise) => ({
+      label: exercise.exerciseName,
+      value: exercise.setCount,
+      displayValue: `${exercise.setCount} sets`,
+      detail: `${exercise.workoutCount} workouts · ${humanizeDashboardCode(exercise.category)}`,
+    })));
+  }
+
+  private renderMuscleCoverage(container: HTMLElement, result: ExerciseDashboardQueryResult): void {
+    const panel = createDashboardPanel(container, 'Muscle coverage', 'Exposure sets can count once for each mapped muscle');
+    renderDashboardBars(panel, result.muscles.slice(0, 14).map((muscle) => ({
+      label: muscle.muscleName,
+      value: muscle.exposureSets,
+      displayValue: `${muscle.exposureSets} exposures`,
+      detail: `${muscle.workoutCount} workouts · ${humanizeDashboardCode(muscle.bodyRegion)} · ${humanizeDashboardCode(muscle.role)}`,
+    })));
+  }
+
+  private renderPerformanceTable(container: HTMLElement, result: ExerciseDashboardQueryResult): void {
+    const panel = createDashboardPanel(container, 'Exercise performance', 'Recorded maxima and additive measurements; units follow the source database', true);
+    if (result.exercises.length === 0) {
+      panel.createDiv({ cls: 'eqh-domain-empty', text: 'No structured exercises were recorded in this period.' });
+      return;
+    }
+    const table = panel.createEl('table', { cls: 'eqh-domain-table' });
+    const head = table.createEl('thead').createEl('tr');
+    for (const label of ['Exercise', 'Workouts', 'Sets', 'Max weight', 'Max reps', 'Load × reps', 'Distance', 'Timed', 'Last']) {
+      head.createEl('th', { text: label });
+    }
+    const body = table.createEl('tbody');
+    for (const exercise of result.exercises.slice(0, 24)) {
+      const row = body.createEl('tr');
+      row.createEl('td', { text: exercise.exerciseName });
+      row.createEl('td', { text: formatDashboardNumber(exercise.workoutCount, 0) });
+      row.createEl('td', { text: formatDashboardNumber(exercise.setCount, 0) });
+      row.createEl('td', { text: exercise.maxWeight == null ? '—' : formatDashboardNumber(exercise.maxWeight, 2) });
+      row.createEl('td', { text: exercise.maxReps == null ? '—' : formatDashboardNumber(exercise.maxReps, 0) });
+      row.createEl('td', { text: formatDashboardNumber(exercise.loadVolume, 1) });
+      row.createEl('td', { text: formatDashboardNumber(exercise.totalDistance, 2) });
+      row.createEl('td', { text: formatDashboardDuration(exercise.measuredDurationMinutes) });
+      row.createEl('td', { text: formatDashboardDate(exercise.lastDate) });
+    }
+  }
+
+  private renderRecentWorkouts(container: HTMLElement, result: ExerciseDashboardQueryResult): void {
+    const panel = createDashboardPanel(container, 'Recent workouts', 'Canonical session totals with structured-detail coverage', true);
+    if (result.recentWorkouts.length === 0) {
+      panel.createDiv({ cls: 'eqh-domain-empty', text: 'No workouts were recorded in this period.' });
+      return;
+    }
+    const table = panel.createEl('table', { cls: 'eqh-domain-table' });
+    const head = table.createEl('thead').createEl('tr');
+    for (const label of ['Date', 'Engagement', 'Time', 'Exercises', 'Sets', 'Load × reps', 'Distance', 'Notes']) {
+      head.createEl('th', { text: label });
+    }
+    const body = table.createEl('tbody');
+    for (const workout of result.recentWorkouts) {
+      const row = body.createEl('tr');
+      row.createEl('td', { text: formatDashboardDate(workout.date) });
+      row.createEl('td', { text: workout.engagementName });
+      row.createEl('td', { text: formatDashboardDuration(workout.durationMinutes) });
+      row.createEl('td', { text: formatDashboardNumber(workout.exerciseCount, 0) });
+      row.createEl('td', { text: formatDashboardNumber(workout.setCount, 0) });
+      row.createEl('td', { text: formatDashboardNumber(workout.loadVolume, 1) });
+      row.createEl('td', { text: formatDashboardNumber(workout.totalDistance, 2) });
+      row.createEl('td', { text: workout.notes ?? '—' });
+    }
+  }
+}
