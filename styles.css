@@ -918,6 +918,28 @@
   text-overflow: ellipsis;
 }
 
+.eqh-domain-table-link {
+  height: auto;
+  padding: 0;
+  border: 0;
+  color: var(--link-color);
+  background: transparent;
+  box-shadow: none;
+  font: inherit;
+  font-weight: 600;
+  text-align: left;
+  white-space: normal;
+  cursor: pointer;
+}
+
+.eqh-domain-table-link:hover,
+.eqh-domain-table-link:focus-visible {
+  color: var(--link-color-hover);
+  text-decoration: underline;
+  background: transparent;
+  box-shadow: none;
+}
+
 .eqh-domain-empty {
   padding: 12px 0;
   color: var(--text-muted);

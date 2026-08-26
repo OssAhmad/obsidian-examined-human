@@ -1,25 +1,20 @@
 import { moment, WorkspaceLeaf } from 'obsidian';
 import {
-  createDashboardMetric,
   createDashboardPanel,
   DashboardViewBase,
   formatDashboardAmount,
   formatDashboardDate,
-  formatDashboardNumber,
-  formatDashboardPercent,
   humanizeDashboardCode,
   renderDashboardBars,
   renderDashboardTrend,
   type DashboardTrendRecord,
 } from './DashboardViewBase.ts';
-import { renderDismissibleWarning } from './dismissible-warning.ts';
 import type EqhCalendarPlugin from './main.ts';
 import type {
   FinancialCurrencyRecord,
   FinancialDailyRecord,
   FinancialDashboardQueryResult,
 } from './eqh-query.ts';
-import { DASHBOARD_WARNING_KEYS } from './warning-preferences.ts';
 
 export const EQH_FINANCIAL_DASHBOARD_VIEW_TYPE = 'eqh-financial-dashboard';
 
@@ -106,30 +101,6 @@ export class FinancialDashboardView extends DashboardViewBase<FinancialDashboard
       });
     });
 
-    const linkageRate = result.transactionCount > 0
-      ? result.linkedTransactionCount / result.transactionCount
-      : null;
-    const metrics = this.contentEl.createDiv({ cls: 'eqh-domain-metrics' });
-    createDashboardMetric(metrics, 'Transactions', formatDashboardNumber(result.transactionCount, 0), 'Recorded in the selected period');
-    createDashboardMetric(
-      metrics,
-      'Engagement linkage',
-      formatDashboardPercent(linkageRate),
-      `${result.linkedTransactionCount} resolved · ${result.unresolvedTransactionCount} unresolved`,
-      result.unresolvedTransactionCount > 0 ? 'warning' : 'positive',
-    );
-    createDashboardMetric(metrics, 'Currencies', formatDashboardNumber(result.currencies.length, 0), 'Never converted or combined');
-
-    if (result.unresolvedTransactionCount > 0) {
-      renderDismissibleWarning(
-        this.contentEl,
-        this.plugin,
-        DASHBOARD_WARNING_KEYS.financeUnresolvedTransactions,
-        `${result.unresolvedTransactionCount} legacy or unresolved transactions are included in cash-flow totals but excluded from engagement analysis.`,
-        'eqh-domain-warning',
-      );
-    }
-
     const currencies = this.filteredCurrencies(result.currencies);
     const currencyGrid = this.contentEl.createDiv({ cls: 'eqh-domain-currency-grid' });
     for (const currency of currencies) this.renderCurrencyCard(currencyGrid, currency);
@@ -197,13 +168,17 @@ export class FinancialDashboardView extends DashboardViewBase<FinancialDashboard
   private renderAccountFlow(container: HTMLElement, result: FinancialDashboardQueryResult): void {
     const records = result.accounts
       .filter((record) => this.selectedCurrency === 'all' || record.currency === this.selectedCurrency)
+      .sort((left, right) => (
+        right.transactionCount - left.transactionCount
+        || left.accountName.localeCompare(right.accountName)
+      ))
       .slice(0, 12);
-    const panel = createDashboardPanel(container, 'Recorded flow by account', 'This is period activity, not an account balance');
+    const panel = createDashboardPanel(container, 'Most used accounts', 'Transaction frequency in the selected period; this is not an account balance');
     renderDashboardBars(panel, records.map((record) => ({
       label: record.accountName,
-      value: Math.abs(record.net),
-      displayValue: formatDashboardAmount(record.net, record.currency),
-      detail: `${humanizeDashboardCode(record.accountType)} · ${record.transactionCount} transactions`,
+      value: record.transactionCount,
+      displayValue: `${record.transactionCount} transaction${record.transactionCount === 1 ? '' : 's'}`,
+      detail: `${record.currency} · ${humanizeDashboardCode(record.accountType)} · net ${formatDashboardAmount(record.net, record.currency)}`,
     })));
   }
 

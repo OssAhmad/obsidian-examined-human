@@ -4,6 +4,7 @@ import { DailyAssessmentView, EQH_DAILY_ASSESSMENT_VIEW_TYPE } from './DailyAsse
 import { EngagementDashboardView, EQH_ENGAGEMENT_DASHBOARD_VIEW_TYPE } from './EngagementDashboardView.ts';
 import { ExerciseDashboardView, EQH_EXERCISE_DASHBOARD_VIEW_TYPE } from './ExerciseDashboardView.ts';
 import { FinancialDashboardView, EQH_FINANCIAL_DASHBOARD_VIEW_TYPE } from './FinancialDashboardView.ts';
+import { normalizeJournalFolder } from './journal-folder.ts';
 import { NativeLoggerWriteService } from './native-logger/write-service.ts';
 import { NutritionDashboardView, EQH_NUTRITION_DASHBOARD_VIEW_TYPE } from './NutritionDashboardView.ts';
 import { TimelineView, EQH_CALENDAR_VIEW_TYPE } from './TimelineView.ts';
@@ -12,6 +13,20 @@ import { DEFAULT_SETTINGS, EqhCalendarSettingTab, type EqhCalendarSettings } fro
 import { sanitizeDismissedWarningKeys } from './warning-preferences.ts';
 
 const AUTHORITATIVE_DATABASE_RELOAD_INTERVAL_MS = 10 * 60 * 1000;
+
+function boundedInteger(value: unknown, fallback: number, minimum: number, maximum: number): number {
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) && parsed >= minimum && parsed <= maximum ? parsed : fallback;
+}
+
+function storedJournalFolder(value: unknown): string {
+  if (typeof value !== 'string') return DEFAULT_SETTINGS.journalFolder;
+  try {
+    return normalizeJournalFolder(value);
+  } catch {
+    return DEFAULT_SETTINGS.journalFolder;
+  }
+}
 
 export default class EqhCalendarPlugin extends Plugin {
   settings: EqhCalendarSettings = DEFAULT_SETTINGS;
@@ -98,6 +113,14 @@ export default class EqhCalendarPlugin extends Plugin {
         && Number(stored?.backupRetentionLimit) >= 0
         ? Number(stored?.backupRetentionLimit)
         : DEFAULT_SETTINGS.backupRetentionLimit,
+      journalFolder: storedJournalFolder(stored?.journalFolder),
+      dayColumnWidth: boundedInteger(stored?.dayColumnWidth, DEFAULT_SETTINGS.dayColumnWidth, 120, 280),
+      mobileDayColumnWidth: boundedInteger(
+        stored?.mobileDayColumnWidth,
+        DEFAULT_SETTINGS.mobileDayColumnWidth,
+        120,
+        280,
+      ),
       dismissedWarningKeys: sanitizeDismissedWarningKeys(stored?.dismissedWarningKeys),
     };
     if (hadLegacyPythonSetting) await this.saveData(this.settings);

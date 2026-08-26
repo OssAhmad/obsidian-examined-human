@@ -49,7 +49,7 @@ export class SessionDetailsModal extends Modal {
     this.addDetail(details, 'Engagement type', this.event.engagementType || '—');
     this.addDetail(details, 'Source', this.event.sourceKind === 'planned' ? 'Planned journal note' : 'Imported EQH data');
 
-    if (this.event.sessionType.trim().toLowerCase() === 'exercise') {
+    if (this.event.sessionType.trim().toLowerCase() === 'exercise' || this.event.exerciseDetails) {
       this.renderExerciseDetails(contentEl);
     }
 

@@ -110,10 +110,7 @@ export class TimelineView extends ItemView {
 
   private get dayWidth(): number {
     if (Platform.isMobile) {
-      const availableWidth = this.contentEl.clientWidth > GUTTER_WIDTH
-        ? this.contentEl.clientWidth - GUTTER_WIDTH
-        : 320;
-      return Math.max(240, Math.min(520, availableWidth));
+      return this.plugin.settings.mobileDayColumnWidth;
     }
     return this.plugin.settings.dayColumnWidth;
   }

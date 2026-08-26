@@ -20,7 +20,7 @@ Treat these as part of the plugin contract unless a deliberate product decision 
 12. A date present in `imported_notes` uses canonical sessions. Otherwise, an active planning projection may supply mutable sessions for that date.
 13. The plugin scans note filenames, EH Form presence, and weekly `week start` frontmatter for navigation, then natively parses every schema-v5 Daily and Weekly import component.
 14. Runtime logger code uses only Obsidian APIs, Web Crypto, and SQL.js. Python and Node process/filesystem APIs are not plugin dependencies, so the complete workflow is mobile-compatible.
-15. Canonical Daily Notes live at `Oss Ahmad Journal/YYYY/daily/YYYY-MM-DD.md`. Daily-note discovery is recursive and retains legacy filename read compatibility, but EH-generated paths use the canonical ISO layout.
+15. Canonical Daily Notes use `YYYY-MM-DD.md` filenames inside the recursively scanned, vault-relative Journal folder configured in Settings. The default folder remains `Oss Ahmad Journal`; legacy filename read compatibility is retained.
 16. Native writes are serialized and confirmation-gated. They must verify schema v5, snapshot the source checksum, detect stale database bytes, use one transaction, run `quick_check` and `foreign_key_check`, and verify the persisted bytes. Durable/finalized writes create a pre-write backup; replaceable ephemeral Meals and planning projections deliberately do not. Optional retention cleanup runs only after a verified durable write, keeps the current backup, and targets only exact EH-created backup names.
 17. Historical Meals components are immutable once finalized. Current/future Meals are `ephemeral` and replaceable; if the date becomes historical while the component is still ephemeral, one confirmed component or canonical full-note import may replace and finalize it from the completed note.
 18. Snacks never directly increase the leisure-meal count. They do contribute to structured-food calories; the effective daily total is the higher of Daily Metrics calories and all structured food rows.
@@ -257,7 +257,7 @@ The viewport capture stores the date at the horizontal center and the minute at 
 
 The top date row and left time gutter are CSS-sticky. Grid position and sizing values that vary at runtime are passed through CSS custom properties or dynamic styles; theme-dependent appearance remains in `styles.css`.
 
-On mobile, day width is derived from the view width so a phone shows approximately one complete day after the sticky time gutter. A debounced resize refresh recalculates this after rotation. Desktop retains the configurable fixed column width.
+Mobile and desktop day widths are stored separately in Settings. Mobile defaults to a compact 160-pixel column and accepts 120–280 pixels; desktop retains its configurable fixed column width. A debounced resize refresh preserves the visible viewport after rotation.
 
 Past dates backed by an active, unimported note projection receive a red-tinted header and column and are described as awaiting finalization. Their session cards otherwise use the same renderer as canonical and future sessions. Planned provenance and estimated-time state remain available in the tooltip and details modal.
 
@@ -300,7 +300,7 @@ Do not normalize invalid source values in the UI. The database is the source of 
 
 ## Settings persistence
 
-Settings are merged with defaults during plugin load so newly added settings remain backward-compatible with an older `data.json`. Session colors are merged separately to preserve defaults for newly introduced known types. `backupRetentionLimit` accepts only a non-negative safe integer; missing or invalid values become `0`, preserving the historical keep-all behavior. `dismissedWarningKeys` is sanitized to unique known keys, preventing arbitrary persisted values from suppressing future warnings. The Settings reset clears all warning keys and refreshes open views.
+Settings are merged with defaults during plugin load so newly added settings remain backward-compatible with an older `data.json`. Session colors are merged separately to preserve defaults for newly introduced known types. Journal folders are normalized as vault-relative paths, with an empty value meaning the vault root; invalid stored paths fall back to `Oss Ahmad Journal`. Desktop and mobile day widths are bounded to 120–280 pixels. `backupRetentionLimit` accepts only a non-negative safe integer; missing or invalid values become `0`, preserving the historical keep-all behavior. `dismissedWarningKeys` is sanitized to unique known keys, preventing arbitrary persisted values from suppressing future warnings. The Settings reset clears all warning keys and refreshes open views.
 
 Adding a new known type requires updating `SESSION_TYPES` and `DEFAULT_SESSION_COLORS` in `events.ts`. Unknown types need no migration and will remain gray until promoted to a known type.
 

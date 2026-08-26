@@ -66,10 +66,12 @@ function fixture(withExerciseDetails = false, withMilestoneDetails = false) {
       INSERT INTO exercises VALUES (101, 'Running', 'cardio');
       INSERT INTO session_exercises VALUES (201, 12, 101, 1);
       INSERT INTO session_exercises VALUES (200, 12, 100, 0);
+      INSERT INTO session_exercises VALUES (202, 10, 101, 0);
       INSERT INTO exercise_sets VALUES (301, 200, 2, 80, 5, NULL, NULL, 'Controlled');
       INSERT INTO exercise_sets VALUES (300, 200, 1, 80, 6, NULL, NULL, NULL);
       INSERT INTO exercise_sets VALUES (302, 201, 1, NULL, NULL, 5, NULL, NULL);
       INSERT INTO exercise_sets VALUES (303, 201, 2, NULL, NULL, NULL, 30, NULL);
+      INSERT INTO exercise_sets VALUES (304, 202, 1, NULL, NULL, NULL, 15, 'Warm-up');
     `);
   }
   if (withMilestoneDetails) {
@@ -165,6 +167,13 @@ test('exercise sessions include ordered exercises and their recorded sets', () =
   const db = fixture(true);
   try {
     const result = querySessions(db, '2026-07-20', '2026-07-20');
+    assert.deepEqual(result.events[0].exerciseDetails, [{
+      name: 'Running',
+      category: 'cardio',
+      sets: [
+        { setNumber: 1, weight: null, reps: null, distance: null, durationMinutes: 15, notes: 'Warm-up' },
+      ],
+    }]);
     assert.deepEqual(result.events[2].exerciseDetails, [
       {
         name: 'Bench Press',

@@ -1,6 +1,6 @@
 {
   "name": "obsidian-eqh-calendar",
-  "version": "0.9.0",
+  "version": "0.9.1",
   "type": "module",
   "description": "Examined Human dashboards and guarded native EQH data import",
   "main": "main.js",

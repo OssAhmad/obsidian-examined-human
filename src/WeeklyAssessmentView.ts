@@ -1,6 +1,7 @@
 import { ItemView, moment, normalizePath, Notice, TFile, WorkspaceLeaf } from 'obsidian';
 import type EqhCalendarPlugin from './main.ts';
 import { buildDailyNoteList } from './daily-note-index.ts';
+import { pathIsInJournalFolder } from './journal-folder.ts';
 import type { WeeklyAssessmentQueryResult, WeeklyCommitmentAssessmentRecord } from './eqh-query.ts';
 import { confirmWeeklyAction } from './WeeklyActionConfirmationModal.ts';
 import { buildWeeklyNoteList, type WeeklyNoteListItem } from './weekly-note-index.ts';
@@ -531,7 +532,7 @@ export class WeeklyAssessmentView extends ItemView {
     }
     const notes = await Promise.all(dates.map(async (date) => {
       const matches = this.app.vault.getMarkdownFiles().filter((file) => (
-        file.basename === date && file.path.startsWith('Oss Ahmad Journal/')
+        file.basename === date && pathIsInJournalFolder(file.path, this.plugin.settings.journalFolder)
       ));
       if (matches.length !== 1) throw new Error(`Expected exactly one Daily Note for ${date}; found ${matches.length}.`);
       const file = matches[0];
@@ -557,7 +558,12 @@ export class WeeklyAssessmentView extends ItemView {
   }> {
     const cutoffDate = moment().format('YYYY-MM-DD');
     const index = await this.plugin.database.dailyNoteIndex(this.plugin.settings.databasePath);
-    const items = await buildDailyNoteList(this.app, index, cutoffDate);
+    const items = await buildDailyNoteList(
+      this.app,
+      index,
+      cutoffDate,
+      this.plugin.settings.journalFolder,
+    );
     const candidates = items.filter((item) => item.status === 'current-future' && item.date >= cutoffDate);
     const notes = await Promise.all(candidates.map(async (item) => {
       const file = this.app.vault.getAbstractFileByPath(item.filePath);

@@ -118,7 +118,7 @@ export class DailyAssessmentView extends ItemView {
     try {
       const today = moment().format('YYYY-MM-DD');
       const index = await this.plugin.database.dailyNoteIndex(this.plugin.settings.databasePath);
-      const items = await buildDailyNoteList(this.app, index, today);
+      const items = await buildDailyNoteList(this.app, index, today, this.plugin.settings.journalFolder);
       if (generation !== this.renderGeneration) return;
       this.items = items;
       if (!this.selectedDate || !items.some((item) => item.date === this.selectedDate)) {

@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added a vault-relative Journal folder setting for recursive Daily Note discovery and weekly-plan materialization; the canonical supported filename format remains `YYYY-MM-DD.md`
+- Added a configurable mobile calendar day width, defaulting to 160 pixels
+- Made recent Exercise Dashboard workouts open the shared session-details modal with their structured exercises and sets
+
+### Changed
+
+- Simplified Finance by removing transaction/linkage/currency summary metrics and the visible linkage warning, while preserving unresolved legacy-row query semantics
+- Reframed the Finance account panel around most-used accounts, ranked by transaction count with currency and period net flow shown as context
+
 ### Fixed
 
 - Allowed a still-ephemeral Meals component to be replaced and finalized after its date becomes historical, while preserving immutability for genuinely finalized historical Meals

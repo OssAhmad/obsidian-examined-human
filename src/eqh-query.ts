@@ -669,11 +669,11 @@ function attachExerciseDetails(
   endDate: string,
   events: CalendarEvent[],
 ): void {
-  const exerciseEvents = events.filter((event) => event.sessionType.trim().toLowerCase() === 'exercise');
-  if (exerciseEvents.length === 0 || !hasExerciseDetailSchema(db)) return;
+  const actualEvents = events.filter((event) => event.sourceKind !== 'planned');
+  if (actualEvents.length === 0 || !hasExerciseDetailSchema(db)) return;
 
-  const eventsById = new Map(exerciseEvents.map((event) => {
-    event.exerciseDetails = [];
+  const eventsById = new Map(actualEvents.map((event) => {
+    if (event.sessionType.trim().toLowerCase() === 'exercise') event.exerciseDetails = [];
     return [event.id, event] as const;
   }));
   const exercisesByAssociationId = new Map<string, SessionExerciseDetails>();
@@ -690,12 +690,10 @@ function attachExerciseDetails(
            es.duration_minutes,
            es.notes AS set_notes
     FROM sessions AS s
-    JOIN session_types AS st ON st.id = s.session_type_id
     JOIN session_exercises AS se ON se.session_id = s.id
     JOIN exercises AS e ON e.id = se.exercise_id
     LEFT JOIN exercise_sets AS es ON es.session_exercise_id = se.id
     WHERE s.date >= ? AND s.date <= ?
-      AND st.code = 'exercise' COLLATE NOCASE
     ORDER BY s.date,
              s.start_time,
              COALESCE(se.order_index, 2147483647),
@@ -706,7 +704,8 @@ function attachExerciseDetails(
 
   for (const row of exerciseRows) {
     const event = eventsById.get(String(row.session_id));
-    if (!event?.exerciseDetails) continue;
+    if (!event) continue;
+    event.exerciseDetails ??= [];
 
     const associationId = String(row.session_exercise_id);
     let exercise = exercisesByAssociationId.get(associationId);

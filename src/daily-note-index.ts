@@ -1,8 +1,8 @@
 import { App, moment } from 'obsidian';
 import type { DailyNoteIndexQueryResult, DailyNoteSourceRecord } from './eqh-query.ts';
+import { DEFAULT_JOURNAL_FOLDER, pathIsInJournalFolder } from './journal-folder.ts';
 
 const EH_FORM_PATTERN = /^####\s+(?:EH|EQH)\s+Form\s*$/mi;
-const DAILY_NOTE_ROOT = 'Oss Ahmad Journal/';
 
 export type DailyNoteStatus = 'needs-import' | 'current-future' | 'imported';
 export type NoteTemporalState = 'overdue' | 'current' | 'future' | 'imported';
@@ -28,6 +28,7 @@ export async function buildDailyNoteList(
   app: App,
   index: DailyNoteIndexQueryResult,
   todayDate: string,
+  journalFolder = DEFAULT_JOURNAL_FOLDER,
 ): Promise<DailyNoteListItem[]> {
   const importedByDate = new Map(index.importedNotes.map((note) => [note.date, note]));
   const sourceByDate = new Map(index.noteSources.map((source) => [source.date, source]));
@@ -35,7 +36,7 @@ export async function buildDailyNoteList(
     ? index.importedNotes[index.importedNotes.length - 1].date
     : null;
   const unimportedCandidates = app.vault.getMarkdownFiles()
-    .filter((file) => file.path.startsWith(DAILY_NOTE_ROOT))
+    .filter((file) => pathIsInJournalFolder(file.path, journalFolder))
     .map((file) => ({ file, date: parseDailyFilename(file.name) }))
     .filter((candidate): candidate is { file: typeof candidate.file; date: string } => (
       candidate.date != null

@@ -44,8 +44,12 @@ export class EqhDatabase {
     startDate: string,
     endDate: string,
     todayDate: string,
+    includePlanning = true,
   ): Promise<SessionQueryResult> {
-    return this.withDatabase(databasePath, (db) => querySessions(db, startDate, endDate, todayDate));
+    return this.withDatabase(
+      databasePath,
+      (db) => querySessions(db, startDate, endDate, todayDate, includePlanning),
+    );
   }
 
   async weeklyAssessment(databasePath: string, requestedDate: string): Promise<WeeklyAssessmentQueryResult | null> {

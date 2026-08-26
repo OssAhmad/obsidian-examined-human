@@ -1,9 +1,11 @@
 import { App, Notice, Platform, PluginSettingTab, Setting } from 'obsidian';
 import { DEFAULT_SESSION_COLORS, SESSION_TYPES } from './events.ts';
+import { DEFAULT_JOURNAL_FOLDER, normalizeJournalFolder } from './journal-folder.ts';
 import type EqhCalendarPlugin from './main.ts';
 
 export interface EqhCalendarSettings {
   databasePath: string;
+  journalFolder: string;
   mealCalorieLimitKcal: number;
   dailyCalorieLimitKcal: number;
   minimumProteinG: number;
@@ -11,11 +13,13 @@ export interface EqhCalendarSettings {
   dismissedWarningKeys: string[];
   initialScrollHour: number;
   dayColumnWidth: number;
+  mobileDayColumnWidth: number;
   sessionColors: Record<string, string>;
 }
 
 export const DEFAULT_SETTINGS: EqhCalendarSettings = {
   databasePath: 'EQH.db',
+  journalFolder: DEFAULT_JOURNAL_FOLDER,
   mealCalorieLimitKcal: 0,
   dailyCalorieLimitKcal: 1850,
   minimumProteinG: 0,
@@ -23,6 +27,7 @@ export const DEFAULT_SETTINGS: EqhCalendarSettings = {
   dismissedWarningKeys: [],
   initialScrollHour: 7,
   dayColumnWidth: 180,
+  mobileDayColumnWidth: 160,
   sessionColors: { ...DEFAULT_SESSION_COLORS },
 };
 
@@ -96,6 +101,27 @@ export class EqhCalendarSettingTab extends PluginSettingTab {
           await this.plugin.saveSettings();
         });
       });
+
+    new Setting(containerEl).setName('Journal notes').setHeading();
+    containerEl.createEl('p', {
+      text: 'EH Dashboards recursively scans the selected vault folder for Daily Notes. The currently supported canonical filename format is YYYY-MM-DD.md.',
+      cls: 'setting-item-description',
+    });
+
+    new Setting(containerEl)
+      .setName('Journal folder')
+      .setDesc('Vault-relative base folder containing Daily Notes, including any year or daily subfolders. Leave blank to scan the entire vault.')
+      .addText((text) => text
+        .setPlaceholder(DEFAULT_JOURNAL_FOLDER)
+        .setValue(this.plugin.settings.journalFolder)
+        .onChange(async (value) => {
+          try {
+            this.plugin.settings.journalFolder = normalizeJournalFolder(value);
+            await this.plugin.saveSettings();
+          } catch (error) {
+            new Notice(error instanceof Error ? error.message : String(error), 8000);
+          }
+        }));
 
     new Setting(containerEl).setName('Nutrition evaluation').setHeading();
     containerEl.createEl('p', {
@@ -185,7 +211,16 @@ export class EqhCalendarSettingTab extends PluginSettingTab {
     if (Platform.isMobile) {
       new Setting(containerEl)
         .setName('Mobile day width')
-        .setDesc('The EH Dashboards calendar automatically fits approximately one full day to the mobile viewport.');
+        .setDesc('Width of each calendar day while scrolling horizontally on mobile.')
+        .addSlider((slider) => slider
+          .setLimits(120, 280, 10)
+          .setDynamicTooltip()
+          .setValue(this.plugin.settings.mobileDayColumnWidth)
+          .onChange(async (value) => {
+            this.plugin.settings.mobileDayColumnWidth = value;
+            await this.plugin.saveSettings();
+            await this.plugin.refreshViews();
+          }));
     } else {
       new Setting(containerEl)
         .setName('Day column width')

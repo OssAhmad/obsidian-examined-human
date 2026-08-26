@@ -1,4 +1,4 @@
-import { moment, WorkspaceLeaf } from 'obsidian';
+import { moment, Notice, WorkspaceLeaf } from 'obsidian';
 import {
   createDashboardMetric,
   createDashboardPanel,
@@ -12,7 +12,8 @@ import {
 } from './DashboardViewBase.ts';
 import { renderDismissibleWarning } from './dismissible-warning.ts';
 import type EqhCalendarPlugin from './main.ts';
-import type { ExerciseDashboardQueryResult } from './eqh-query.ts';
+import type { ExerciseDashboardQueryResult, ExerciseWorkoutRecord } from './eqh-query.ts';
+import { SessionDetailsModal } from './SessionDetailsModal.ts';
 import { DASHBOARD_WARNING_KEYS } from './warning-preferences.ts';
 
 export const EQH_EXERCISE_DASHBOARD_VIEW_TYPE = 'eqh-exercise-dashboard';
@@ -134,7 +135,7 @@ export class ExerciseDashboardView extends DashboardViewBase<ExerciseDashboardQu
   }
 
   private renderRecentWorkouts(container: HTMLElement, result: ExerciseDashboardQueryResult): void {
-    const panel = createDashboardPanel(container, 'Recent workouts', 'Canonical session totals with structured-detail coverage', true);
+    const panel = createDashboardPanel(container, 'Recent workouts', 'Select a workout to open its full session and exercise details', true);
     if (result.recentWorkouts.length === 0) {
       panel.createDiv({ cls: 'eqh-domain-empty', text: 'No workouts were recorded in this period.' });
       return;
@@ -148,13 +149,43 @@ export class ExerciseDashboardView extends DashboardViewBase<ExerciseDashboardQu
     for (const workout of result.recentWorkouts) {
       const row = body.createEl('tr');
       row.createEl('td', { text: formatDashboardDate(workout.date) });
-      row.createEl('td', { text: workout.engagementName });
+      const engagement = row.createEl('td');
+      const detailsButton = engagement.createEl('button', {
+        cls: 'eqh-domain-table-link',
+        text: workout.engagementName,
+        attr: {
+          'aria-label': `Open exercise details for ${workout.engagementName} on ${formatDashboardDate(workout.date)}`,
+        },
+      });
+      detailsButton.addEventListener('click', () => {
+        void this.openWorkoutDetails(workout, detailsButton);
+      });
       row.createEl('td', { text: formatDashboardDuration(workout.durationMinutes) });
       row.createEl('td', { text: formatDashboardNumber(workout.exerciseCount, 0) });
       row.createEl('td', { text: formatDashboardNumber(workout.setCount, 0) });
       row.createEl('td', { text: formatDashboardNumber(workout.loadVolume, 1) });
       row.createEl('td', { text: formatDashboardNumber(workout.totalDistance, 2) });
       row.createEl('td', { text: workout.notes ?? '—' });
+    }
+  }
+
+  private async openWorkoutDetails(workout: ExerciseWorkoutRecord, button: HTMLButtonElement): Promise<void> {
+    button.disabled = true;
+    try {
+      const result = await this.plugin.database.sessionsBetween(
+        this.plugin.settings.databasePath,
+        workout.date,
+        workout.date,
+        moment().format('YYYY-MM-DD'),
+        false,
+      );
+      const event = result.events.find((candidate) => candidate.id === String(workout.id));
+      if (!event) throw new Error('The selected workout is no longer available. Refresh the dashboard and try again.');
+      new SessionDetailsModal(this.app, event).open();
+    } catch (error) {
+      new Notice(`Could not open workout details: ${error instanceof Error ? error.message : String(error)}`, 9000);
+    } finally {
+      button.disabled = false;
     }
   }
 }
