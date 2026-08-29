@@ -1,4 +1,4 @@
-# EH Dashboards architecture and maintainer notes
+# Examined Human architecture and maintainer notes
 
 This document records how the first SQL.js-backed version works, why its boundaries exist, and where future features should be added. It is intended for both human maintainers and coding agents.
 
@@ -6,8 +6,8 @@ This document records how the first SQL.js-backed version works, why its boundar
 
 Treat these as part of the plugin contract unless a deliberate product decision changes them:
 
-1. The `EqhDatabase` dashboard query layer is permanently read-only. Approved mutations belong only in `NativeLoggerWriteService`; never add write APIs to the reader.
-2. `EQH.db`, SQLite sidecar files, and Obsidian's local `data.json` must never be committed.
+1. The `ExaminedHumanDatabase` dashboard query layer is permanently read-only. Approved mutations belong only in `NativeLoggerWriteService`; never add write APIs to the reader.
+2. `EH.db`, SQLite sidecar files, and Obsidian's local `data.json` must never be committed.
 3. A card title is the engagement's canonical name. Session type is secondary metadata shown only when the rendered card has enough room, and remains available in the tooltip and details modal.
 4. A card duration is shown as zero-padded `hh:mm`.
 5. Event geometry comes from `start_time` and `end_time`; the displayed duration comes from `duration_minutes` when it is valid.
@@ -43,14 +43,14 @@ TimelineView
         |
         | visible YYYY-MM-DD range
         v
-EqhDatabase
+ExaminedHumanDatabase
         |
         | read vault-relative bytes through the vault adapter
         v
 sql.js in-memory Database -- PRAGMA query_only = ON
         |
         v
-eqh-query schema validation + JOIN + row mapping
+examined-human-query schema validation + JOIN + row mapping
         |
         v
 CalendarEvent[] + DataIssue[]
@@ -65,7 +65,7 @@ Weekly Assessment command
         |        |
         |        +--> one newest-first pending/imported list
         |
-        +--> WeeklyAssessmentView --> EqhDatabase --> queryWeeklyAssessment
+        +--> WeeklyAssessmentView --> ExaminedHumanDatabase --> queryWeeklyAssessment
         |        |
         |        +--> weekly direction and totals
         |        +--> separate target/actual bars by committed engagement
@@ -92,7 +92,7 @@ Engagement Dashboard command
         |
         +--> canonical-name/alias search + engagement navigator + date range
         |
-        +--> EqhDatabase --> queryEngagementDashboard
+        +--> ExaminedHumanDatabase --> queryEngagementDashboard
                  |
                  +--> canonical time, activity trend, and session-type mix
                  +--> lifetime milestones and owner sessions
@@ -103,23 +103,23 @@ Finance / Nutrition / Exercise Dashboard commands
         |
         +--> shared range controls + read-only refresh/fingerprint lifecycle
         |
-        +--> EqhDatabase --> domain query in eqh-query.ts
+        +--> ExaminedHumanDatabase --> domain query in examined-human-query.ts
                  |
                  +--> Finance: currency-safe flow, linkage, accounts, engagements, detail
                  +--> Nutrition: effective daily values, adherence, meals, foods, leisure debt
                  +--> Exercise: canonical workout time, sets, performance, muscles, detail coverage
 ```
 
-The source database is read into memory for each inspection or range query. sql.js operates on that in-memory copy and the database instance is always closed in a `finally` block. `PRAGMA query_only = ON` is defense in depth, and the reader exposes no mutation API. Approved writes cross the separate `NativeLoggerWriteService` boundary. Because SQL.js exports a whole replacement file, that service uses checksums, a serialized queue, transactions, and post-write verification for every write. It creates backups only for durable/finalized mutations; unlimited current/future Meals replacements and planning-projection refreshes are intentionally backup-free because they are explicitly ephemeral. Hidden `.eqh-backups` storage is probed and written through the vault adapter because Obsidian may omit dot-prefixed folders from its indexed `TFolder` tree; this also makes repeated durable writes and external folder-creation races safe on desktop and mobile. After a verified durable write, a positive `backupRetentionLimit` lists that exact database's EH-named backups, protects the current backup, and deletes excess files oldest-first. Zero keeps all. Cleanup failures are reported separately and never misrepresent the already verified database write as failed. Preview operations mutate only an in-memory clone, which allows admin commands and dependent facts to be assessed together without touching the vault database.
+The source database is read into memory for each inspection or range query. sql.js operates on that in-memory copy and the database instance is always closed in a `finally` block. `PRAGMA query_only = ON` is defense in depth, and the reader exposes no mutation API. Approved writes cross the separate `NativeLoggerWriteService` boundary. Because SQL.js exports a whole replacement file, that service uses checksums, a serialized queue, transactions, and post-write verification for every write. It creates backups only for durable/finalized mutations; unlimited current/future Meals replacements and planning-projection refreshes are intentionally backup-free because they are explicitly ephemeral. Hidden `.examined-human-backups` storage is probed and written through the vault adapter because Obsidian may omit dot-prefixed folders from its indexed `TFolder` tree; this also makes repeated durable writes and external folder-creation races safe on desktop and mobile. After a verified durable write, a positive `backupRetentionLimit` lists that exact database's EH-named backups, protects the current backup, and deletes excess files oldest-first. Zero keeps all. Cleanup failures are reported separately and never misrepresent the already verified database write as failed. Preview operations mutate only an in-memory clone, which allows admin commands and dependent facts to be assessed together without touching the vault database.
 
 ## Repository map
 
 ### Runtime
 
 - `src/main.ts` — plugin lifecycle, settings load/save, view registration, ribbon icon, commands, and refreshing all open dashboard views.
-- `src/eqh-database.ts` — resolves configured paths, reads database bytes, initializes SQL.js, creates short-lived read-only database instances, and computes file fingerprints.
+- `src/examined-human-database.ts` — resolves configured paths, reads database bytes, initializes SQL.js, creates short-lived read-only database instances, and computes file fingerprints.
 - `src/sql-runtime.ts` — shared, embedded SQL.js initialization used by the isolated reader and writer services.
-- `src/eqh-query.ts` — validates the required schema, performs SQL queries, maps rows into domain events, sorts events, and emits data-quality issues.
+- `src/examined-human-query.ts` — validates the required schema, performs SQL queries, maps rows into domain events, sorts events, and emits data-quality issues.
 - `src/events.ts` — shared event model, known session types, default colors, time parsing, duration/time formatting, card-label policy, and the hard-coded gray `chor` rule.
 - `src/TimelineView.ts` — calendar range management, SQL queries, toolbar, sticky grid, scrolling, zoom, event rendering, warnings, and automatic refresh.
 - `src/WeeklyAssessmentView.ts` — unified weekly-note navigation, direction and total cards, commitment goals, target/actual bars, and native confirmation-gated actions.
@@ -166,7 +166,7 @@ The source database is read into memory for each inspection or range query. sql.
 
 - `main.js` is generated by `npm run build` and intentionally ignored.
 - `data.json` is generated by Obsidian and intentionally ignored because it contains local settings.
-- `EQH.db`, `*.db-journal`, `*.db-wal`, and `*.db-shm` are intentionally ignored.
+- `EH.db`, `*.db-journal`, `*.db-wal`, and `*.db-shm` are intentionally ignored.
 
 ## Database contract
 
@@ -232,13 +232,13 @@ The calendar uses these two notions of duration on purpose:
 - Visual height: `end_time - start_time`
 - Displayed duration: `duration_minutes`, rounded to a whole minute when it is finite and non-negative; otherwise the visual duration is used
 
-This preserves the recorded EQH duration while keeping card placement faithful to the recorded endpoints. If those values disagree, the plugin currently does not warn.
+This preserves the recorded Examined Human duration while keeping card placement faithful to the recorded endpoints. If those values disagree, the plugin currently does not warn.
 
 ## Paths and privacy
 
 `databasePath` accepts only a path relative to the vault root and uses Obsidian's vault APIs. Windows, POSIX, UNC, URI, and parent-traversal paths are rejected with a clear settings error. Runtime code avoids Node modules entirely, keeping the same implementation available on desktop and mobile.
 
-The database must be synchronized as part of the vault by the user's chosen system, such as Syncthing or Obsidian Sync. EH Dashboards does not provide synchronization or send database content anywhere.
+The database must be synchronized as part of the vault by the user's chosen system, such as Syncthing or Obsidian Sync. Examined Human does not provide synchronization or send database content anywhere.
 
 The plugin does not send database content over the network. It does not log session titles or notes during normal operation. The validation script outputs only integrity, counts, date bounds, mapping issue counts, and the number of `chor` rows.
 
@@ -279,7 +279,7 @@ Events that meet exactly at an endpoint do not overlap. The algorithm is determi
 
 There are four refresh paths:
 
-1. Every toolbar Refresh button and the refresh command rebuild the `EqhDatabase` source boundary, then refresh every open EH Dashboards view from physical vault bytes.
+1. Every toolbar Refresh button and the refresh command rebuild the `ExaminedHumanDatabase` source boundary, then refresh every open Examined Human view from physical vault bytes.
 2. A vault `modify` event refreshes immediately when the configured database changes.
 3. A ten-second main-file/WAL size/mtime fingerprint poll detects ordinary changes that do not produce a usable vault event.
 4. A plugin-level ten-minute timer performs an unconditional authoritative reload even when another app preserves the same file metadata or Obsidian misses the external change entirely.
@@ -288,7 +288,7 @@ Engagement, Finance, Nutrition, and Exercise dashboards participate in all four 
 
 The fingerprint mechanism does not continuously hold the database open. Every query constructs a new sql.js database from freshly read bytes and closes it in `finally`; no SQLite database image is intentionally retained between renders. Failed polls are ignored so a transient replacement or lock can recover on the next interval. Query failures render an in-view error with the configured path and recovery instructions.
 
-An external SQLite plugin may use write-ahead logging and keep committed frames in `EQH.db-wal` while the main file remains stale. The reader fingerprints that sidecar and refuses to present stale main-file bytes when the WAL contains frames. The guarded writer applies the same check before inspection and immediately before replacement so it cannot erase another writer's uncheckpointed changes. The user must close or checkpoint the external writer, then press Refresh; an empty or header-only WAL does not block access.
+An external SQLite plugin may use write-ahead logging and keep committed frames in `EH.db-wal` while the main file remains stale. The reader fingerprints that sidecar and refuses to present stale main-file bytes when the WAL contains frames. The guarded writer applies the same check before inspection and immediately before replacement so it cannot erase another writer's uncheckpointed changes. The user must close or checkpoint the external writer, then press Refresh; an empty or header-only WAL does not block access.
 
 ## Data-quality behavior
 
@@ -317,13 +317,13 @@ The SQL mapping tests create in-memory databases with the required base schema a
 Use the real database validator without exposing private content:
 
 ```bash
-npm run validate:database -- C:\path\to\EQH.db
+npm run validate:database -- C:\path\to\EH.db
 ```
 
 Rehearse one historical Daily Note import against an in-memory database clone without writing the source file:
 
 ```bash
-npm run validate:historical-import -- C:\path\to\EQH.db C:\path\to\YYYY-MM-DD.md 0 1850 0
+npm run validate:historical-import -- C:\path\to\EH.db C:\path\to\YYYY-MM-DD.md 0 1850 0
 ```
 
 Before publishing, also run `npm run build` and manually test the generated `main.js`, `manifest.json`, and `styles.css` in a disposable or development vault.
@@ -345,7 +345,7 @@ This is not a current blocker, but future work must avoid unbounded revision his
 - Schema migrations from older databases are not performed by the plugin; native import requires schema v5
 - The dashboard presents validation feedback in Obsidian instead of writing managed feedback blocks into Markdown notes
 - Python chart/report generation remains outside the plugin runtime; the four native analytical dashboards replace static images for current engagement, finance, nutrition, and exercise testing
-- Planning projections refresh when the user confirms a Daily or Weekly dashboard sync; arbitrary note edits are not silently written to EQH.db
+- Planning projections refresh when the user confirms a Daily or Weekly dashboard sync; arbitrary note edits are not silently written to EH.db
 - SQL.js still replaces the whole database file for a native write; the safety service mitigates but does not remove the memory/large-file limitation
 - Planned exercise prescriptions are not mapped yet
 - No overnight sessions
@@ -361,7 +361,7 @@ These are boundaries, not accidental promises. Add future behavior behind a clea
 
 ## Recommended extension seams
 
-- Add new read models in `eqh-query.ts`; keep raw SQL out of `TimelineView.ts`.
+- Add new read models in `examined-human-query.ts`; keep raw SQL out of `TimelineView.ts`.
 - Add future-event sources behind a provider interface that returns `CalendarEvent`-compatible objects.
 - Extend `NativeLoggerWriteService` and pure component import modules for future mutations. Preserve backups, transactions, conflict handling, explicit confirmation, and the read-only reader invariant.
 - Add filters as view state operating on mapped events, not as ad hoc DOM hiding.
@@ -370,6 +370,6 @@ These are boundaries, not accidental promises. Add future behavior behind a clea
 
 ## Fork history
 
-The repository originated from `seonggoos/obsidian-schedule-calendar`. The fork retained useful Obsidian plugin/view scaffolding and adapted the overlap-layout idea. Daily Notes parsing, note creation, write-back, drag/edit behavior, localization, daily/weekly/monthly modes, and their tests were removed. The compatibility identity remains `eqh-calendar`; the visible product became EH Calendar in `0.2.0` and EH Dashboards in `0.3.0` as the product expanded beyond a single view.
+The repository originated from `seonggoos/obsidian-schedule-calendar`. The fork retained useful Obsidian plugin/view scaffolding and adapted the overlap-layout idea. Daily Notes parsing, note creation, write-back, drag/edit behavior, localization, daily/weekly/monthly modes, and their tests were removed. The compatibility identity remains `examined-human`; the visible product became EH Calendar in `0.2.0` and Examined Human in `0.3.0` as the product expanded beyond a single view.
 
 Preserve both copyright lines in `LICENSE` and keep the upstream attribution in `README.md`.

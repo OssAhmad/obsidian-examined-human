@@ -30,12 +30,12 @@ class DailyImportConfirmationModal extends Modal {
   }
 
   onOpen(): void {
-    this.modalEl.addClass('eqh-daily-confirm-modal');
+    this.modalEl.addClass('examined-human-daily-confirm-modal');
     this.contentEl.createEl('h2', { text: this.options.title });
     this.contentEl.createEl('p', { text: this.options.explanation });
     const completeness = this.options.inspection.completeness;
     if (completeness) {
-      const summary = this.contentEl.createDiv({ cls: 'eqh-daily-confirm-summary' });
+      const summary = this.contentEl.createDiv({ cls: 'examined-human-daily-confirm-summary' });
       const items = [
         ['Sessions', completeness.session_count],
         ['Transactions', completeness.transaction_count],
@@ -45,13 +45,13 @@ class DailyImportConfirmationModal extends Modal {
         ['Admin events', completeness.admin_event_count],
       ];
       for (const [label, value] of items) {
-        const card = summary.createDiv({ cls: 'eqh-daily-confirm-stat' });
-        card.createDiv({ cls: 'eqh-weekly-eyebrow', text: String(label) });
-        card.createDiv({ cls: 'eqh-daily-confirm-value', text: String(value) });
+        const card = summary.createDiv({ cls: 'examined-human-daily-confirm-stat' });
+        card.createDiv({ cls: 'examined-human-weekly-eyebrow', text: String(label) });
+        card.createDiv({ cls: 'examined-human-daily-confirm-value', text: String(value) });
       }
       const missing = completeness.missing_daily_metrics;
       const metrics = this.contentEl.createDiv({
-        cls: `eqh-daily-completeness-callout ${missing.length > 0 ? 'is-incomplete' : 'is-complete'}`,
+        cls: `examined-human-daily-completeness-callout ${missing.length > 0 ? 'is-incomplete' : 'is-complete'}`,
       });
       metrics.createEl('strong', {
         text: missing.length > 0
@@ -62,7 +62,7 @@ class DailyImportConfirmationModal extends Modal {
     }
 
     if (this.options.inspection.warnings.length > 0) {
-      const warnings = this.contentEl.createDiv({ cls: 'eqh-daily-validation-callout is-warning' });
+      const warnings = this.contentEl.createDiv({ cls: 'examined-human-daily-validation-callout is-warning' });
       warnings.createEl('strong', { text: 'Validation warnings' });
       warnings.createEl('ul');
       const list = warnings.querySelector('ul');
@@ -70,24 +70,24 @@ class DailyImportConfirmationModal extends Modal {
     }
 
     if (this.options.inspection.errors.length > 0) {
-      const errors = this.contentEl.createDiv({ cls: 'eqh-daily-validation-callout is-error' });
+      const errors = this.contentEl.createDiv({ cls: 'examined-human-daily-validation-callout is-error' });
       errors.createEl('strong', { text: 'Historical import blockers' });
       const list = errors.createEl('ul');
       for (const error of this.options.inspection.errors) list.createEl('li', { text: error });
     }
 
     if (this.options.dryRunOutput?.trim()) {
-      this.contentEl.createEl('details', { cls: 'eqh-daily-dry-run-details' }, (details) => {
+      this.contentEl.createEl('details', { cls: 'examined-human-daily-dry-run-details' }, (details) => {
         details.createEl('summary', { text: 'Dry-run output' });
         details.createEl('textarea', {
-          cls: 'eqh-daily-output',
+          cls: 'examined-human-daily-output',
           text: this.options.dryRunOutput,
           attr: { readonly: 'true', rows: '8' },
         });
       });
     }
 
-    const warning = this.contentEl.createEl('p', { cls: 'eqh-daily-confirm-warning' });
+    const warning = this.contentEl.createEl('p', { cls: 'examined-human-daily-confirm-warning' });
     warning.createEl('strong', { text: 'Nothing has been imported yet. ' });
     warning.appendText('Confirm only after reviewing the preview and completeness summary.');
 

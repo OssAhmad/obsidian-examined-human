@@ -1,7 +1,7 @@
 node_modules/
 *.js.map
 *.db
-.eqh-backups/
+.examined-human-backups/
 *.db-journal
 *.db-wal
 *.db-shm

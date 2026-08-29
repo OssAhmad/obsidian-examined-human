@@ -71,7 +71,7 @@
 
 ### Fixed
 
-- Reused hidden `.eqh-backups` directories through the vault adapter instead of attempting to recreate an unindexed folder and failing with `Folder already exists.`
+- Reused hidden `.examined-human-backups` directories through the vault adapter instead of attempting to recreate an unindexed folder and failing with `Folder already exists.`
 
 ## [0.8.0] - 2026-08-21
 
@@ -83,7 +83,7 @@
 - Snack-safe effective daily calories using the higher of Daily Metrics calories and all structured food rows
 - Component-level import provenance, immutable historical Meals, and replaceable current/future Meals
 - Guarded SQL.js writer with serialization, SHA-256 stale-file detection, pre-write backups, transactions, and post-write integrity verification
-- Creation of a complete empty EQH schema-v5 database from the settings page
+- Creation of a complete empty Examined Human schema-v5 database from the settings page
 - Synthetic tests for the new grammar, nutrition rules, component lifecycle, schema creation, and native row replacement
 
 ### Changed
@@ -126,7 +126,7 @@
 
 ### Added
 
-- Weekly Assessment dashboard opened with the `EH Dashboards: Weekly Assessment` command
+- Weekly Assessment dashboard opened with the `Examined Human: Weekly Assessment` command
 - Date-jump navigation across imported weekly plans
 - Separate committed-target and actual-logged bars, weekly totals, remaining time, and commitment goals
 
@@ -143,7 +143,7 @@
 
 ### Changed
 
-- Updated the database contract to EQH schema version 4 numeric taxonomy foreign keys
+- Updated the database contract to Examined Human schema version 4 numeric taxonomy foreign keys
 - Resolved session and engagement display codes through canonical taxonomy tables
 
 ## [0.3.0] - 2026-07-21
@@ -161,8 +161,8 @@
 
 ### Changed
 
-- Renamed the visible product from EH Calendar to EH Dashboards to support multiple present and future dashboard views
-- Kept the compatibility plugin ID `eqh-calendar`, repository/package name, CSS namespace, command IDs, settings schema, and EQH database terminology unchanged
+- Renamed the visible product from EH Calendar to Examined Human to support multiple present and future dashboard views
+- Kept the compatibility plugin ID `examined-human`, repository/package name, CSS namespace, command IDs, settings schema, and Examined Human database terminology unchanged
 
 ## [0.2.0] - 2026-07-21
 
@@ -177,8 +177,8 @@
 
 ### Changed
 
-- Renamed the visible product from EQH Calendar to EH Calendar (Examined Human Calendar)
-- Kept the compatibility ID `eqh-calendar`, repository name, CSS namespace, and EQH database terminology unchanged
+- Renamed the visible product from Examined Human Calendar to EH Calendar (Examined Human Calendar)
+- Kept the compatibility ID `examined-human`, repository name, CSS namespace, and Examined Human database terminology unchanged
 - Restricted database access to files inside the vault on both desktop and mobile
 - Removed runtime Node filesystem/path dependencies
 - Replaced `type: Engagement` card titles with canonical engagement names and moved session type to a footer on sufficiently tall cards
@@ -189,7 +189,7 @@
 
 ### Added
 
-- Read-only SQL.js access to an EQH SQLite database using an absolute or vault-relative path
+- Read-only SQL.js access to an Examined Human SQLite database using an absolute or vault-relative path
 - Schema validation, integrity checks, and a privacy-safe real-database validation command
 - A 24-hour calendar grid with continuous horizontal day navigation and vertical time scrolling
 - Past, current, and future day styling with a live current-time indicator
@@ -204,19 +204,19 @@
 
 ### Changed from the upstream fork
 
-- Renamed the plugin from Schedule Calendar to EQH Calendar and restarted versioning at `0.1.0`
-- Replaced Daily Notes parsing and write-back with an EQH SQLite read model
+- Renamed the plugin from Schedule Calendar to Examined Human Calendar and restarted versioning at `0.1.0`
+- Replaced Daily Notes parsing and write-back with an Examined Human SQLite read model
 - Replaced daily/weekly/monthly modes with one continuously scrollable calendar surface
 - Removed event creation, editing, deletion, drag/drop, undo, checkboxes, tag colors, and localization
 - Embedded the SQL.js WASM runtime into the normal Obsidian `main.js` artifact
 
 ### Attribution
 
-This version began as a fork of `seonggoos/obsidian-schedule-calendar`. The Obsidian view scaffolding and overlap-layout foundation were adapted for the EQH database product; the original MIT attribution is preserved.
+This version began as a fork of `seonggoos/obsidian-schedule-calendar`. The Obsidian view scaffolding and overlap-layout foundation were adapted for the Examined Human database product; the original MIT attribution is preserved.
 
 ---
 
-The entries below are the inherited Schedule Calendar history from before the EQH Calendar fork.
+The entries below are the inherited Schedule Calendar history from before the Examined Human Calendar fork.
 
 ## [1.3.0] - 2026-07-13
 

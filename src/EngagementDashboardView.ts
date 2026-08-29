@@ -1,20 +1,20 @@
 import { ItemView, moment, normalizePath, WorkspaceLeaf } from 'obsidian';
 import { renderDismissibleWarning } from './dismissible-warning.ts';
 import { engagementMatchesSearch } from './engagement-search.ts';
-import type EqhCalendarPlugin from './main.ts';
+import type ExaminedHumanPlugin from './main.ts';
 import type {
   EngagementActivityRecord,
   EngagementDashboardQueryResult,
   EngagementDashboardSummaryRecord,
-} from './eqh-query.ts';
+} from './examined-human-query.ts';
 import { DASHBOARD_WARNING_KEYS } from './warning-preferences.ts';
 
-export const EQH_ENGAGEMENT_DASHBOARD_VIEW_TYPE = 'eqh-engagement-dashboard';
+export const EXAMINED_HUMAN_ENGAGEMENT_DASHBOARD_VIEW_TYPE = 'examined-human-engagement-dashboard';
 
 const FINGERPRINT_INTERVAL_MS = 10_000;
 const MAX_ACTIVITY_BUCKETS = 16;
 
-type RangeKey = '30d' | '90d' | '1y' | 'all';
+type RangeKey = 'days' | 'all';
 
 interface ActivityBucket {
   key: string;
@@ -49,11 +49,9 @@ function formatAmount(value: number, currency: string): string {
   return `${formatted} ${currency}`;
 }
 
-function rangeStart(range: RangeKey, endDate: string): string | null {
+function rangeStart(range: RangeKey, endDate: string, days: number): string | null {
   const end = moment(endDate, 'YYYY-MM-DD', true);
-  if (range === '30d') return end.clone().subtract(29, 'days').format('YYYY-MM-DD');
-  if (range === '90d') return end.clone().subtract(89, 'days').format('YYYY-MM-DD');
-  if (range === '1y') return end.clone().subtract(1, 'year').add(1, 'day').format('YYYY-MM-DD');
+  if (range === 'days') return end.clone().subtract(Math.max(1, days) - 1, 'days').format('YYYY-MM-DD');
   return null;
 }
 
@@ -110,7 +108,7 @@ function buildActivityBuckets(
 export class EngagementDashboardView extends ItemView {
   private result: EngagementDashboardQueryResult | null = null;
   private selectedEngagementId: number | null = null;
-  private selectedRange: RangeKey = 'all';
+  private selectedRange: RangeKey = 'days';
   private searchQuery = '';
   private statusFilter = 'all';
   private typeFilter = 'all';
@@ -119,16 +117,16 @@ export class EngagementDashboardView extends ItemView {
   private fingerprintTimer: number | null = null;
   private lastFingerprint: string | null = null;
 
-  constructor(leaf: WorkspaceLeaf, private plugin: EqhCalendarPlugin) {
+  constructor(leaf: WorkspaceLeaf, private plugin: ExaminedHumanPlugin) {
     super(leaf);
   }
 
   getViewType(): string {
-    return EQH_ENGAGEMENT_DASHBOARD_VIEW_TYPE;
+    return EXAMINED_HUMAN_ENGAGEMENT_DASHBOARD_VIEW_TYPE;
   }
 
   getDisplayText(): string {
-    return 'EH Dashboards — Engagements';
+    return 'Examined Human — Engagements';
   }
 
   getIcon(): string {
@@ -136,7 +134,7 @@ export class EngagementDashboardView extends ItemView {
   }
 
   async onOpen(): Promise<void> {
-    this.contentEl.addClass('eqh-engagement-view');
+    this.contentEl.addClass('examined-human-engagement-view');
     await this.refresh();
     this.registerEvent(this.app.vault.on('modify', (file) => {
       try {
@@ -164,11 +162,11 @@ export class EngagementDashboardView extends ItemView {
   async refresh(): Promise<void> {
     const generation = ++this.renderGeneration;
     this.contentEl.empty();
-    this.contentEl.addClass('eqh-engagement-view');
-    this.contentEl.createDiv({ cls: 'eqh-loading', text: 'Loading Engagement Dashboard…' });
+    this.contentEl.addClass('examined-human-engagement-view');
+    this.contentEl.createDiv({ cls: 'examined-human-loading', text: 'Loading Engagement Dashboard…' });
     try {
       const endDate = moment().format('YYYY-MM-DD');
-      const startDate = rangeStart(this.selectedRange, endDate);
+      const startDate = rangeStart(this.selectedRange, endDate, this.plugin.settings.defaultDashboardDays);
       const result = await this.plugin.database.engagementDashboard(
         this.plugin.settings.databasePath,
         this.selectedEngagementId,
@@ -190,22 +188,22 @@ export class EngagementDashboardView extends ItemView {
 
   private renderDashboard(): void {
     this.contentEl.empty();
-    this.contentEl.addClass('eqh-engagement-view');
+    this.contentEl.addClass('examined-human-engagement-view');
     this.renderHeader();
     if (!this.result || this.result.engagements.length === 0) {
       this.contentEl.createDiv({
-        cls: 'eqh-engagement-empty',
+        cls: 'examined-human-engagement-empty',
         text: 'No engagements were found in the configured database.',
       });
       return;
     }
 
-    const layout = this.contentEl.createDiv({ cls: 'eqh-engagement-layout' });
+    const layout = this.contentEl.createDiv({ cls: 'examined-human-engagement-layout' });
     this.renderSidebar(layout);
-    const main = layout.createEl('main', { cls: 'eqh-engagement-main' });
+    const main = layout.createEl('main', { cls: 'examined-human-engagement-main' });
     const selected = this.result.selectedEngagement;
     if (!selected) {
-      main.createDiv({ cls: 'eqh-engagement-empty', text: 'Select an engagement to inspect it.' });
+      main.createDiv({ cls: 'examined-human-engagement-empty', text: 'Select an engagement to inspect it.' });
       return;
     }
     this.renderIdentity(main, selected);
@@ -219,27 +217,25 @@ export class EngagementDashboardView extends ItemView {
 
   private renderHeader(): void {
     const result = this.result;
-    const header = this.contentEl.createDiv({ cls: 'eqh-toolbar eqh-engagement-toolbar' });
-    const identity = header.createDiv({ cls: 'eqh-toolbar-identity' });
-    identity.createEl('h2', { text: 'EH Dashboards — Engagements' });
+    const header = this.contentEl.createDiv({ cls: 'examined-human-toolbar examined-human-engagement-toolbar' });
+    const identity = header.createDiv({ cls: 'examined-human-toolbar-identity' });
+    identity.createEl('h2', { text: 'Examined Human — Engagements' });
     const activeInRange = result?.engagements.filter((engagement) => engagement.sessionCount > 0).length ?? 0;
     const totalMinutes = result?.engagements.reduce((sum, engagement) => sum + engagement.totalMinutes, 0) ?? 0;
     identity.createDiv({
-      cls: 'eqh-toolbar-status',
+      cls: 'examined-human-toolbar-status',
       text: result
         ? `${result.engagements.length} engagements · ${activeInRange} with activity · ${formatDuration(totalMinutes)} logged`
         : 'Time, milestones, and linked money by engagement',
     });
 
-    const controls = header.createDiv({ cls: 'eqh-engagement-toolbar-controls' });
+    const controls = header.createDiv({ cls: 'examined-human-engagement-toolbar-controls' });
     const rangeSelect = controls.createEl('select', {
-      cls: 'dropdown eqh-engagement-range',
+      cls: 'dropdown examined-human-engagement-range',
       attr: { 'aria-label': 'Engagement dashboard date range' },
     });
     const options: Array<[RangeKey, string]> = [
-      ['30d', 'Last 30 days'],
-      ['90d', 'Last 90 days'],
-      ['1y', 'Last year'],
+      ['days', `Last ${this.plugin.settings.defaultDashboardDays} days`],
       ['all', 'All time'],
     ];
     for (const [value, text] of options) {
@@ -250,21 +246,39 @@ export class EngagementDashboardView extends ItemView {
       this.selectedRange = rangeSelect.value as RangeKey;
       void this.refresh();
     });
-    controls.createEl('button', { text: 'Refresh', cls: 'eqh-toolbar-button' })
+    if (this.selectedRange === 'days') {
+      const days = controls.createEl('input', {
+        type: 'number',
+        cls: 'examined-human-dashboard-days-input',
+        attr: { min: '1', step: '1', inputmode: 'numeric', 'aria-label': 'Number of engagement dashboard days' },
+      });
+      days.value = String(this.plugin.settings.defaultDashboardDays);
+      days.addEventListener('change', () => {
+        const parsed = Number(days.value);
+        if (!Number.isSafeInteger(parsed) || parsed < 1) {
+          days.value = String(this.plugin.settings.defaultDashboardDays);
+          return;
+        }
+        this.plugin.settings.defaultDashboardDays = parsed;
+        void this.plugin.saveSettings();
+        void this.refresh();
+      });
+    }
+    controls.createEl('button', { text: 'Refresh', cls: 'examined-human-toolbar-button' })
       .addEventListener('click', () => { void this.plugin.refreshViews(); });
   }
 
   private renderSidebar(container: HTMLElement): void {
     if (!this.result) return;
     const sidebar = container.createEl('aside', {
-      cls: 'eqh-engagement-sidebar',
+      cls: 'examined-human-engagement-sidebar',
       attr: { 'aria-label': 'Engagement navigator' },
     });
-    const filters = sidebar.createDiv({ cls: 'eqh-engagement-filters' });
+    const filters = sidebar.createDiv({ cls: 'examined-human-engagement-filters' });
     const search = filters.createEl('input', {
       type: 'search',
       value: this.searchQuery,
-      cls: 'eqh-engagement-search',
+      cls: 'examined-human-engagement-search',
       attr: { 'aria-label': 'Search engagements', placeholder: 'Search engagements…' },
     });
     const statusSelect = filters.createEl('select', {
@@ -277,7 +291,7 @@ export class EngagementDashboardView extends ItemView {
       attr: { 'aria-label': 'Filter by engagement type' },
     });
     this.addFilterOptions(typeSelect, 'All types', this.result.engagements.map((item) => item.type), this.typeFilter);
-    const list = sidebar.createDiv({ cls: 'eqh-engagement-list' });
+    const list = sidebar.createDiv({ cls: 'examined-human-engagement-list' });
     const rerenderList = (): void => this.renderEngagementList(list);
     search.addEventListener('input', () => {
       this.searchQuery = search.value;
@@ -311,21 +325,21 @@ export class EngagementDashboardView extends ItemView {
     container.empty();
     const filtered = this.filteredEngagements();
     if (filtered.length === 0) {
-      container.createDiv({ cls: 'eqh-engagement-empty-inline', text: 'No engagements match these filters.' });
+      container.createDiv({ cls: 'examined-human-engagement-empty-inline', text: 'No engagements match these filters.' });
       return;
     }
     for (const engagement of filtered) {
       const button = container.createEl('button', {
-        cls: `eqh-engagement-list-item${engagement.id === this.selectedEngagementId ? ' is-selected' : ''}`,
+        cls: `examined-human-engagement-list-item${engagement.id === this.selectedEngagementId ? ' is-selected' : ''}`,
         attr: {
           'aria-label': `${engagement.name}, ${humanizeCode(engagement.status)}, ${humanizeCode(engagement.type)}, ${formatDuration(engagement.totalMinutes)} logged`,
         },
       });
-      const heading = button.createDiv({ cls: 'eqh-engagement-list-heading' });
+      const heading = button.createDiv({ cls: 'examined-human-engagement-list-heading' });
       heading.createSpan({ text: engagement.name });
       heading.createEl('strong', { text: formatDuration(engagement.totalMinutes) });
       button.createDiv({
-        cls: 'eqh-engagement-list-meta',
+        cls: 'examined-human-engagement-list-meta',
         text: `${humanizeCode(engagement.status)} · ${humanizeCode(engagement.type)} · ${engagement.sessionCount} sessions`,
       });
       button.addEventListener('click', () => {
@@ -359,34 +373,34 @@ export class EngagementDashboardView extends ItemView {
 
   private renderIdentity(container: HTMLElement, engagement: EngagementDashboardSummaryRecord): void {
     if (!this.result) return;
-    const section = container.createEl('section', { cls: 'eqh-engagement-identity' });
-    const titleRow = section.createDiv({ cls: 'eqh-engagement-title-row' });
+    const section = container.createEl('section', { cls: 'examined-human-engagement-identity' });
+    const titleRow = section.createDiv({ cls: 'examined-human-engagement-title-row' });
     titleRow.createEl('h3', { text: engagement.name });
-    const badges = titleRow.createDiv({ cls: 'eqh-engagement-badges' });
-    badges.createSpan({ cls: `eqh-engagement-badge is-${engagement.status}`, text: humanizeCode(engagement.status) });
-    badges.createSpan({ cls: 'eqh-engagement-badge', text: humanizeCode(engagement.type) });
+    const badges = titleRow.createDiv({ cls: 'examined-human-engagement-badges' });
+    badges.createSpan({ cls: `examined-human-engagement-badge is-${engagement.status}`, text: humanizeCode(engagement.status) });
+    badges.createSpan({ cls: 'examined-human-engagement-badge', text: humanizeCode(engagement.type) });
     section.createDiv({
-      cls: 'eqh-engagement-period',
+      cls: 'examined-human-engagement-period',
       text: rangeLabel(this.selectedRange, this.result.startDate, this.result.endDate),
     });
-    const dates = section.createDiv({ cls: 'eqh-engagement-dates' });
+    const dates = section.createDiv({ cls: 'examined-human-engagement-dates' });
     for (const [label, value] of [
       ['Started', engagement.startDate],
       ['Target', engagement.targetDate],
       ['Completed', engagement.completionDate],
     ] as Array<[string, string | null]>) {
-      const item = dates.createDiv({ cls: 'eqh-engagement-date' });
+      const item = dates.createDiv({ cls: 'examined-human-engagement-date' });
       item.createSpan({ text: label });
       item.createEl('strong', { text: formatDate(value) });
     }
     if (engagement.notes) {
-      section.createDiv({ cls: 'eqh-engagement-notes', text: engagement.notes });
+      section.createDiv({ cls: 'examined-human-engagement-notes', text: engagement.notes });
     }
   }
 
   private renderSummary(container: HTMLElement, engagement: EngagementDashboardSummaryRecord): void {
     const grid = container.createEl('section', {
-      cls: 'eqh-engagement-summary',
+      cls: 'examined-human-engagement-summary',
       attr: { 'aria-label': 'Engagement summary' },
     });
     const cards: Array<[string, string, string]> = [
@@ -396,10 +410,10 @@ export class EngagementDashboardView extends ItemView {
       ['Last activity', formatDate(engagement.lastSessionDate), 'Selected period'],
     ];
     for (const [label, value, context] of cards) {
-      const card = grid.createDiv({ cls: 'eqh-engagement-summary-card' });
-      card.createDiv({ cls: 'eqh-engagement-eyebrow', text: label });
-      card.createDiv({ cls: 'eqh-engagement-summary-value', text: value });
-      card.createDiv({ cls: 'eqh-engagement-card-context', text: context });
+      const card = grid.createDiv({ cls: 'examined-human-engagement-summary-card' });
+      card.createDiv({ cls: 'examined-human-engagement-eyebrow', text: label });
+      card.createDiv({ cls: 'examined-human-engagement-summary-value', text: value });
+      card.createDiv({ cls: 'examined-human-engagement-card-context', text: context });
     }
   }
 
@@ -410,14 +424,14 @@ export class EngagementDashboardView extends ItemView {
       this.plugin,
       DASHBOARD_WARNING_KEYS.engagementUnresolvedTransactions,
       `${this.result.unassignedTransactionCount} legacy or unresolved transaction rows in this period are excluded because they do not identify an engagement.`,
-      'eqh-engagement-coverage-warning',
+      'examined-human-engagement-coverage-warning',
     );
   }
 
   private renderCharts(container: HTMLElement, engagement: EngagementDashboardSummaryRecord): void {
     if (!this.result) return;
-    const grid = container.createDiv({ cls: 'eqh-engagement-chart-grid' });
-    const activitySection = grid.createEl('section', { cls: 'eqh-engagement-panel' });
+    const grid = container.createDiv({ cls: 'examined-human-engagement-chart-grid' });
+    const activitySection = grid.createEl('section', { cls: 'examined-human-engagement-panel' });
     activitySection.createEl('h3', { text: 'Activity trend' });
     const activity = buildActivityBuckets(
       this.result.dailyActivity,
@@ -425,78 +439,78 @@ export class EngagementDashboardView extends ItemView {
       this.result.endDate,
       engagement.firstSessionDate,
     );
-    activitySection.createDiv({ cls: 'eqh-engagement-panel-subtitle', text: activity.subtitle });
+    activitySection.createDiv({ cls: 'examined-human-engagement-panel-subtitle', text: activity.subtitle });
     if (activity.buckets.every((bucket) => bucket.minutes === 0)) {
-      activitySection.createDiv({ cls: 'eqh-engagement-empty-inline', text: 'No sessions in this period.' });
+      activitySection.createDiv({ cls: 'examined-human-engagement-empty-inline', text: 'No sessions in this period.' });
     } else {
       const maxMinutes = Math.max(...activity.buckets.map((bucket) => bucket.minutes), 1);
-      const scroller = activitySection.createDiv({ cls: 'eqh-engagement-activity-scroll' });
-      const chart = scroller.createDiv({ cls: 'eqh-engagement-activity-chart' });
+      const scroller = activitySection.createDiv({ cls: 'examined-human-engagement-activity-scroll' });
+      const chart = scroller.createDiv({ cls: 'examined-human-engagement-activity-chart' });
       for (const bucket of activity.buckets) {
         const column = chart.createDiv({
-          cls: 'eqh-engagement-activity-column',
+          cls: 'examined-human-engagement-activity-column',
           attr: { 'aria-label': `${bucket.ariaLabel}: ${formatDuration(bucket.minutes)}` },
         });
-        column.createDiv({ cls: 'eqh-engagement-activity-value', text: bucket.minutes > 0 ? formatDuration(bucket.minutes) : '—' });
-        const stage = column.createDiv({ cls: 'eqh-engagement-activity-stage' });
-        const bar = stage.createDiv({ cls: 'eqh-engagement-activity-bar' });
-        bar.style.setProperty('--eqh-activity-height', `${Math.max(bucket.minutes > 0 ? 4 : 0, (bucket.minutes / maxMinutes) * 100)}%`);
-        column.createDiv({ cls: 'eqh-engagement-activity-label', text: bucket.label });
+        column.createDiv({ cls: 'examined-human-engagement-activity-value', text: bucket.minutes > 0 ? formatDuration(bucket.minutes) : '—' });
+        const stage = column.createDiv({ cls: 'examined-human-engagement-activity-stage' });
+        const bar = stage.createDiv({ cls: 'examined-human-engagement-activity-bar' });
+        bar.style.setProperty('--examined-human-activity-height', `${Math.max(bucket.minutes > 0 ? 4 : 0, (bucket.minutes / maxMinutes) * 100)}%`);
+        column.createDiv({ cls: 'examined-human-engagement-activity-label', text: bucket.label });
       }
     }
 
-    const mixSection = grid.createEl('section', { cls: 'eqh-engagement-panel' });
+    const mixSection = grid.createEl('section', { cls: 'examined-human-engagement-panel' });
     mixSection.createEl('h3', { text: 'Session type mix' });
-    mixSection.createDiv({ cls: 'eqh-engagement-panel-subtitle', text: 'Logged time by canonical session type' });
+    mixSection.createDiv({ cls: 'examined-human-engagement-panel-subtitle', text: 'Logged time by canonical session type' });
     if (this.result.sessionTypes.length === 0) {
-      mixSection.createDiv({ cls: 'eqh-engagement-empty-inline', text: 'No session types in this period.' });
+      mixSection.createDiv({ cls: 'examined-human-engagement-empty-inline', text: 'No session types in this period.' });
     } else {
       const maxMinutes = Math.max(...this.result.sessionTypes.map((item) => item.totalMinutes), 1);
-      const chart = mixSection.createDiv({ cls: 'eqh-engagement-type-chart' });
+      const chart = mixSection.createDiv({ cls: 'examined-human-engagement-type-chart' });
       for (const item of this.result.sessionTypes) {
-        const row = chart.createDiv({ cls: 'eqh-engagement-type-row' });
-        const labels = row.createDiv({ cls: 'eqh-engagement-type-labels' });
+        const row = chart.createDiv({ cls: 'examined-human-engagement-type-row' });
+        const labels = row.createDiv({ cls: 'examined-human-engagement-type-labels' });
         labels.createSpan({ text: humanizeCode(item.sessionType) });
         labels.createEl('strong', { text: `${formatDuration(item.totalMinutes)} · ${item.sessionCount}` });
-        const track = row.createDiv({ cls: 'eqh-engagement-type-track' });
-        const bar = track.createDiv({ cls: 'eqh-engagement-type-bar' });
-        bar.style.setProperty('--eqh-type-width', `${Math.max(3, (item.totalMinutes / maxMinutes) * 100)}%`);
+        const track = row.createDiv({ cls: 'examined-human-engagement-type-track' });
+        const bar = track.createDiv({ cls: 'examined-human-engagement-type-bar' });
+        bar.style.setProperty('--examined-human-type-width', `${Math.max(3, (item.totalMinutes / maxMinutes) * 100)}%`);
       }
     }
   }
 
   private renderTransactions(container: HTMLElement): void {
     if (!this.result) return;
-    const section = container.createEl('section', { cls: 'eqh-engagement-panel' });
-    const heading = section.createDiv({ cls: 'eqh-engagement-section-heading' });
+    const section = container.createEl('section', { cls: 'examined-human-engagement-panel' });
+    const heading = section.createDiv({ cls: 'examined-human-engagement-section-heading' });
     heading.createEl('h3', { text: 'Linked money by currency' });
-    heading.createSpan({ text: 'Currencies are never converted or combined', cls: 'eqh-engagement-panel-subtitle' });
+    heading.createSpan({ text: 'Currencies are never converted or combined', cls: 'examined-human-engagement-panel-subtitle' });
     if (this.result.transactionTotals.length === 0) {
       section.createDiv({
-        cls: 'eqh-engagement-empty-inline',
+        cls: 'examined-human-engagement-empty-inline',
         text: 'No engagement-linked transactions were recorded in this period.',
       });
       return;
     }
-    const grid = section.createDiv({ cls: 'eqh-engagement-money-grid' });
+    const grid = section.createDiv({ cls: 'examined-human-engagement-money-grid' });
     for (const total of this.result.transactionTotals) {
-      const card = grid.createDiv({ cls: 'eqh-engagement-money-card' });
-      card.createDiv({ cls: 'eqh-engagement-eyebrow', text: total.currency });
-      card.createDiv({ cls: 'eqh-engagement-money-net', text: formatAmount(total.net, total.currency) });
-      const details = card.createDiv({ cls: 'eqh-engagement-money-details' });
+      const card = grid.createDiv({ cls: 'examined-human-engagement-money-card' });
+      card.createDiv({ cls: 'examined-human-engagement-eyebrow', text: total.currency });
+      card.createDiv({ cls: 'examined-human-engagement-money-net', text: formatAmount(total.net, total.currency) });
+      const details = card.createDiv({ cls: 'examined-human-engagement-money-details' });
       details.createSpan({ text: `In ${formatAmount(total.inflow, total.currency)}` });
       details.createSpan({ text: `Out ${formatAmount(total.outflow, total.currency)}` });
       details.createSpan({ text: `${total.transactionCount} transactions` });
     }
-    const ledger = section.createDiv({ cls: 'eqh-engagement-transaction-ledger' });
-    const ledgerHeading = ledger.createDiv({ cls: 'eqh-engagement-section-heading' });
+    const ledger = section.createDiv({ cls: 'examined-human-engagement-transaction-ledger' });
+    const ledgerHeading = ledger.createDiv({ cls: 'examined-human-engagement-section-heading' });
     ledgerHeading.createEl('h4', { text: 'Transactions' });
     ledgerHeading.createSpan({
-      cls: 'eqh-engagement-panel-subtitle',
+      cls: 'examined-human-engagement-panel-subtitle',
       text: `All ${this.result.transactions.length} linked transaction${this.result.transactions.length === 1 ? '' : 's'} in the selected period`,
     });
-    const wrapper = ledger.createDiv({ cls: 'eqh-engagement-table-wrap' });
-    const table = wrapper.createEl('table', { cls: 'eqh-engagement-detail-table eqh-engagement-transaction-table' });
+    const wrapper = ledger.createDiv({ cls: 'examined-human-engagement-table-wrap' });
+    const table = wrapper.createEl('table', { cls: 'examined-human-engagement-detail-table examined-human-engagement-transaction-table' });
     const header = table.createEl('thead').createEl('tr');
     for (const label of ['Date', 'Account', 'Description', 'Amount']) header.createEl('th', { text: label });
     const body = table.createEl('tbody');
@@ -518,28 +532,28 @@ export class EngagementDashboardView extends ItemView {
 
   private renderMilestones(container: HTMLElement): void {
     if (!this.result) return;
-    const section = container.createEl('section', { cls: 'eqh-engagement-panel' });
-    const heading = section.createDiv({ cls: 'eqh-engagement-section-heading' });
+    const section = container.createEl('section', { cls: 'examined-human-engagement-panel' });
+    const heading = section.createDiv({ cls: 'examined-human-engagement-section-heading' });
     heading.createEl('h3', { text: 'Milestones' });
-    heading.createSpan({ text: 'Lifetime achievements and their owner sessions', cls: 'eqh-engagement-panel-subtitle' });
+    heading.createSpan({ text: 'Lifetime achievements and their owner sessions', cls: 'examined-human-engagement-panel-subtitle' });
     if (this.result.milestones.length === 0) {
-      section.createDiv({ cls: 'eqh-engagement-empty-inline', text: 'No milestones are recorded.' });
+      section.createDiv({ cls: 'examined-human-engagement-empty-inline', text: 'No milestones are recorded.' });
       return;
     }
-    const list = section.createDiv({ cls: 'eqh-engagement-milestone-list' });
+    const list = section.createDiv({ cls: 'examined-human-engagement-milestone-list' });
     for (const milestone of this.result.milestones) {
-      const item = list.createDiv({ cls: 'eqh-engagement-milestone' });
-      const title = item.createDiv({ cls: 'eqh-engagement-milestone-title' });
+      const item = list.createDiv({ cls: 'examined-human-engagement-milestone' });
+      const title = item.createDiv({ cls: 'examined-human-engagement-milestone-title' });
       title.createEl('h4', { text: milestone.name });
       title.createSpan({ text: formatDate(milestone.date ?? milestone.ownerSessionDate) });
       item.createDiv({
-        cls: `eqh-engagement-owner${milestone.ownerSessionId == null ? ' is-unlinked' : ''}`,
+        cls: `examined-human-engagement-owner${milestone.ownerSessionId == null ? ' is-unlinked' : ''}`,
         text: milestone.ownerSessionId == null
           ? 'Legacy milestone without an owner session'
           : `Owner session · ${formatDate(milestone.ownerSessionDate)} · ${formatTimeRange(milestone.ownerStartTime, milestone.ownerEndTime)}`,
       });
       if (milestone.measurements.length > 0) {
-        const measurements = item.createDiv({ cls: 'eqh-engagement-measurements' });
+        const measurements = item.createDiv({ cls: 'examined-human-engagement-measurements' });
         for (const measurement of milestone.measurements) {
           measurements.createSpan({
             text: `${humanizeCode(measurement.metricName)}: ${measurement.metricValue}`,
@@ -547,22 +561,22 @@ export class EngagementDashboardView extends ItemView {
           });
         }
       }
-      if (milestone.notes) item.createDiv({ cls: 'eqh-engagement-item-notes', text: milestone.notes });
+      if (milestone.notes) item.createDiv({ cls: 'examined-human-engagement-item-notes', text: milestone.notes });
     }
   }
 
   private renderRecentSessions(container: HTMLElement): void {
     if (!this.result) return;
-    const section = container.createEl('section', { cls: 'eqh-engagement-panel' });
-    const heading = section.createDiv({ cls: 'eqh-engagement-section-heading' });
+    const section = container.createEl('section', { cls: 'examined-human-engagement-panel' });
+    const heading = section.createDiv({ cls: 'examined-human-engagement-section-heading' });
     heading.createEl('h3', { text: 'Recent sessions' });
-    heading.createSpan({ text: 'Latest 12 in the selected period', cls: 'eqh-engagement-panel-subtitle' });
+    heading.createSpan({ text: 'Latest 12 in the selected period', cls: 'examined-human-engagement-panel-subtitle' });
     if (this.result.recentSessions.length === 0) {
-      section.createDiv({ cls: 'eqh-engagement-empty-inline', text: 'No sessions were logged in this period.' });
+      section.createDiv({ cls: 'examined-human-engagement-empty-inline', text: 'No sessions were logged in this period.' });
       return;
     }
-    const wrapper = section.createDiv({ cls: 'eqh-engagement-table-wrap' });
-    const table = wrapper.createEl('table', { cls: 'eqh-engagement-detail-table eqh-engagement-session-table' });
+    const wrapper = section.createDiv({ cls: 'examined-human-engagement-table-wrap' });
+    const table = wrapper.createEl('table', { cls: 'examined-human-engagement-detail-table examined-human-engagement-session-table' });
     const header = table.createEl('thead').createEl('tr');
     for (const label of ['Date', 'Time', 'Type', 'Duration', 'Notes']) header.createEl('th', { text: label });
     const body = table.createEl('tbody');
@@ -578,11 +592,11 @@ export class EngagementDashboardView extends ItemView {
 
   private renderError(error: unknown): void {
     const message = error instanceof Error ? error.message : String(error);
-    const section = this.contentEl.createDiv({ cls: 'eqh-error eqh-engagement-error' });
+    const section = this.contentEl.createDiv({ cls: 'examined-human-error examined-human-engagement-error' });
     section.createEl('h3', { text: 'Could not load the Engagement Dashboard' });
     section.createEl('p', { text: message });
     section.createEl('p', {
-      text: `Check the vault-relative database path in EH Dashboards settings: ${this.plugin.settings.databasePath}`,
+      text: `Check the vault-relative database path in Examined Human settings: ${this.plugin.settings.databasePath}`,
     });
   }
 

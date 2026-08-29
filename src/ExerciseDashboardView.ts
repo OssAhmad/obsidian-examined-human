@@ -11,24 +11,24 @@ import {
   renderDashboardTrend,
 } from './DashboardViewBase.ts';
 import { renderDismissibleWarning } from './dismissible-warning.ts';
-import type EqhCalendarPlugin from './main.ts';
-import type { ExerciseDashboardQueryResult, ExerciseWorkoutRecord } from './eqh-query.ts';
+import type ExaminedHumanPlugin from './main.ts';
+import type { ExerciseDashboardQueryResult, ExerciseWorkoutRecord } from './examined-human-query.ts';
 import { SessionDetailsModal } from './SessionDetailsModal.ts';
 import { DASHBOARD_WARNING_KEYS } from './warning-preferences.ts';
 
-export const EQH_EXERCISE_DASHBOARD_VIEW_TYPE = 'eqh-exercise-dashboard';
+export const EXAMINED_HUMAN_EXERCISE_DASHBOARD_VIEW_TYPE = 'examined-human-exercise-dashboard';
 
 export class ExerciseDashboardView extends DashboardViewBase<ExerciseDashboardQueryResult> {
-  constructor(leaf: WorkspaceLeaf, plugin: EqhCalendarPlugin) {
+  constructor(leaf: WorkspaceLeaf, plugin: ExaminedHumanPlugin) {
     super(leaf, plugin);
   }
 
   getViewType(): string {
-    return EQH_EXERCISE_DASHBOARD_VIEW_TYPE;
+    return EXAMINED_HUMAN_EXERCISE_DASHBOARD_VIEW_TYPE;
   }
 
   getDisplayText(): string {
-    return 'EH Dashboards — Exercise';
+    return 'Examined Human — Exercise';
   }
 
   getIcon(): string {
@@ -45,7 +45,7 @@ export class ExerciseDashboardView extends DashboardViewBase<ExerciseDashboardQu
 
   protected renderDashboard(result: ExerciseDashboardQueryResult): void {
     this.renderToolbar(`${this.periodLabel()} · Canonical workouts and optional set-level detail`);
-    const metrics = this.contentEl.createDiv({ cls: 'eqh-domain-metrics' });
+    const metrics = this.contentEl.createDiv({ cls: 'examined-human-domain-metrics' });
     createDashboardMetric(metrics, 'Workouts', formatDashboardNumber(result.workoutCount, 0), `${result.trainingDays} training days`);
     createDashboardMetric(metrics, 'Logged time', formatDashboardDuration(result.totalMinutes), 'Canonical workout session duration');
     createDashboardMetric(metrics, 'Detailed workouts', formatDashboardNumber(result.detailedWorkoutCount, 0), `${result.workoutCount - result.detailedWorkoutCount} without exercise rows`);
@@ -65,11 +65,11 @@ export class ExerciseDashboardView extends DashboardViewBase<ExerciseDashboardQu
         this.plugin,
         DASHBOARD_WARNING_KEYS.exerciseIncompleteDetails,
         `${result.workoutCount - result.detailedWorkoutCount} workout sessions have time evidence but no structured exercise details. They remain included in workout and duration totals.`,
-        'eqh-domain-warning',
+        'examined-human-domain-warning',
       );
     }
 
-    const panels = this.contentEl.createDiv({ cls: 'eqh-domain-panel-grid' });
+    const panels = this.contentEl.createDiv({ cls: 'examined-human-domain-panel-grid' });
     this.renderActivityTrend(panels, result);
     this.renderExerciseMix(panels, result);
     this.renderMuscleCoverage(panels, result);
@@ -111,10 +111,10 @@ export class ExerciseDashboardView extends DashboardViewBase<ExerciseDashboardQu
   private renderPerformanceTable(container: HTMLElement, result: ExerciseDashboardQueryResult): void {
     const panel = createDashboardPanel(container, 'Exercise performance', 'Recorded maxima and additive measurements; units follow the source database', true);
     if (result.exercises.length === 0) {
-      panel.createDiv({ cls: 'eqh-domain-empty', text: 'No structured exercises were recorded in this period.' });
+      panel.createDiv({ cls: 'examined-human-domain-empty', text: 'No structured exercises were recorded in this period.' });
       return;
     }
-    const table = panel.createEl('table', { cls: 'eqh-domain-table' });
+    const table = panel.createEl('table', { cls: 'examined-human-domain-table' });
     const head = table.createEl('thead').createEl('tr');
     for (const label of ['Exercise', 'Workouts', 'Sets', 'Max weight', 'Max reps', 'Load × reps', 'Distance', 'Timed', 'Last']) {
       head.createEl('th', { text: label });
@@ -137,10 +137,10 @@ export class ExerciseDashboardView extends DashboardViewBase<ExerciseDashboardQu
   private renderRecentWorkouts(container: HTMLElement, result: ExerciseDashboardQueryResult): void {
     const panel = createDashboardPanel(container, 'Recent workouts', 'Select a workout to open its full session and exercise details', true);
     if (result.recentWorkouts.length === 0) {
-      panel.createDiv({ cls: 'eqh-domain-empty', text: 'No workouts were recorded in this period.' });
+      panel.createDiv({ cls: 'examined-human-domain-empty', text: 'No workouts were recorded in this period.' });
       return;
     }
-    const table = panel.createEl('table', { cls: 'eqh-domain-table' });
+    const table = panel.createEl('table', { cls: 'examined-human-domain-table' });
     const head = table.createEl('thead').createEl('tr');
     for (const label of ['Date', 'Engagement', 'Time', 'Exercises', 'Sets', 'Load × reps', 'Distance', 'Notes']) {
       head.createEl('th', { text: label });
@@ -151,7 +151,7 @@ export class ExerciseDashboardView extends DashboardViewBase<ExerciseDashboardQu
       row.createEl('td', { text: formatDashboardDate(workout.date) });
       const engagement = row.createEl('td');
       const detailsButton = engagement.createEl('button', {
-        cls: 'eqh-domain-table-link',
+        cls: 'examined-human-domain-table-link',
         text: workout.engagementName,
         attr: {
           'aria-label': `Open exercise details for ${workout.engagementName} on ${formatDashboardDate(workout.date)}`,

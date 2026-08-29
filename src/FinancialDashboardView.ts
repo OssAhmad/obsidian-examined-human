@@ -9,14 +9,14 @@ import {
   renderDashboardTrend,
   type DashboardTrendRecord,
 } from './DashboardViewBase.ts';
-import type EqhCalendarPlugin from './main.ts';
+import type ExaminedHumanPlugin from './main.ts';
 import type {
   FinancialCurrencyRecord,
   FinancialDailyRecord,
   FinancialDashboardQueryResult,
-} from './eqh-query.ts';
+} from './examined-human-query.ts';
 
-export const EQH_FINANCIAL_DASHBOARD_VIEW_TYPE = 'eqh-financial-dashboard';
+export const EXAMINED_HUMAN_FINANCIAL_DASHBOARD_VIEW_TYPE = 'examined-human-financial-dashboard';
 
 interface FlowBucket {
   key: string;
@@ -53,17 +53,18 @@ function buildFlowBuckets(records: FinancialDailyRecord[]): FlowBucket[] {
 
 export class FinancialDashboardView extends DashboardViewBase<FinancialDashboardQueryResult> {
   private selectedCurrency = 'all';
+  private selectedAccountId: number | null = null;
 
-  constructor(leaf: WorkspaceLeaf, plugin: EqhCalendarPlugin) {
+  constructor(leaf: WorkspaceLeaf, plugin: ExaminedHumanPlugin) {
     super(leaf, plugin);
   }
 
   getViewType(): string {
-    return EQH_FINANCIAL_DASHBOARD_VIEW_TYPE;
+    return EXAMINED_HUMAN_FINANCIAL_DASHBOARD_VIEW_TYPE;
   }
 
   getDisplayText(): string {
-    return 'EH Dashboards — Finance';
+    return 'Examined Human — Finance';
   }
 
   getIcon(): string {
@@ -102,13 +103,13 @@ export class FinancialDashboardView extends DashboardViewBase<FinancialDashboard
     });
 
     const currencies = this.filteredCurrencies(result.currencies);
-    const currencyGrid = this.contentEl.createDiv({ cls: 'eqh-domain-currency-grid' });
+    const currencyGrid = this.contentEl.createDiv({ cls: 'examined-human-domain-currency-grid' });
     for (const currency of currencies) this.renderCurrencyCard(currencyGrid, currency);
     if (currencies.length === 0) {
-      currencyGrid.createDiv({ cls: 'eqh-domain-empty', text: 'No transactions were recorded in this period.' });
+      currencyGrid.createDiv({ cls: 'examined-human-domain-empty', text: 'No transactions were recorded in this period.' });
     }
 
-    const panels = this.contentEl.createDiv({ cls: 'eqh-domain-panel-grid' });
+    const panels = this.contentEl.createDiv({ cls: 'examined-human-domain-panel-grid' });
     for (const currency of currencies) this.renderFlowTrend(panels, result, currency.currency);
     this.renderEngagementSpending(panels, result);
     this.renderAccountFlow(panels, result);
@@ -122,11 +123,11 @@ export class FinancialDashboardView extends DashboardViewBase<FinancialDashboard
   }
 
   private renderCurrencyCard(container: HTMLElement, record: FinancialCurrencyRecord): void {
-    const card = container.createEl('section', { cls: 'eqh-domain-currency-card' });
-    const header = card.createDiv({ cls: 'eqh-domain-currency-heading' });
+    const card = container.createEl('section', { cls: 'examined-human-domain-currency-card' });
+    const header = card.createDiv({ cls: 'examined-human-domain-currency-heading' });
     header.createEl('h3', { text: record.currency });
     header.createSpan({ text: `${record.transactionCount} transactions` });
-    const values = card.createDiv({ cls: 'eqh-domain-currency-values' });
+    const values = card.createDiv({ cls: 'examined-human-domain-currency-values' });
     const inflow = values.createDiv();
     inflow.createSpan({ text: 'Inflow' });
     inflow.createEl('strong', { text: formatDashboardAmount(record.inflow, record.currency) });
@@ -174,23 +175,47 @@ export class FinancialDashboardView extends DashboardViewBase<FinancialDashboard
       ))
       .slice(0, 12);
     const panel = createDashboardPanel(container, 'Most used accounts', 'Transaction frequency in the selected period; this is not an account balance');
-    renderDashboardBars(panel, records.map((record) => ({
-      label: record.accountName,
-      value: record.transactionCount,
-      displayValue: `${record.transactionCount} transaction${record.transactionCount === 1 ? '' : 's'}`,
-      detail: `${record.currency} · ${humanizeDashboardCode(record.accountType)} · net ${formatDashboardAmount(record.net, record.currency)}`,
-    })));
+    if (records.length === 0) {
+      panel.createDiv({ cls: 'examined-human-domain-empty', text: 'No accounts were used in this period.' });
+      return;
+    }
+    const list = panel.createDiv({ cls: 'examined-human-domain-bars' });
+    for (const record of records) {
+      const row = list.createEl('button', {
+        cls: `examined-human-domain-bar-row examined-human-domain-bar-button${this.selectedAccountId === record.accountId ? ' is-selected' : ''}`,
+        attr: { type: 'button', 'aria-pressed': String(this.selectedAccountId === record.accountId) },
+      });
+      const heading = row.createDiv({ cls: 'examined-human-domain-bar-heading' });
+      heading.createSpan({ text: record.accountName });
+      heading.createEl('strong', { text: `${record.transactionCount} transaction${record.transactionCount === 1 ? '' : 's'}` });
+      const track = row.createDiv({ cls: 'examined-human-domain-bar-track' });
+      const fill = track.createDiv({ cls: 'examined-human-domain-bar-fill' });
+      const max = Math.max(...records.map((item) => item.transactionCount), 1);
+      fill.style.width = `${Math.max(2, (record.transactionCount / max) * 100)}%`;
+      row.createDiv({ cls: 'examined-human-domain-bar-detail', text: `${record.currency} · ${humanizeDashboardCode(record.accountType)} · net ${formatDashboardAmount(record.net, record.currency)}` });
+      row.addEventListener('click', () => {
+        this.selectedAccountId = this.selectedAccountId === record.accountId ? null : record.accountId;
+        this.contentEl.empty();
+        this.renderDashboard(result);
+      });
+    }
   }
 
   private renderRecentTransactions(container: HTMLElement, result: FinancialDashboardQueryResult): void {
     const records = result.recentTransactions
+      .filter((record) => this.selectedAccountId == null || record.accountId === this.selectedAccountId)
       .filter((record) => this.selectedCurrency === 'all' || record.currency === this.selectedCurrency);
-    const panel = createDashboardPanel(container, 'Recent transactions', 'Newest recorded activity in the selected period', true);
+    const selectedAccount = result.accounts.find((account) => account.accountId === this.selectedAccountId);
+    const title = selectedAccount ? `${selectedAccount.accountName} activity` : 'Recent transactions';
+    const subtitle = selectedAccount
+      ? `${selectedAccount.currency} · ${humanizeDashboardCode(selectedAccount.accountType)} · newest recorded activity`
+      : 'Newest recorded activity in the selected period';
+    const panel = createDashboardPanel(container, title, subtitle, true);
     if (records.length === 0) {
-      panel.createDiv({ cls: 'eqh-domain-empty', text: 'No transactions were recorded in this period.' });
+      panel.createDiv({ cls: 'examined-human-domain-empty', text: 'No transactions were recorded in this period.' });
       return;
     }
-    const table = panel.createEl('table', { cls: 'eqh-domain-table' });
+    const table = panel.createEl('table', { cls: 'examined-human-domain-table' });
     const head = table.createEl('thead').createEl('tr');
     for (const label of ['Date', 'Account', 'Engagement', 'Description', 'Amount']) head.createEl('th', { text: label });
     const body = table.createEl('tbody');

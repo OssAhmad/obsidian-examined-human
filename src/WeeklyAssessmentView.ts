@@ -1,15 +1,15 @@
 import { ItemView, moment, normalizePath, Notice, TFile, WorkspaceLeaf } from 'obsidian';
-import type EqhCalendarPlugin from './main.ts';
+import type ExaminedHumanPlugin from './main.ts';
 import { buildDailyNoteList } from './daily-note-index.ts';
 import { pathIsInJournalFolder } from './journal-folder.ts';
-import type { WeeklyAssessmentQueryResult, WeeklyCommitmentAssessmentRecord } from './eqh-query.ts';
+import type { WeeklyAssessmentQueryResult, WeeklyCommitmentAssessmentRecord } from './examined-human-query.ts';
 import { confirmWeeklyAction } from './WeeklyActionConfirmationModal.ts';
 import { buildWeeklyNoteList, type WeeklyNoteListItem } from './weekly-note-index.ts';
 import type { WeeklyImportResult, WeeklyNoteWritePreview } from './native-logger/weekly.ts';
 import type { PlanningSyncResult } from './native-logger/planning.ts';
 import { backupMutationOutput } from './native-logger/write-service.ts';
 
-export const EQH_WEEKLY_ASSESSMENT_VIEW_TYPE = 'eqh-weekly-assessment';
+export const EXAMINED_HUMAN_WEEKLY_ASSESSMENT_VIEW_TYPE = 'examined-human-weekly-assessment';
 
 const FINGERPRINT_INTERVAL_MS = 10_000;
 const WEEKLY_NOTE_PATTERN = /^\d{4}-W\d{1,2}\.md$/i;
@@ -76,16 +76,16 @@ export class WeeklyAssessmentView extends ItemView {
   private lastFingerprint: string | null = null;
   private actionButton: HTMLButtonElement | null = null;
 
-  constructor(leaf: WorkspaceLeaf, private plugin: EqhCalendarPlugin) {
+  constructor(leaf: WorkspaceLeaf, private plugin: ExaminedHumanPlugin) {
     super(leaf);
   }
 
   getViewType(): string {
-    return EQH_WEEKLY_ASSESSMENT_VIEW_TYPE;
+    return EXAMINED_HUMAN_WEEKLY_ASSESSMENT_VIEW_TYPE;
   }
 
   getDisplayText(): string {
-    return 'EH Dashboards — Weekly Assessment';
+    return 'Examined Human — Weekly Assessment';
   }
 
   getIcon(): string {
@@ -93,7 +93,7 @@ export class WeeklyAssessmentView extends ItemView {
   }
 
   async onOpen(): Promise<void> {
-    this.contentEl.addClass('eqh-weekly-view');
+    this.contentEl.addClass('examined-human-weekly-view');
     await this.refresh();
     this.registerEvent(this.app.vault.on('modify', (file) => {
       try {
@@ -131,8 +131,8 @@ export class WeeklyAssessmentView extends ItemView {
   async refresh(): Promise<void> {
     const generation = ++this.renderGeneration;
     this.contentEl.empty();
-    this.contentEl.addClass('eqh-weekly-view');
-    this.contentEl.createDiv({ cls: 'eqh-loading', text: 'Loading Weekly Assessment…' });
+    this.contentEl.addClass('examined-human-weekly-view');
+    this.contentEl.createDiv({ cls: 'examined-human-loading', text: 'Loading Weekly Assessment…' });
     try {
       const today = moment().format('YYYY-MM-DD');
       const index = await this.plugin.database.weeklyPlanIndex(this.plugin.settings.databasePath);
@@ -165,22 +165,22 @@ export class WeeklyAssessmentView extends ItemView {
 
   private renderDashboard(): void {
     this.contentEl.empty();
-    this.contentEl.addClass('eqh-weekly-view');
+    this.contentEl.addClass('examined-human-weekly-view');
     this.renderHeader();
     if (!this.selectedItem) {
       this.contentEl.createDiv({
-        cls: 'eqh-weekly-empty',
+        cls: 'examined-human-weekly-empty',
         text: 'No weekly notes or imported weekly plans were found.',
       });
       return;
     }
-    const body = this.contentEl.createDiv({ cls: 'eqh-weekly-layout' });
+    const body = this.contentEl.createDiv({ cls: 'examined-human-weekly-layout' });
     this.renderSidebar(body);
-    const main = body.createEl('main', { cls: 'eqh-weekly-main' });
+    const main = body.createEl('main', { cls: 'examined-human-weekly-main' });
     this.renderActionStatus(main);
     if (!this.assessment) {
       main.createDiv({
-        cls: 'eqh-weekly-empty',
+        cls: 'examined-human-weekly-empty',
         text: 'Import this weekly note to display its direction, commitments, and actual progress.',
       });
       return;
@@ -193,21 +193,21 @@ export class WeeklyAssessmentView extends ItemView {
   private renderHeader(): void {
     const item = this.selectedItem;
     const today = moment().format('YYYY-MM-DD');
-    const header = this.contentEl.createDiv({ cls: 'eqh-toolbar eqh-weekly-toolbar' });
-    const identity = header.createDiv({ cls: 'eqh-toolbar-identity' });
-    identity.createEl('h2', { text: 'EH Dashboards — Weekly Assessment' });
+    const header = this.contentEl.createDiv({ cls: 'examined-human-toolbar examined-human-weekly-toolbar' });
+    const identity = header.createDiv({ cls: 'examined-human-toolbar-identity' });
+    identity.createEl('h2', { text: 'Examined Human — Weekly Assessment' });
     identity.createDiv({
-      cls: 'eqh-toolbar-status',
+      cls: 'examined-human-toolbar-status',
       text: item
         ? `${formatWeekRange(item.weekStartDate, item.weekEndDate)} · ${item.fileName} · ${this.statusLabel(item)}`
         : 'Committed time compared with logged sessions',
     });
 
-    const controls = header.createDiv({ cls: 'eqh-weekly-controls' });
+    const controls = header.createDiv({ cls: 'examined-human-weekly-controls' });
     const dateInput = controls.createEl('input', {
       type: 'text',
       value: item?.weekStartDate ?? today,
-      cls: 'eqh-weekly-date-input',
+      cls: 'examined-human-weekly-date-input',
       attr: {
         'aria-label': 'Date within a weekly note',
         placeholder: 'YYYY-MM-DD',
@@ -234,10 +234,10 @@ export class WeeklyAssessmentView extends ItemView {
     dateInput.addEventListener('keydown', (event) => {
       if (event.key === 'Enter') submitDate();
     });
-    controls.createEl('button', { text: 'Go', cls: 'eqh-toolbar-button' })
+    controls.createEl('button', { text: 'Go', cls: 'examined-human-toolbar-button' })
       .addEventListener('click', submitDate);
 
-    this.actionButton = controls.createEl('button', { cls: 'eqh-toolbar-button mod-cta' });
+    this.actionButton = controls.createEl('button', { cls: 'examined-human-toolbar-button mod-cta' });
     const syncEligible = item != null && item.status === 'imported' && item.weekEndDate >= today;
     if (!item) {
       this.actionButton.setText('Import week');
@@ -252,20 +252,20 @@ export class WeeklyAssessmentView extends ItemView {
       this.actionButton.setText('Already imported');
       this.actionButton.disabled = true;
     }
-    controls.createEl('button', { text: 'Refresh', cls: 'eqh-toolbar-button' })
+    controls.createEl('button', { text: 'Refresh', cls: 'examined-human-toolbar-button' })
       .addEventListener('click', () => { void this.plugin.refreshViews(); });
   }
 
   private renderSidebar(container: HTMLElement): void {
     const sidebar = container.createEl('aside', {
-      cls: 'eqh-daily-sidebar eqh-weekly-sidebar',
+      cls: 'examined-human-daily-sidebar examined-human-weekly-sidebar',
       attr: { 'aria-label': 'Weekly notes, newest first' },
     });
     for (const item of this.items) {
       const button = sidebar.createEl('button', {
         cls: [
-          'eqh-daily-date-button',
-          'eqh-weekly-date-button',
+          'examined-human-daily-date-button',
+          'examined-human-weekly-date-button',
           `is-${item.temporalState}`,
           item.weekStartDate === this.selectedWeekStart ? 'is-selected' : '',
         ].join(' '),
@@ -273,9 +273,9 @@ export class WeeklyAssessmentView extends ItemView {
           'aria-label': `${item.weekLabel}, ${this.statusLabel(item)}, ${formatWeekRange(item.weekStartDate, item.weekEndDate)}`,
         },
       });
-      button.createSpan({ cls: 'eqh-daily-date-primary', text: item.weekLabel });
+      button.createSpan({ cls: 'examined-human-daily-date-primary', text: item.weekLabel });
       button.createSpan({
-        cls: 'eqh-daily-date-secondary',
+        cls: 'examined-human-daily-date-secondary',
         text: formatWeekRange(item.weekStartDate, item.weekEndDate),
       });
       button.addEventListener('click', () => {
@@ -290,48 +290,48 @@ export class WeeklyAssessmentView extends ItemView {
   private renderActionStatus(container: HTMLElement): void {
     const item = this.selectedItem;
     if (!item) return;
-    const section = container.createEl('section', { cls: 'eqh-daily-validation eqh-weekly-action-status' });
-    const heading = section.createDiv({ cls: 'eqh-daily-section-heading' });
+    const section = container.createEl('section', { cls: 'examined-human-daily-validation examined-human-weekly-action-status' });
+    const heading = section.createDiv({ cls: 'examined-human-daily-section-heading' });
     heading.createEl('h3', { text: 'Week readiness' });
-    const badge = heading.createSpan({ cls: 'eqh-daily-status-badge' });
+    const badge = heading.createSpan({ cls: 'examined-human-daily-status-badge' });
     if (item.status === 'pending') {
       badge.addClass('is-blocked');
       badge.setText('Pending import');
       section.createDiv({
-        cls: 'eqh-daily-validation-note',
+        cls: 'examined-human-daily-validation-note',
         text: 'Importing validates and records the weekly plan. It does not write Daily Notes.',
       });
     } else if (item.weekEndDate >= moment().format('YYYY-MM-DD')) {
       badge.addClass('is-ready');
       badge.setText('Ready to sync');
       section.createDiv({
-        cls: 'eqh-daily-validation-note',
+        cls: 'examined-human-daily-validation-note',
         text: 'Sync week writes planned rows only to empty Daily Note Sessions sections, then refreshes future database projections.',
       });
     } else {
       badge.addClass('is-ready');
       badge.setText('Imported');
       section.createDiv({
-        cls: 'eqh-daily-validation-note',
+        cls: 'examined-human-daily-validation-note',
         text: 'This historical weekly plan is available for assessment. Note-writing controls are disabled.',
       });
     }
     section.createDiv({
-      cls: 'eqh-daily-validation-note',
+      cls: 'examined-human-daily-validation-note',
       text: 'Validation, import, Daily Note writing, and projection sync run natively on desktop and mobile.',
     });
     if (this.loggerOutput) this.renderCopyableOutput(section, 'Logger output', this.loggerOutput);
   }
 
   private renderCopyableOutput(container: HTMLElement, label: string, output: string): void {
-    const block = container.createDiv({ cls: 'eqh-daily-output-block' });
-    const header = block.createDiv({ cls: 'eqh-daily-output-header' });
+    const block = container.createDiv({ cls: 'examined-human-daily-output-block' });
+    const header = block.createDiv({ cls: 'examined-human-daily-output-header' });
     header.createEl('strong', { text: label });
-    header.createEl('button', { text: 'Copy', cls: 'eqh-toolbar-button' }).addEventListener('click', () => {
+    header.createEl('button', { text: 'Copy', cls: 'examined-human-toolbar-button' }).addEventListener('click', () => {
       void navigator.clipboard.writeText(output).then(() => new Notice('Copied logger output.'));
     });
     const textarea = block.createEl('textarea', {
-      cls: 'eqh-daily-output',
+      cls: 'examined-human-daily-output',
       attr: { readonly: 'true', rows: '9' },
     });
     textarea.value = output;
@@ -344,14 +344,14 @@ export class WeeklyAssessmentView extends ItemView {
       ['Constraint or risk', result.constraintOrRisk],
     ] as const;
     if (!values.some(([, value]) => value)) return;
-    const section = container.createEl('section', { cls: 'eqh-weekly-direction' });
+    const section = container.createEl('section', { cls: 'examined-human-weekly-direction' });
     section.createEl('h3', { text: 'Weekly direction' });
-    const grid = section.createDiv({ cls: 'eqh-weekly-direction-grid' });
+    const grid = section.createDiv({ cls: 'examined-human-weekly-direction-grid' });
     for (const [label, value] of values) {
       if (!value) continue;
-      const card = grid.createDiv({ cls: 'eqh-weekly-direction-card' });
-      card.createDiv({ cls: 'eqh-weekly-eyebrow', text: label });
-      card.createDiv({ cls: 'eqh-weekly-direction-value', text: value });
+      const card = grid.createDiv({ cls: 'examined-human-weekly-direction-card' });
+      card.createDiv({ cls: 'examined-human-weekly-eyebrow', text: label });
+      card.createDiv({ cls: 'examined-human-weekly-direction-value', text: value });
     }
   }
 
@@ -360,7 +360,7 @@ export class WeeklyAssessmentView extends ItemView {
     const actual = commitments.reduce((sum, commitment) => sum + commitment.actualMinutes, 0);
     const remaining = Math.max(0, target - actual);
     const summary = container.createEl('section', {
-      cls: 'eqh-weekly-summary',
+      cls: 'examined-human-weekly-summary',
       attr: { 'aria-label': 'Weekly totals' },
     });
     const cards = [
@@ -370,36 +370,36 @@ export class WeeklyAssessmentView extends ItemView {
       [actual > target ? 'Above commitment' : 'Remaining', formatDuration(Math.abs(actual > target ? actual - target : remaining))],
     ];
     for (const [label, value] of cards) {
-      const card = summary.createDiv({ cls: 'eqh-weekly-summary-card' });
-      card.createDiv({ cls: 'eqh-weekly-eyebrow', text: label });
-      card.createDiv({ cls: 'eqh-weekly-summary-value', text: value });
+      const card = summary.createDiv({ cls: 'examined-human-weekly-summary-card' });
+      card.createDiv({ cls: 'examined-human-weekly-eyebrow', text: label });
+      card.createDiv({ cls: 'examined-human-weekly-summary-value', text: value });
     }
   }
 
   private renderCommitments(container: HTMLElement, result: WeeklyAssessmentQueryResult): void {
-    const section = container.createEl('section', { cls: 'eqh-weekly-commitments' });
-    const heading = section.createDiv({ cls: 'eqh-weekly-section-heading' });
+    const section = container.createEl('section', { cls: 'examined-human-weekly-commitments' });
+    const heading = section.createDiv({ cls: 'examined-human-weekly-section-heading' });
     const copy = heading.createDiv();
     copy.createEl('h3', { text: 'Commitment assessment' });
     copy.createDiv({
-      cls: 'eqh-weekly-chart-subtitle',
+      cls: 'examined-human-weekly-chart-subtitle',
       text: `Hours for ${formatWeekRange(result.weekStartDate, result.weekEndDate)} · all logged session types`,
     });
-    const legend = heading.createDiv({ cls: 'eqh-weekly-legend', attr: { 'aria-label': 'Chart legend' } });
+    const legend = heading.createDiv({ cls: 'examined-human-weekly-legend', attr: { 'aria-label': 'Chart legend' } });
     this.renderLegendItem(legend, 'Committed target', 'target');
     this.renderLegendItem(legend, 'Actual logged', 'actual');
     if (result.commitments.length === 0) {
-      section.createDiv({ cls: 'eqh-weekly-empty', text: 'This weekly plan has no commitments.' });
+      section.createDiv({ cls: 'examined-human-weekly-empty', text: 'This weekly plan has no commitments.' });
       return;
     }
     const maximum = Math.max(1, ...result.commitments.flatMap((item) => [item.targetMinutes, item.actualMinutes]));
-    const chart = section.createDiv({ cls: 'eqh-weekly-chart' });
+    const chart = section.createDiv({ cls: 'examined-human-weekly-chart' });
     for (const commitment of result.commitments) this.renderCommitment(chart, commitment, maximum);
   }
 
   private renderLegendItem(container: HTMLElement, text: string, type: 'target' | 'actual'): void {
-    const item = container.createDiv({ cls: 'eqh-weekly-legend-item' });
-    item.createSpan({ cls: `eqh-weekly-legend-swatch eqh-weekly-legend-swatch--${type}` });
+    const item = container.createDiv({ cls: 'examined-human-weekly-legend-item' });
+    item.createSpan({ cls: `examined-human-weekly-legend-swatch examined-human-weekly-legend-swatch--${type}` });
     item.createSpan({ text });
   }
 
@@ -408,29 +408,29 @@ export class WeeklyAssessmentView extends ItemView {
     commitment: WeeklyCommitmentAssessmentRecord,
     maximum: number,
   ): void {
-    const item = container.createEl('article', { cls: 'eqh-weekly-commitment-card' });
+    const item = container.createEl('article', { cls: 'examined-human-weekly-commitment-card' });
     item.createEl('h4', { text: commitment.engagementName });
     const stage = item.createDiv({
-      cls: 'eqh-weekly-bar-stage',
+      cls: 'examined-human-weekly-bar-stage',
       attr: {
         'aria-label': `${commitment.engagementName}: committed ${formatDuration(commitment.targetMinutes)}, actual ${formatDuration(commitment.actualMinutes)}`,
       },
     });
-    const target = stage.createDiv({ cls: 'eqh-weekly-bar-column' });
-    target.createDiv({ cls: 'eqh-weekly-bar-value', text: formatDuration(commitment.targetMinutes) });
-    const targetBar = target.createDiv({ cls: 'eqh-weekly-bar eqh-weekly-bar--target' });
+    const target = stage.createDiv({ cls: 'examined-human-weekly-bar-column' });
+    target.createDiv({ cls: 'examined-human-weekly-bar-value', text: formatDuration(commitment.targetMinutes) });
+    const targetBar = target.createDiv({ cls: 'examined-human-weekly-bar examined-human-weekly-bar--target' });
     targetBar.style.height = `calc((100% - 52px) * ${commitment.targetMinutes / maximum})`;
-    target.createDiv({ cls: 'eqh-weekly-bar-label', text: 'Planned' });
-    const actual = stage.createDiv({ cls: 'eqh-weekly-bar-column' });
-    actual.createDiv({ cls: 'eqh-weekly-bar-value', text: formatDuration(commitment.actualMinutes) });
-    const actualBar = actual.createDiv({ cls: 'eqh-weekly-bar eqh-weekly-bar--actual' });
+    target.createDiv({ cls: 'examined-human-weekly-bar-label', text: 'Planned' });
+    const actual = stage.createDiv({ cls: 'examined-human-weekly-bar-column' });
+    actual.createDiv({ cls: 'examined-human-weekly-bar-value', text: formatDuration(commitment.actualMinutes) });
+    const actualBar = actual.createDiv({ cls: 'examined-human-weekly-bar examined-human-weekly-bar--actual' });
     actualBar.style.height = `calc((100% - 52px) * ${commitment.actualMinutes / maximum})`;
-    actual.createDiv({ cls: 'eqh-weekly-bar-label', text: 'Actual' });
-    item.createDiv({ cls: 'eqh-weekly-goal-label', text: 'Goal' });
-    item.createDiv({ cls: 'eqh-weekly-goal', text: commitment.commitmentText });
+    actual.createDiv({ cls: 'examined-human-weekly-bar-label', text: 'Actual' });
+    item.createDiv({ cls: 'examined-human-weekly-goal-label', text: 'Goal' });
+    item.createDiv({ cls: 'examined-human-weekly-goal', text: commitment.commitmentText });
     const difference = commitment.targetMinutes - commitment.actualMinutes;
     item.createDiv({
-      cls: `eqh-weekly-variance ${difference >= 0 ? 'is-remaining' : 'is-exceeded'}`,
+      cls: `examined-human-weekly-variance ${difference >= 0 ? 'is-remaining' : 'is-exceeded'}`,
       text: difference >= 0
         ? `${formatDuration(difference)} remaining`
         : `${formatDuration(Math.abs(difference))} above commitment`,
@@ -474,7 +474,7 @@ export class WeeklyAssessmentView extends ItemView {
     const output = weeklyImportOutput(preview);
     const confirmed = await confirmWeeklyAction(this.app, {
       title: `Import ${item.weekLabel}`,
-      explanation: 'The weekly note passed validation. Importing records its direction, schedule, and commitments in EQH.db.',
+      explanation: 'The weekly note passed validation. Importing records its direction, schedule, and commitments in EH.db.',
       confirmLabel: 'Import week',
       dryRunOutput: output,
       warning: 'Confirm only after reviewing the native weekly parser output.',
@@ -586,7 +586,7 @@ export class WeeklyAssessmentView extends ItemView {
   }
 
   private renderError(error: unknown): void {
-    const panel = this.contentEl.createDiv({ cls: 'eqh-error-panel' });
+    const panel = this.contentEl.createDiv({ cls: 'examined-human-error-panel' });
     panel.createEl('h3', { text: 'Could not open Weekly Assessment' });
     panel.createDiv({ text: error instanceof Error ? error.message : String(error) });
     panel.createEl('code', { text: this.plugin.settings.databasePath || '(no path configured)' });

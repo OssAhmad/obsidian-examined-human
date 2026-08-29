@@ -1,4 +1,4 @@
--- EQH schema v5: meal events, food-item grouping, leisure-meal assessment,
+-- Examined Human schema v5: meal events, food-item grouping, leisure-meal assessment,
 -- and component-level import provenance.
 -- Existing daily_meals rows are intentionally preserved with meal_event_id NULL.
 

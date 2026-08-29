@@ -191,7 +191,7 @@ export class NativeLoggerWriteService {
   importMeals(request: NativeMealImportRequest): Promise<NativeMealImportResult> {
     return this.enqueue(async () => {
       const databasePath = normalizeVaultDatabasePath(request.databasePath);
-      const databaseFile = this.requireFile(databasePath, 'EQH database');
+      const databaseFile = this.requireFile(databasePath, 'Examined Human database');
       await this.assertNoUncheckpointedWal(databasePath);
       const originalBytes = new Uint8Array(await this.app.vault.readBinary(databaseFile));
       const originalChecksum = await sha256Bytes(originalBytes);
@@ -224,7 +224,7 @@ export class NativeLoggerWriteService {
         const currentBytes = new Uint8Array(await this.app.vault.readBinary(databaseFile));
         const currentChecksum = await sha256Bytes(currentBytes);
         if (currentChecksum !== originalChecksum) {
-          throw new Error('EQH.db changed during validation. Refresh and retry; no data was written.');
+          throw new Error('EH.db changed during validation. Refresh and retry; no data was written.');
         }
 
         const durability: DatabaseMutationDurability = result.lifecycleState === 'ephemeral'
@@ -427,7 +427,7 @@ export class NativeLoggerWriteService {
     operation: (db: Database) => T,
   ): Promise<T> {
     const databasePath = normalizeVaultDatabasePath(databasePathSetting);
-    const file = this.requireFile(databasePath, 'EQH database');
+    const file = this.requireFile(databasePath, 'Examined Human database');
     await this.assertNoUncheckpointedWal(databasePath);
     const bytes = new Uint8Array(await this.app.vault.readBinary(file));
     const SQL = await getSqlJs();
@@ -447,7 +447,7 @@ export class NativeLoggerWriteService {
     durability: DatabaseMutationDurability = 'durable',
   ): Promise<{ value: T; backupPath: string | null; databasePath: string; backupsPruned: number; backupRetentionWarning: string | null }> {
     const databasePath = normalizeVaultDatabasePath(databasePathSetting);
-    const databaseFile = this.requireFile(databasePath, 'EQH database');
+    const databaseFile = this.requireFile(databasePath, 'Examined Human database');
     await this.assertNoUncheckpointedWal(databasePath);
     const originalBytes = new Uint8Array(await this.app.vault.readBinary(databaseFile));
     const originalChecksum = await sha256Bytes(originalBytes);
@@ -474,7 +474,7 @@ export class NativeLoggerWriteService {
       await this.assertNoUncheckpointedWal(databasePath);
       const currentBytes = new Uint8Array(await this.app.vault.readBinary(databaseFile));
       if (await sha256Bytes(currentBytes) !== originalChecksum) {
-        throw new Error('EQH.db changed during validation. Refresh and retry; no data was written.');
+        throw new Error('EH.db changed during validation. Refresh and retry; no data was written.');
       }
       const backupPath = shouldCreateDatabaseBackup(durability)
         ? await this.createBackup(databasePath, originalBytes, backupLabel)

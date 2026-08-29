@@ -1,8 +1,8 @@
 {
-  "name": "obsidian-eqh-calendar",
+  "name": "obsidian-examined-human",
   "version": "0.9.1",
   "type": "module",
-  "description": "Examined Human dashboards and guarded native EQH data import",
+  "description": "Personal dashboards and guarded native data import",
   "main": "main.js",
   "engines": {
     "node": ">=22"

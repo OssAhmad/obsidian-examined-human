@@ -13,7 +13,7 @@ import type {
   SessionQueryResult,
   WeeklyAssessmentQueryResult,
   WeeklyPlanIndexQueryResult,
-} from './eqh-query.ts';
+} from './examined-human-query.ts';
 import {
   inspectDatabase,
   queryDailyAssessment,
@@ -25,10 +25,10 @@ import {
   querySessions,
   queryWeeklyAssessment,
   queryWeeklyPlanIndex,
-} from './eqh-query.ts';
+} from './examined-human-query.ts';
 import { getSqlJs } from './sql-runtime.ts';
 
-export class EqhDatabase {
+export class ExaminedHumanDatabase {
   constructor(private app: App) {}
 
   normalizeVaultPath(databasePath: string): string {

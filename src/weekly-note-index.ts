@@ -1,6 +1,6 @@
 import type { App, TFile } from 'obsidian';
 import type { NoteTemporalState } from './daily-note-index.ts';
-import type { WeeklyPlanIndexQueryResult } from './eqh-query.ts';
+import type { WeeklyPlanIndexQueryResult } from './examined-human-query.ts';
 
 const WEEKLY_NOTE_PATTERN = /^\d{4}-W\d{1,2}\.md$/i;
 const WEEK_START_PATTERN = /^week start:\s*["']?(\d{4}-\d{2}-\d{2})["']?\s*$/mi;

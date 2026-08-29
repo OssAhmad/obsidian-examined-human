@@ -1,6 +1,6 @@
-# EH Dashboards
+# Examined Human
 
-EH Dashboards (Examined Human Dashboards) is an [Obsidian](https://obsidian.md) plugin for desktop and mobile that turns a user-owned EQH SQLite database into personal dashboards and guarded native data workflows. Its calendar, Daily Assessment, Weekly Assessment, Engagement, Finance, Nutrition, and Exercise dashboards make canonical engagements the common analytical root for time, milestones, money, food, and training facts.
+Examined Human is an [Obsidian](https://obsidian.md) plugin for desktop and mobile that turns a user-owned SQLite database into personal dashboards and guarded native data workflows. Its calendar, Daily Assessment, Weekly Assessment, Engagement, Finance, Nutrition, and Exercise views make canonical engagements the common analytical root for time, milestones, money, food, and training facts.
 
 Dashboard queries remain deliberately read-only. Version 0.9.0 adds the four analytical domain dashboards on top of the confirmation-gated [sql.js](https://sql.js.org/) logger migration completed in 0.8.5: schema-v5 database creation, complete historical Daily Note imports, mutable current/future projections, weekly plans, weekly-to-Daily-Note writing, Meals, admin commands, and milestone reconciliation all run inside Obsidian on desktop and mobile. Every database write is serialized, transactionally staged, protected by a SHA-256 stale-file check, and verified after write. Durable/finalized mutations create backups; unlimited ephemeral Meals and planning replacements do not.
 
@@ -40,7 +40,7 @@ Dashboard queries remain deliberately read-only. Version 0.9.0 adds the four ana
 - Leisure-meal preview with snacks excluded from direct leisure count but included in the effective daily total
 - Immutable finalized historical Meals, low-friction current/future replacement, and one confirmed final replacement when an ephemeral component rolls into history
 - Component provenance recording the source checksum, plugin version, lifecycle, path, row count, and timestamps
-- Safe creation of a complete empty EQH schema-v5 database from Settings
+- Safe creation of a complete empty Examined Human schema-v5 database from Settings
 - Native full-note inspection with copyable validation errors and empty-metric warnings
 - Confirmation-gated historical imports and current/future planning synchronization on desktop and mobile
 - Native weekly-plan validation/import, guarded Daily Note materialization, and automatic projection refresh
@@ -90,7 +90,7 @@ Financial Dashboard includes every recorded transaction in its per-currency flow
 
 ## Privacy
 
-`EQH.db`, SQLite journal files, generated `.eqh-backups`, and local plugin settings are ignored by Git. Do not commit a personal database. Hidden backup folders and files are checked through Obsidian's mobile-safe storage adapter, so an existing `.eqh-backups` directory remains reusable even when it is absent from the indexed vault tree. Backup retention defaults to `0` (keep all); a positive setting removes only older files matching EH's exact backup naming contract after a successful verified write. Unrelated or manually named files are never pruned. The configured database path, retention limit, and per-warning dismissal preferences are stored by Obsidian in the plugin's local `data.json`, which is also ignored by this repository.
+`EH.db`, SQLite journal files, generated `.examined-human-backups`, and local plugin settings are ignored by Git. Do not commit a personal database. Hidden backup folders and files are checked through Obsidian's mobile-safe storage adapter, so an existing `.examined-human-backups` directory remains reusable even when it is absent from the indexed vault tree. Backup retention defaults to `0` (keep all); a positive setting removes only older files matching EH's exact backup naming contract after a successful verified write. Unrelated or manually named files are never pruned. The configured database path, retention limit, and per-warning dismissal preferences are stored by Obsidian in the plugin's local `data.json`, which is also ignored by this repository.
 
 The database must live inside the vault. This makes the same relative path portable between desktop and mobile and lets the user's existing vault synchronization system carry the database. The plugin does not upload or synchronize anything. Validation, import output, and every dashboard query remain local to Obsidian.
 
@@ -104,27 +104,27 @@ npm run check
 npm run build
 ```
 
-To validate an EQH database without printing private session content:
+To validate an Examined Human database without printing private session content:
 
 ```bash
-npm run validate:database -- /path/to/EQH.db
+npm run validate:database -- /path/to/EH.db
 ```
 
 The release artifacts are `main.js`, `manifest.json`, and `styles.css`.
 
 Maintainers should read [Architecture and maintainer notes](docs/ARCHITECTURE.md) for the data flow, file map, invariants, privacy boundaries, refresh model, known limitations, and recommended extension points. Release steps live in [Releasing](docs/RELEASING.md).
 
-For local testing, deploy the three plugin artifacts into `<vault>/.obsidian/plugins/eqh-calendar/`, reload Obsidian, enable **EH Dashboards**, and configure a vault-relative database path under the plugin settings. Use **Test connection**, or use **Create v5 database** when starting fresh. All logger actions are native and work on desktop and mobile; no Python interpreter or bundled runtime is required.
+For local testing, deploy the three plugin artifacts into `<vault>/.obsidian/plugins/examined-human/`, reload Obsidian, enable **Examined Human**, and configure a vault-relative database path under the plugin settings. Use **Test connection**, or use **Create v5 database** when starting fresh. All logger actions are native and work on desktop and mobile; no Python interpreter or bundled runtime is required.
 
 ## Installation
 
 This early version is not yet in Obsidian's Community Plugins directory. Install it manually from a build or a GitHub release:
 
-1. Create `<vault>/.obsidian/plugins/eqh-calendar/`.
+1. Create `<vault>/.obsidian/plugins/examined-human/`.
 2. Copy `main.js`, `manifest.json`, and `styles.css` into that directory.
 3. Reload Obsidian.
-4. Enable **EH Dashboards** under **Settings → Community plugins**.
-5. Set the vault-relative EQH database path and test the connection.
+4. Enable **Examined Human** under **Settings → Community plugins**.
+5. Set the vault-relative Examined Human database path and test the connection.
 6. Open the calendar from the ribbon or command palette, or run the Daily Assessment, Weekly Assessment, Engagement Dashboard, Financial Dashboard, Nutrition Dashboard, or Exercise Dashboard command.
 
 ## Fork attribution

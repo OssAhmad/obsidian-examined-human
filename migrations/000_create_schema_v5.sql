@@ -1,4 +1,4 @@
--- Empty EQH schema v5 for native Obsidian database creation.
+-- Empty Examined Human schema v5 for native Obsidian database creation.
 -- This file contains structure and canonical taxonomy seeds only; it contains no user data.
 
 PRAGMA foreign_keys = OFF;

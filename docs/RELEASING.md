@@ -4,7 +4,7 @@ Before starting, read `docs/ARCHITECTURE.md`, confirm the working tree contains 
 
 1. Update the same semantic version (`x.y.z`) in `manifest.json`, `package.json`, `package-lock.json`, and `versions.json`.
 2. Add release notes to `CHANGELOG.md`.
-3. Run `npm run validate:database -- C:\path\to\representative\EQH.db`.
+3. Run `npm run validate:database -- C:\path\to\representative\EH.db`.
 4. Run `npm run release:check`.
 5. Install `main.js`, `manifest.json`, and `styles.css` into a development vault and smoke-test settings, connection, scrolling, zoom, overlaps, details, colors, and warnings.
 6. Commit and push the reviewed changes to the default branch.

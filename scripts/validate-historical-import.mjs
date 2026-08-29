@@ -10,7 +10,7 @@ const [databasePath, notePath, mealLimitRaw = '0', dailyLimitRaw = '1850', prote
   process.argv.slice(2);
 if (!databasePath || !notePath) {
   throw new Error(
-    'Usage: node scripts/validate-historical-import.mjs EQH.db YYYY-MM-DD.md [meal-limit] [daily-limit] [minimum-protein]',
+    'Usage: node scripts/validate-historical-import.mjs EH.db YYYY-MM-DD.md [meal-limit] [daily-limit] [minimum-protein]',
   );
 }
 

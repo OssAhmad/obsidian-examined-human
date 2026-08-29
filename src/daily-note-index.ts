@@ -1,8 +1,8 @@
 import { App, moment } from 'obsidian';
-import type { DailyNoteIndexQueryResult, DailyNoteSourceRecord } from './eqh-query.ts';
+import type { DailyNoteIndexQueryResult, DailyNoteSourceRecord } from './examined-human-query.ts';
 import { DEFAULT_JOURNAL_FOLDER, pathIsInJournalFolder } from './journal-folder.ts';
 
-const EH_FORM_PATTERN = /^####\s+(?:EH|EQH)\s+Form\s*$/mi;
+const EH_FORM_PATTERN = /^####\s+EH\s+Form\s*$/mi;
 
 export type DailyNoteStatus = 'needs-import' | 'current-future' | 'imported';
 export type NoteTemporalState = 'overdue' | 'current' | 'future' | 'imported';

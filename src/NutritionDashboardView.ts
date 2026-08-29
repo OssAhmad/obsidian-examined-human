@@ -11,11 +11,11 @@ import {
   renderDashboardTrend,
 } from './DashboardViewBase.ts';
 import { renderDismissibleWarning } from './dismissible-warning.ts';
-import type EqhCalendarPlugin from './main.ts';
-import type { NutritionDashboardQueryResult, NutritionDailyRecord } from './eqh-query.ts';
+import type ExaminedHumanPlugin from './main.ts';
+import type { NutritionDashboardQueryResult, NutritionDailyRecord } from './examined-human-query.ts';
 import { DASHBOARD_WARNING_KEYS } from './warning-preferences.ts';
 
-export const EQH_NUTRITION_DASHBOARD_VIEW_TYPE = 'eqh-nutrition-dashboard';
+export const EXAMINED_HUMAN_NUTRITION_DASHBOARD_VIEW_TYPE = 'examined-human-nutrition-dashboard';
 
 function average(values: Array<number | null>): number | null {
   const available = values.filter((value): value is number => value != null && Number.isFinite(value));
@@ -27,16 +27,16 @@ function latestDailyRecords(records: NutritionDailyRecord[]): NutritionDailyReco
 }
 
 export class NutritionDashboardView extends DashboardViewBase<NutritionDashboardQueryResult> {
-  constructor(leaf: WorkspaceLeaf, plugin: EqhCalendarPlugin) {
+  constructor(leaf: WorkspaceLeaf, plugin: ExaminedHumanPlugin) {
     super(leaf, plugin);
   }
 
   getViewType(): string {
-    return EQH_NUTRITION_DASHBOARD_VIEW_TYPE;
+    return EXAMINED_HUMAN_NUTRITION_DASHBOARD_VIEW_TYPE;
   }
 
   getDisplayText(): string {
-    return 'EH Dashboards — Nutrition';
+    return 'Examined Human — Nutrition';
   }
 
   getIcon(): string {
@@ -59,7 +59,7 @@ export class NutritionDashboardView extends DashboardViewBase<NutritionDashboard
       ? result.dietedDays / result.dietedEvaluatedDays
       : null;
     const debt = result.leisureDebt;
-    const metrics = this.contentEl.createDiv({ cls: 'eqh-domain-metrics' });
+    const metrics = this.contentEl.createDiv({ cls: 'examined-human-domain-metrics' });
     createDashboardMetric(metrics, 'Recorded days', formatDashboardNumber(result.recordedDays, 0), `${result.missingCaloriesDays} without calories`);
     createDashboardMetric(metrics, 'Average calories', avgCalories == null ? '—' : `${formatDashboardNumber(avgCalories, 0)} kcal`, 'Days with a calorie value');
     createDashboardMetric(metrics, 'Average protein', avgProtein == null ? '—' : `${formatDashboardNumber(avgProtein, 1)} g`, 'Days with a protein value');
@@ -91,11 +91,11 @@ export class NutritionDashboardView extends DashboardViewBase<NutritionDashboard
         this.plugin,
         DASHBOARD_WARNING_KEYS.nutritionIncompleteMealEvidence,
         `Leisure debt uses ${debt.assessedDays} schema-v5 assessed meal days; ${result.recordedDays - debt.assessedDays} nutrition days do not contain meal-level leisure evidence. Diet adherence still uses their recorded dieted value.`,
-        'eqh-domain-warning',
+        'examined-human-domain-warning',
       );
     }
 
-    const panels = this.contentEl.createDiv({ cls: 'eqh-domain-panel-grid' });
+    const panels = this.contentEl.createDiv({ cls: 'examined-human-domain-panel-grid' });
     this.renderCalorieTrend(panels, result);
     this.renderProteinTrend(panels, result);
     this.renderMealMix(panels, result);
@@ -149,10 +149,10 @@ export class NutritionDashboardView extends DashboardViewBase<NutritionDashboard
     const records = [...result.daily].reverse().slice(0, 20);
     const panel = createDashboardPanel(container, 'Recent nutrition days', 'Effective values prefer schema-v5 assessment snapshots', true);
     if (records.length === 0) {
-      panel.createDiv({ cls: 'eqh-domain-empty', text: 'No nutrition days were recorded in this period.' });
+      panel.createDiv({ cls: 'examined-human-domain-empty', text: 'No nutrition days were recorded in this period.' });
       return;
     }
-    const table = panel.createEl('table', { cls: 'eqh-domain-table' });
+    const table = panel.createEl('table', { cls: 'examined-human-domain-table' });
     const head = table.createEl('thead').createEl('tr');
     for (const label of ['Date', 'Calories', 'Protein', 'Dieted', 'Leisure meals', 'Evidence']) head.createEl('th', { text: label });
     const body = table.createEl('tbody');

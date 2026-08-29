@@ -215,7 +215,7 @@ function splitFields(line: string, expected?: number): string[] {
 
 function sectionsFromForm(sourceText: string): Map<string, string> {
   const text = sourceText.replace(FEEDBACK_PATTERN, '\n');
-  const form = /^####\s+(?:EH|EQH)\s+Form\s*$/mi.exec(text);
+  const form = /^####\s+EH\s+Form\s*$/mi.exec(text);
   if (!form) throw new Error('The note does not contain an EH Form heading.');
   const formStart = form.index + form[0].length;
   const afterForm = text.slice(formStart);
@@ -712,6 +712,13 @@ function prepareDaily(db: Database, input: NativeDailyNoteInput): PreparedDailyN
   if (imported) errors.push(`${input.noteDate} is already represented by a canonical imported note.`);
   if (errors.length === 0) applyAdminEvents(db, parsed, input.noteDate, errors);
   if (errors.length === 0) validateFacts(db, parsed, errors, warnings);
+  if (errors.length === 0) {
+    const existingMeals = queryMealComponentState(db, input.noteDate);
+    if (existingMeals?.lifecycleState === 'finalized'
+      && !mealComponentMatchesInspection(db, input.noteDate, parsed.mealInspection)) {
+      errors.push(`Historical Meals for ${input.noteDate} differ from the finalized meal component and cannot be replaced.`);
+    }
+  }
   else {
     errors.push(...parsed.mealInspection.errors);
     warnings.push(...parsed.mealInspection.warnings);

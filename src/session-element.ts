@@ -21,16 +21,16 @@ export function createSessionElement(
 ): HTMLElement {
   const element = createEl('button');
   element.className = [
-    'eqh-event',
-    event.dataWarning ? 'eqh-event--warning' : '',
-    vertical.stacked ? 'eqh-event--stacked' : '',
+    'examined-human-event',
+    event.dataWarning ? 'examined-human-event--warning' : '',
+    vertical.stacked ? 'examined-human-event--stacked' : '',
   ].filter(Boolean).join(' ');
   element.type = 'button';
   element.style.top = `${vertical.startMinutes * pxPerMinute}px`;
   element.style.height = `${vertical.durationMinutes * pxPerMinute}px`;
   element.style.left = `calc(${overlapColumn * 100 / overlapCount}% + 2px)`;
   element.style.width = `calc(${100 / overlapCount}% - 4px)`;
-  element.style.setProperty('--eqh-event-color', colorForSession(event, sessionColors));
+  element.style.setProperty('--examined-human-event-color', colorForSession(event, sessionColors));
   const sourceLabel = event.sourceKind === 'planned' ? ', planned journal session' : '';
   const estimatedLabel = event.timeEstimated ? ', estimated time' : '';
   const milestoneCount = event.milestoneDetails?.length ?? 0;
@@ -56,16 +56,16 @@ export function createSessionElement(
   element.title = tooltipLines.join('\n');
 
   const title = createSpan();
-  title.className = 'eqh-event-title';
+  title.className = 'examined-human-event-title';
   title.textContent = event.dataWarning ? `⚠ ${event.title}` : event.title;
   element.appendChild(title);
   const duration = createSpan();
-  duration.className = 'eqh-event-duration';
+  duration.className = 'examined-human-event-duration';
   duration.textContent = formatMinutesAsClock(event.durationMinutes);
   element.appendChild(duration);
   const renderedHeightPx = vertical.durationMinutes * pxPerMinute;
   if (shouldShowSessionTypeFooter(renderedHeightPx, vertical.stacked)) {
-    element.createSpan({ cls: 'eqh-event-type', text: sessionFooterText(event) });
+    element.createSpan({ cls: 'examined-human-event-type', text: sessionFooterText(event) });
   }
   element.addEventListener('click', () => new SessionDetailsModal(app, event).open());
   return element;

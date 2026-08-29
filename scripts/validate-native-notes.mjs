@@ -6,7 +6,7 @@ import { inspectDailyNote } from '../src/native-logger/daily-note.ts';
 
 const [databasePath, ...notePaths] = process.argv.slice(2);
 if (!databasePath || notePaths.length === 0) {
-  throw new Error('Usage: node scripts/validate-native-notes.mjs EQH.db DAILY_NOTE.md [...]');
+  throw new Error('Usage: node scripts/validate-native-notes.mjs EH.db DAILY_NOTE.md [...]');
 }
 
 const require = createRequire(import.meta.url);

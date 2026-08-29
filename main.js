@@ -2193,7 +2193,7 @@ var require_sql_wasm_browser = __commonJS({
 // src/main.ts
 var main_exports = {};
 __export(main_exports, {
-  default: () => EqhCalendarPlugin
+  default: () => ExaminedHumanPlugin
 });
 module.exports = __toCommonJS(main_exports);
 var import_obsidian17 = require("obsidian");
@@ -2216,7 +2216,7 @@ function normalizeVaultDatabasePath(value) {
 
 // src/database-source.ts
 var SQLITE_WAL_HEADER_BYTES = 32;
-var UNCHECKPOINTED_WAL_MESSAGE = "EQH.db has uncheckpointed SQLite WAL data from another writer. Close or checkpoint the writing plugin, then press Refresh; EH Dashboards will not load or overwrite stale main-file bytes.";
+var UNCHECKPOINTED_WAL_MESSAGE = "EH.db has uncheckpointed SQLite WAL data from another writer. Close or checkpoint the writing plugin, then press Refresh; Examined Human will not load or overwrite stale main-file bytes.";
 function hasUncheckpointedWal(size) {
   return typeof size === "number" && size > SQLITE_WAL_HEADER_BYTES;
 }
@@ -2297,7 +2297,7 @@ function colorForSession(event, colors) {
   return (_a = colors[sessionType]) != null ? _a : UNKNOWN_TYPE_COLOR;
 }
 
-// src/eqh-query.ts
+// src/examined-human-query.ts
 var REQUIRED_COLUMNS = {
   sessions: ["id", "engagement_id", "date", "start_time", "end_time", "duration_minutes", "session_type_id", "notes"],
   session_types: ["id", "code"],
@@ -3159,6 +3159,7 @@ function queryEngagementDashboard(db, requestedEngagementId, startDate, endDate)
   });
   const transactions = rows(db, `
     SELECT transaction_row.id,
+           transaction_row.account_id,
            transaction_row.date,
            transaction_row.amount,
            COALESCE(NULLIF(TRIM(account.currency), ''), 'Unspecified') AS currency,
@@ -3354,6 +3355,7 @@ function queryFinancialDashboard(db, startDate, endDate) {
     LIMIT 24
   `, rangeParams).map((row) => ({
     id: Number(row.id),
+    accountId: Number(row.account_id),
     date: String(row.date),
     amount: Number(row.amount),
     currency: String(row.currency),
@@ -3716,7 +3718,7 @@ function querySessions(db, startDate, endDate, todayDate = startDate, includePla
       sourceKind: "actual"
     };
     if (sessionType.toLowerCase() === "chor") {
-      event.dataWarning = `Session ${id} uses the invalid type "chor". Correct it in EQH.db.`;
+      event.dataWarning = `Session ${id} uses the invalid type "chor". Correct it in EH.db.`;
       issues.push({ sessionId: id, message: event.dataWarning });
     }
     events.push(event);
@@ -3755,8 +3757,8 @@ function getSqlJs() {
   return sqlPromise;
 }
 
-// src/eqh-database.ts
-var EqhDatabase = class {
+// src/examined-human-database.ts
+var ExaminedHumanDatabase = class {
   constructor(app) {
     this.app = app;
   }
@@ -3854,7 +3856,7 @@ function pathIsInJournalFolder(filePath, journalFolder) {
 }
 
 // src/daily-note-index.ts
-var EH_FORM_PATTERN = /^####\s+(?:EH|EQH)\s+Form\s*$/mi;
+var EH_FORM_PATTERN = /^####\s+EH\s+Form\s*$/mi;
 function parseDailyFilename(fileName) {
   if (!fileName.endsWith(".md")) return null;
   const label = fileName.slice(0, -3);
@@ -3912,12 +3914,12 @@ var DailyImportConfirmationModal = class extends import_obsidian2.Modal {
   }
   onOpen() {
     var _a;
-    this.modalEl.addClass("eqh-daily-confirm-modal");
+    this.modalEl.addClass("examined-human-daily-confirm-modal");
     this.contentEl.createEl("h2", { text: this.options.title });
     this.contentEl.createEl("p", { text: this.options.explanation });
     const completeness = this.options.inspection.completeness;
     if (completeness) {
-      const summary = this.contentEl.createDiv({ cls: "eqh-daily-confirm-summary" });
+      const summary = this.contentEl.createDiv({ cls: "examined-human-daily-confirm-summary" });
       const items = [
         ["Sessions", completeness.session_count],
         ["Transactions", completeness.transaction_count],
@@ -3927,13 +3929,13 @@ var DailyImportConfirmationModal = class extends import_obsidian2.Modal {
         ["Admin events", completeness.admin_event_count]
       ];
       for (const [label, value] of items) {
-        const card = summary.createDiv({ cls: "eqh-daily-confirm-stat" });
-        card.createDiv({ cls: "eqh-weekly-eyebrow", text: String(label) });
-        card.createDiv({ cls: "eqh-daily-confirm-value", text: String(value) });
+        const card = summary.createDiv({ cls: "examined-human-daily-confirm-stat" });
+        card.createDiv({ cls: "examined-human-weekly-eyebrow", text: String(label) });
+        card.createDiv({ cls: "examined-human-daily-confirm-value", text: String(value) });
       }
       const missing = completeness.missing_daily_metrics;
       const metrics = this.contentEl.createDiv({
-        cls: `eqh-daily-completeness-callout ${missing.length > 0 ? "is-incomplete" : "is-complete"}`
+        cls: `examined-human-daily-completeness-callout ${missing.length > 0 ? "is-incomplete" : "is-complete"}`
       });
       metrics.createEl("strong", {
         text: missing.length > 0 ? `${missing.length} empty daily metric cell${missing.length === 1 ? "" : "s"}` : "All daily metric cells are filled"
@@ -3941,29 +3943,29 @@ var DailyImportConfirmationModal = class extends import_obsidian2.Modal {
       if (missing.length > 0) metrics.createDiv({ text: missing.join(", ") });
     }
     if (this.options.inspection.warnings.length > 0) {
-      const warnings = this.contentEl.createDiv({ cls: "eqh-daily-validation-callout is-warning" });
+      const warnings = this.contentEl.createDiv({ cls: "examined-human-daily-validation-callout is-warning" });
       warnings.createEl("strong", { text: "Validation warnings" });
       warnings.createEl("ul");
       const list = warnings.querySelector("ul");
       for (const warning2 of this.options.inspection.warnings) list == null ? void 0 : list.createEl("li", { text: warning2 });
     }
     if (this.options.inspection.errors.length > 0) {
-      const errors = this.contentEl.createDiv({ cls: "eqh-daily-validation-callout is-error" });
+      const errors = this.contentEl.createDiv({ cls: "examined-human-daily-validation-callout is-error" });
       errors.createEl("strong", { text: "Historical import blockers" });
       const list = errors.createEl("ul");
       for (const error of this.options.inspection.errors) list.createEl("li", { text: error });
     }
     if ((_a = this.options.dryRunOutput) == null ? void 0 : _a.trim()) {
-      this.contentEl.createEl("details", { cls: "eqh-daily-dry-run-details" }, (details) => {
+      this.contentEl.createEl("details", { cls: "examined-human-daily-dry-run-details" }, (details) => {
         details.createEl("summary", { text: "Dry-run output" });
         details.createEl("textarea", {
-          cls: "eqh-daily-output",
+          cls: "examined-human-daily-output",
           text: this.options.dryRunOutput,
           attr: { readonly: "true", rows: "8" }
         });
       });
     }
-    const warning = this.contentEl.createEl("p", { cls: "eqh-daily-confirm-warning" });
+    const warning = this.contentEl.createEl("p", { cls: "examined-human-daily-confirm-warning" });
     warning.createEl("strong", { text: "Nothing has been imported yet. " });
     warning.appendText("Confirm only after reviewing the preview and completeness summary.");
     const actions = this.contentEl.createDiv({ cls: "modal-button-container" });
@@ -4002,14 +4004,14 @@ var NativeMealImportConfirmationModal = class extends import_obsidian3.Modal {
   onOpen() {
     var _a;
     const { inspection } = this.options;
-    this.modalEl.addClass("eqh-daily-confirm-modal");
+    this.modalEl.addClass("examined-human-daily-confirm-modal");
     this.contentEl.createEl("h2", {
       text: this.options.replacing ? `Replace Meals for ${this.options.date}` : `Import Meals for ${this.options.date}`
     });
     this.contentEl.createEl("p", {
       text: this.options.historical ? "This is a finalized component import. After confirmation, historical Meals cannot be re-imported." : "This is an ephemeral component import. You can replace it freely while the date is current or future."
     });
-    const summary = this.contentEl.createDiv({ cls: "eqh-daily-confirm-summary" });
+    const summary = this.contentEl.createDiv({ cls: "examined-human-daily-confirm-summary" });
     const values = [
       ["Food rows", inspection.foodRowCount],
       ["Direct leisure", `${inspection.directLeisureMeals}/3`],
@@ -4019,17 +4021,17 @@ var NativeMealImportConfirmationModal = class extends import_obsidian3.Modal {
       ["Dieted", inspection.nutrition.evaluatedDieted == null ? "\u2014" : inspection.nutrition.evaluatedDieted === 1 ? "Yes" : "No"]
     ];
     for (const [label, value] of values) {
-      const card = summary.createDiv({ cls: "eqh-daily-confirm-stat" });
-      card.createDiv({ cls: "eqh-weekly-eyebrow", text: String(label) });
-      card.createDiv({ cls: "eqh-daily-confirm-value", text: String(value) });
+      const card = summary.createDiv({ cls: "examined-human-daily-confirm-stat" });
+      card.createDiv({ cls: "examined-human-weekly-eyebrow", text: String(label) });
+      card.createDiv({ cls: "examined-human-daily-confirm-value", text: String(value) });
     }
     if (inspection.warnings.length > 0) {
-      const warnings = this.contentEl.createDiv({ cls: "eqh-daily-validation-callout is-warning" });
+      const warnings = this.contentEl.createDiv({ cls: "examined-human-daily-validation-callout is-warning" });
       warnings.createEl("strong", { text: "Validation warnings" });
       const list = warnings.createEl("ul");
       for (const warning of inspection.warnings) list.createEl("li", { text: warning });
     }
-    const safety = this.contentEl.createEl("p", { cls: "eqh-daily-confirm-warning" });
+    const safety = this.contentEl.createEl("p", { cls: "examined-human-daily-confirm-warning" });
     safety.createEl("strong", {
       text: this.options.historical ? "A database backup will be created first. " : "No backup is created for this ephemeral-only write. "
     });
@@ -4305,7 +4307,7 @@ function inspectMeals(content, thresholds) {
 var import_obsidian4 = require("obsidian");
 
 // migrations/000_create_schema_v5.sql
-var create_schema_v5_default = "-- Empty EQH schema v5 for native Obsidian database creation.\n-- This file contains structure and canonical taxonomy seeds only; it contains no user data.\n\nPRAGMA foreign_keys = OFF;\nBEGIN IMMEDIATE;\n\nCREATE TABLE schema_migrations (\n    version INTEGER PRIMARY KEY,\n    name TEXT NOT NULL,\n    applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP\n);\n\nCREATE TABLE session_types (\n    id INTEGER PRIMARY KEY,\n    code TEXT NOT NULL COLLATE NOCASE UNIQUE,\n    label TEXT NOT NULL,\n    description TEXT,\n    is_active INTEGER NOT NULL DEFAULT 1 CHECK (is_active IN (0, 1)),\n    sort_order INTEGER NOT NULL DEFAULT 0,\n    CHECK (code <> '' AND code = lower(trim(code)))\n);\n\nCREATE TABLE engagement_types (\n    id INTEGER PRIMARY KEY,\n    code TEXT NOT NULL COLLATE NOCASE UNIQUE,\n    label TEXT NOT NULL,\n    description TEXT,\n    is_active INTEGER NOT NULL DEFAULT 1 CHECK (is_active IN (0, 1)),\n    sort_order INTEGER NOT NULL DEFAULT 0,\n    CHECK (code <> '' AND code = lower(trim(code)))\n);\n\nCREATE TABLE engagement_statuses (\n    id INTEGER PRIMARY KEY,\n    code TEXT NOT NULL COLLATE NOCASE UNIQUE,\n    label TEXT NOT NULL,\n    description TEXT,\n    is_active INTEGER NOT NULL DEFAULT 1 CHECK (is_active IN (0, 1)),\n    sort_order INTEGER NOT NULL DEFAULT 0,\n    CHECK (code <> '' AND code = lower(trim(code)))\n);\n\nCREATE TABLE engagements (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    name TEXT NOT NULL,\n    type_id INTEGER NOT NULL REFERENCES engagement_types(id),\n    status_id INTEGER REFERENCES engagement_statuses(id),\n    start_date DATE,\n    target_date DATE,\n    completion_date DATE,\n    notes TEXT\n);\n\nCREATE TABLE sessions (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    engagement_id INTEGER NOT NULL REFERENCES engagements(id),\n    date DATE NOT NULL,\n    start_time TEXT,\n    end_time TEXT,\n    duration_minutes INTEGER,\n    session_type_id INTEGER NOT NULL REFERENCES session_types(id),\n    notes TEXT\n);\n\nCREATE TABLE note_sources (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    note_date TEXT NOT NULL UNIQUE,\n    file_name TEXT NOT NULL,\n    file_path TEXT NOT NULL UNIQUE,\n    content_checksum TEXT NOT NULL,\n    lifecycle_state TEXT NOT NULL,\n    parse_status TEXT NOT NULL,\n    last_error TEXT,\n    first_seen_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,\n    last_scanned_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,\n    last_import_attempt_at TEXT,\n    finalized_at TEXT\n);\n\nCREATE TABLE planned_sessions (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    source_note_id INTEGER NOT NULL REFERENCES note_sources(id) ON DELETE CASCADE,\n    source_ordinal INTEGER NOT NULL,\n    date TEXT NOT NULL,\n    interval_raw TEXT,\n    start_time TEXT NOT NULL,\n    end_time TEXT NOT NULL,\n    duration_minutes INTEGER NOT NULL,\n    time_is_estimated INTEGER NOT NULL DEFAULT 0,\n    session_type_raw TEXT NOT NULL,\n    resolved_session_type_id INTEGER REFERENCES session_types(id) ON DELETE SET NULL,\n    engagement_raw TEXT NOT NULL,\n    resolved_engagement_id INTEGER REFERENCES engagements(id) ON DELETE SET NULL,\n    notes TEXT,\n    warning_text TEXT,\n    UNIQUE (source_note_id, source_ordinal)\n);\n\nCREATE TABLE daily_metrics (\n    date DATE PRIMARY KEY,\n    mood REAL,\n    energy REAL,\n    stress REAL,\n    weight_kg REAL,\n    sleep_hours REAL,\n    calories INTEGER,\n    protein_g INTEGER,\n    fasted INTEGER DEFAULT 0,\n    dieted INTEGER DEFAULT 0,\n    studied INTEGER DEFAULT 0,\n    worked INTEGER DEFAULT 0,\n    exercised INTEGER DEFAULT 0,\n    notes TEXT\n);\n\nCREATE TABLE imported_notes (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    note_date DATE NOT NULL,\n    file_name TEXT NOT NULL,\n    file_path TEXT NOT NULL,\n    imported_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,\n    checksum TEXT,\n    UNIQUE (file_name)\n);\n\nCREATE TABLE accounts (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    name TEXT NOT NULL,\n    type TEXT,\n    address TEXT,\n    currency TEXT DEFAULT NULL\n);\n\nCREATE TABLE account_aliases (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    account_id INTEGER NOT NULL REFERENCES accounts(id),\n    alias TEXT NOT NULL UNIQUE\n);\n\nCREATE TABLE transactions (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    account_id INTEGER NOT NULL REFERENCES accounts(id),\n    date DATE NOT NULL,\n    amount REAL NOT NULL,\n    category TEXT,\n    description TEXT\n);\n\nCREATE TABLE engagement_aliases (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    engagement_id INTEGER NOT NULL REFERENCES engagements(id),\n    alias TEXT NOT NULL UNIQUE\n);\n\nCREATE TABLE engagement_milestones (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    engagement_id INTEGER NOT NULL REFERENCES engagements(id),\n    name TEXT NOT NULL,\n    date DATE,\n    notes TEXT,\n    session_id INTEGER NOT NULL REFERENCES sessions(id) ON DELETE RESTRICT\n);\n\nCREATE TABLE engagement_measurements (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    milestone_id INTEGER NOT NULL REFERENCES engagement_milestones(id),\n    metric_name TEXT NOT NULL,\n    metric_value TEXT NOT NULL,\n    measurement_date DATE,\n    notes TEXT\n);\n\nCREATE TABLE exercises (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    name TEXT NOT NULL,\n    category TEXT\n);\n\nCREATE TABLE exercise_aliases (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    exercise_id INTEGER NOT NULL REFERENCES exercises(id),\n    alias TEXT NOT NULL UNIQUE\n);\n\nCREATE TABLE session_exercises (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    session_id INTEGER NOT NULL REFERENCES sessions(id),\n    exercise_id INTEGER NOT NULL REFERENCES exercises(id),\n    order_index INTEGER\n);\n\nCREATE TABLE exercise_sets (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    session_exercise_id INTEGER NOT NULL REFERENCES session_exercises(id),\n    set_number INTEGER,\n    weight REAL,\n    reps INTEGER,\n    distance REAL,\n    duration_minutes REAL,\n    notes TEXT,\n    pain_level REAL,\n    duration_seconds REAL\n);\n\nCREATE TABLE muscles (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    name TEXT NOT NULL UNIQUE,\n    body_region TEXT,\n    notes TEXT\n);\n\nCREATE TABLE exercise_muscles (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    exercise_id INTEGER NOT NULL REFERENCES exercises(id),\n    muscle_id INTEGER NOT NULL REFERENCES muscles(id),\n    role TEXT\n);\n\nCREATE TABLE people (\n    id INTEGER PRIMARY KEY,\n    name TEXT NOT NULL\n);\n\nCREATE TABLE reports (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    person_id INTEGER NOT NULL REFERENCES people(id),\n    report_timestamp TEXT NOT NULL,\n    report_type TEXT NOT NULL,\n    provider TEXT,\n    title TEXT,\n    relative_path TEXT NOT NULL\n);\n\nCREATE TABLE markers (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    name TEXT NOT NULL UNIQUE,\n    unit TEXT,\n    textbook_normal_range TEXT\n);\n\nCREATE TABLE measurements (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    report_id INTEGER NOT NULL REFERENCES reports(id),\n    marker_id INTEGER NOT NULL REFERENCES markers(id),\n    value REAL NOT NULL,\n    notes TEXT,\n    reference_range_at_time TEXT,\n    flag TEXT\n);\n\nCREATE TABLE stoicism_entries (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    date DATE NOT NULL,\n    score REAL,\n    notes TEXT\n);\n\nCREATE TABLE weekly_plans (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    week_start_date DATE NOT NULL UNIQUE,\n    source_file_name TEXT NOT NULL,\n    source_file_path TEXT NOT NULL UNIQUE,\n    source_checksum TEXT NOT NULL,\n    main_outcome TEXT,\n    important_deadline TEXT,\n    constraint_or_risk TEXT,\n    imported_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP\n);\n\nCREATE TABLE weekly_plan_sessions (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    weekly_plan_id INTEGER NOT NULL REFERENCES weekly_plans(id) ON DELETE CASCADE,\n    date DATE NOT NULL,\n    start_time TEXT NOT NULL,\n    end_time TEXT NOT NULL,\n    duration_minutes INTEGER NOT NULL CHECK (duration_minutes > 0),\n    session_type_id INTEGER REFERENCES session_types(id),\n    engagement_id INTEGER REFERENCES engagements(id),\n    original_cell_text TEXT NOT NULL,\n    notes TEXT,\n    source_row INTEGER NOT NULL,\n    source_column_start INTEGER NOT NULL,\n    source_column_end INTEGER NOT NULL,\n    UNIQUE (weekly_plan_id, date, start_time, end_time)\n);\n\nCREATE TABLE weekly_commitments (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    weekly_plan_id INTEGER NOT NULL REFERENCES weekly_plans(id) ON DELETE CASCADE,\n    source_ordinal INTEGER NOT NULL,\n    target_minutes INTEGER NOT NULL CHECK (target_minutes > 0),\n    engagement_id INTEGER NOT NULL REFERENCES engagements(id),\n    engagement_raw TEXT NOT NULL,\n    commitment_text TEXT NOT NULL,\n    UNIQUE (weekly_plan_id, source_ordinal)\n);\n\nCREATE TABLE meal_events (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    day DATE NOT NULL,\n    meal_type TEXT NOT NULL COLLATE NOCASE,\n    is_leisure INTEGER NOT NULL DEFAULT 0 CHECK (is_leisure IN (0, 1)),\n    classification_source TEXT NOT NULL DEFAULT 'default'\n        CHECK (classification_source IN ('default', 'manual', 'meal_limit', 'manual_and_meal_limit')),\n    calorie_limit_kcal REAL CHECK (calorie_limit_kcal IS NULL OR calorie_limit_kcal > 0),\n    notes TEXT,\n    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,\n    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,\n    CHECK (meal_type IN ('breakfast', 'lunch', 'dinner', 'snacks')),\n    UNIQUE (day, meal_type)\n);\n\nCREATE TABLE daily_meals (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    day DATE NOT NULL,\n    food TEXT NOT NULL CHECK (trim(food) <> ''),\n    calories INTEGER,\n    protein_g REAL,\n    meal_event_id INTEGER REFERENCES meal_events(id) ON DELETE CASCADE,\n    item_ordinal INTEGER CHECK (item_ordinal IS NULL OR item_ordinal > 0)\n);\n\nCREATE TABLE daily_meal_assessments (\n    day DATE PRIMARY KEY,\n    daily_calorie_limit_kcal REAL NOT NULL CHECK (daily_calorie_limit_kcal >= 0),\n    minimum_protein_g REAL NOT NULL DEFAULT 0 CHECK (minimum_protein_g >= 0),\n    daily_calories_kcal REAL CHECK (daily_calories_kcal IS NULL OR daily_calories_kcal >= 0),\n    daily_metrics_calories_kcal REAL CHECK (daily_metrics_calories_kcal IS NULL OR daily_metrics_calories_kcal >= 0),\n    meal_items_calories_kcal REAL NOT NULL DEFAULT 0 CHECK (meal_items_calories_kcal >= 0),\n    daily_calorie_source TEXT NOT NULL DEFAULT 'missing'\n        CHECK (daily_calorie_source IN ('daily_metrics', 'meal_items', 'higher_of_both', 'missing')),\n    protein_g REAL CHECK (protein_g IS NULL OR protein_g >= 0),\n    recorded_dieted INTEGER CHECK (recorded_dieted IS NULL OR recorded_dieted IN (0, 1)),\n    evaluated_dieted INTEGER CHECK (evaluated_dieted IS NULL OR evaluated_dieted IN (0, 1)),\n    evaluated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP\n);\n\nCREATE TABLE note_import_components (\n    note_date DATE NOT NULL,\n    component TEXT NOT NULL CHECK (trim(component) <> ''),\n    lifecycle_state TEXT NOT NULL CHECK (lifecycle_state IN ('ephemeral', 'finalized')),\n    source_file_path TEXT NOT NULL CHECK (trim(source_file_path) <> ''),\n    source_checksum TEXT NOT NULL CHECK (trim(source_checksum) <> ''),\n    plugin_version TEXT NOT NULL CHECK (trim(plugin_version) <> ''),\n    row_count INTEGER NOT NULL DEFAULT 0 CHECK (row_count >= 0),\n    imported_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,\n    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,\n    PRIMARY KEY (note_date, component)\n);\n\nCREATE UNIQUE INDEX uq_accounts_name_nocase ON accounts(name COLLATE NOCASE);\nCREATE UNIQUE INDEX uq_account_aliases_alias_nocase ON account_aliases(alias COLLATE NOCASE);\nCREATE UNIQUE INDEX uq_engagements_name_nocase ON engagements(name COLLATE NOCASE);\nCREATE UNIQUE INDEX uq_engagement_aliases_alias_nocase ON engagement_aliases(alias COLLATE NOCASE);\nCREATE UNIQUE INDEX uq_exercise_aliases_alias_nocase ON exercise_aliases(alias COLLATE NOCASE);\nCREATE UNIQUE INDEX uq_muscles_name_nocase ON muscles(name COLLATE NOCASE);\nCREATE INDEX idx_sessions_date ON sessions(date);\nCREATE INDEX idx_sessions_engagement ON sessions(engagement_id);\nCREATE INDEX idx_sessions_type ON sessions(session_type_id);\nCREATE INDEX idx_engagements_type ON engagements(type_id);\nCREATE INDEX idx_engagements_status ON engagements(status_id);\nCREATE INDEX idx_note_sources_date ON note_sources(note_date);\nCREATE INDEX idx_note_sources_state ON note_sources(lifecycle_state);\nCREATE INDEX idx_planned_sessions_date ON planned_sessions(date);\nCREATE INDEX idx_planned_sessions_source ON planned_sessions(source_note_id);\nCREATE INDEX idx_planned_sessions_type ON planned_sessions(resolved_session_type_id);\nCREATE INDEX idx_transactions_date ON transactions(date);\nCREATE INDEX idx_engagement_milestones_session ON engagement_milestones(session_id);\nCREATE INDEX idx_exercise_sets_session ON exercise_sets(session_exercise_id);\nCREATE INDEX idx_weekly_plan_sessions_plan ON weekly_plan_sessions(weekly_plan_id);\nCREATE INDEX idx_weekly_plan_sessions_date ON weekly_plan_sessions(date);\nCREATE INDEX idx_weekly_plan_sessions_type ON weekly_plan_sessions(session_type_id);\nCREATE INDEX idx_weekly_plan_sessions_engagement ON weekly_plan_sessions(engagement_id);\nCREATE INDEX idx_weekly_commitments_plan ON weekly_commitments(weekly_plan_id);\nCREATE INDEX idx_weekly_commitments_engagement ON weekly_commitments(engagement_id);\nCREATE INDEX idx_meal_events_day ON meal_events(day);\nCREATE INDEX idx_meal_events_type ON meal_events(meal_type);\nCREATE INDEX idx_daily_meals_day ON daily_meals(day);\nCREATE INDEX idx_daily_meals_meal_event ON daily_meals(meal_event_id, item_ordinal);\nCREATE INDEX idx_note_import_components_state ON note_import_components(lifecycle_state, note_date);\n\nCREATE TRIGGER sessions_require_active_type_insert\nBEFORE INSERT ON sessions\nWHEN NOT EXISTS (SELECT 1 FROM session_types WHERE id = NEW.session_type_id AND is_active = 1)\nBEGIN SELECT RAISE(ABORT, 'unknown or inactive session type'); END;\n\nCREATE TRIGGER sessions_require_active_type_update\nBEFORE UPDATE OF session_type_id ON sessions\nWHEN NOT EXISTS (SELECT 1 FROM session_types WHERE id = NEW.session_type_id AND is_active = 1)\nBEGIN SELECT RAISE(ABORT, 'unknown or inactive session type'); END;\n\nCREATE TRIGGER engagements_require_active_type_insert\nBEFORE INSERT ON engagements\nWHEN NOT EXISTS (SELECT 1 FROM engagement_types WHERE id = NEW.type_id AND is_active = 1)\nBEGIN SELECT RAISE(ABORT, 'unknown or inactive engagement type'); END;\n\nCREATE TRIGGER engagements_require_active_type_update\nBEFORE UPDATE OF type_id ON engagements\nWHEN NOT EXISTS (SELECT 1 FROM engagement_types WHERE id = NEW.type_id AND is_active = 1)\nBEGIN SELECT RAISE(ABORT, 'unknown or inactive engagement type'); END;\n\nCREATE TRIGGER engagements_require_active_status_insert\nBEFORE INSERT ON engagements\nWHEN NEW.status_id IS NOT NULL\n AND NOT EXISTS (SELECT 1 FROM engagement_statuses WHERE id = NEW.status_id AND is_active = 1)\nBEGIN SELECT RAISE(ABORT, 'unknown or inactive engagement status'); END;\n\nCREATE TRIGGER engagements_require_active_status_update\nBEFORE UPDATE OF status_id ON engagements\nWHEN NEW.status_id IS NOT NULL\n AND NOT EXISTS (SELECT 1 FROM engagement_statuses WHERE id = NEW.status_id AND is_active = 1)\nBEGIN SELECT RAISE(ABORT, 'unknown or inactive engagement status'); END;\n\nCREATE TRIGGER daily_meals_meal_event_day_insert\nBEFORE INSERT ON daily_meals\nWHEN NEW.meal_event_id IS NOT NULL\n AND NOT EXISTS (SELECT 1 FROM meal_events WHERE id = NEW.meal_event_id AND day = NEW.day)\nBEGIN SELECT RAISE(ABORT, 'daily_meals.day must match its meal event day'); END;\n\nCREATE TRIGGER daily_meals_meal_event_day_update\nBEFORE UPDATE OF meal_event_id, day ON daily_meals\nWHEN NEW.meal_event_id IS NOT NULL\n AND NOT EXISTS (SELECT 1 FROM meal_events WHERE id = NEW.meal_event_id AND day = NEW.day)\nBEGIN SELECT RAISE(ABORT, 'daily_meals.day must match its meal event day'); END;\n\nCREATE TRIGGER trg_exercises_name_nocase_insert\nBEFORE INSERT ON exercises\nWHEN EXISTS (SELECT 1 FROM exercises WHERE name = NEW.name COLLATE NOCASE)\nBEGIN SELECT RAISE(ABORT, 'exercise name already exists (case-insensitive)'); END;\n\nCREATE TRIGGER trg_exercises_name_nocase_update\nBEFORE UPDATE OF name ON exercises\nWHEN EXISTS (SELECT 1 FROM exercises WHERE id <> OLD.id AND name = NEW.name COLLATE NOCASE)\nBEGIN SELECT RAISE(ABORT, 'exercise name already exists (case-insensitive)'); END;\n\nCREATE VIEW meal_event_totals AS\nSELECT\n    me.id AS meal_event_id,\n    me.day,\n    me.meal_type,\n    me.is_leisure AS recorded_is_leisure,\n    me.classification_source,\n    me.calorie_limit_kcal,\n    COUNT(dm.id) AS item_count,\n    COALESCE(SUM(dm.calories), 0) AS total_calories_kcal,\n    COALESCE(SUM(dm.protein_g), 0.0) AS total_protein_g,\n    SUM(CASE WHEN dm.id IS NOT NULL AND dm.calories IS NULL THEN 1 ELSE 0 END) AS items_missing_calories,\n    CASE\n        WHEN me.meal_type = 'snacks' THEN 0\n        WHEN me.is_leisure = 1 THEN 1\n        WHEN me.calorie_limit_kcal IS NOT NULL\n         AND COALESCE(SUM(dm.calories), 0) > me.calorie_limit_kcal THEN 1\n        ELSE 0\n    END AS evaluated_is_leisure\nFROM meal_events AS me\nLEFT JOIN daily_meals AS dm ON dm.meal_event_id = me.id\nGROUP BY me.id, me.day, me.meal_type, me.is_leisure, me.classification_source, me.calorie_limit_kcal;\n\nCREATE VIEW daily_leisure_meal_summary AS\nWITH evaluated_days AS (\n    SELECT\n        dma.day,\n        dma.daily_calorie_limit_kcal,\n        dma.daily_calories_kcal,\n        COALESCE(SUM(CASE\n            WHEN met.meal_type IN ('breakfast', 'lunch', 'dinner') THEN met.evaluated_is_leisure\n            ELSE 0\n        END), 0) AS direct_leisure_meals\n    FROM daily_meal_assessments AS dma\n    LEFT JOIN meal_event_totals AS met ON met.day = dma.day\n    GROUP BY dma.day, dma.daily_calorie_limit_kcal, dma.daily_calories_kcal\n)\nSELECT\n    day,\n    3 AS counted_meals,\n    direct_leisure_meals,\n    daily_calories_kcal,\n    daily_calorie_limit_kcal,\n    CASE\n        WHEN daily_calories_kcal IS NOT NULL\n         AND daily_calories_kcal > daily_calorie_limit_kcal\n         AND daily_calorie_limit_kcal > 0 THEN 1\n        ELSE 0\n    END AS daily_limit_exceeded,\n    CASE\n        WHEN daily_calories_kcal IS NOT NULL\n         AND daily_calories_kcal > daily_calorie_limit_kcal\n         AND daily_calorie_limit_kcal > 0\n         AND direct_leisure_meals < 2 THEN 2\n        ELSE direct_leisure_meals\n    END AS leisure_meals\nFROM evaluated_days;\n\nINSERT INTO session_types (code, label, description, sort_order) VALUES\n('authorship', 'Authorship', 'Creating an authored work', 10),\n('chore', 'Chore', 'Routine personal or household work', 20),\n('exercise', 'Exercise', 'Physical training', 30),\n('leisure', 'Leisure', 'Recreation and unstructured leisure', 40),\n('maintenance', 'Maintenance', 'Maintaining systems, spaces, or obligations', 50),\n('meditation', 'Meditation', 'Meditation or contemplative practice', 60),\n('reading', 'Reading', 'Reading not classified as study or research', 70),\n('research', 'Research', 'Exploratory search and evidence gathering', 80),\n('social', 'Social', 'Social and relationship time', 90),\n('study', 'Study', 'Structured learning toward mastery', 100),\n('thinking', 'Thinking', 'Deliberate reflection or problem framing', 110),\n('work', 'Work', 'Professional execution', 120),\n('writing', 'Writing', 'Writing not classified as authorship', 130);\n\nINSERT INTO engagement_types (code, label, sort_order) VALUES\n('article', 'Article', 10), ('authorship', 'Authorship', 20), ('book', 'Book', 30),\n('career', 'Career', 40), ('certification', 'Certification', 50), ('course', 'Course', 60),\n('exam', 'Exam', 70), ('fitness', 'Fitness', 80), ('leisure', 'Leisure', 90),\n('maintenance', 'Maintenance', 100), ('practice', 'Practice', 110),\n('relationship', 'Relationship', 120), ('speech', 'Speech', 130), ('startup', 'Startup', 140);\n\nINSERT INTO engagement_statuses (code, label, sort_order) VALUES\n('planned', 'Planned', 10), ('pending', 'Pending', 20), ('active', 'Active', 30),\n('paused', 'Paused', 40), ('completed', 'Completed', 50), ('abandoned', 'Abandoned', 60);\n\nINSERT INTO schema_migrations (version, name) VALUES\n(1, 'add note-source tracking and planned sessions'),\n(2, 'link engagement milestones to achievement sessions'),\n(3, 'add canonical session and engagement taxonomies'),\n(4, 'normalize taxonomy references and add meals and weekly planning'),\n(5, 'add meal events, leisure assessment, and component provenance');\n\nPRAGMA user_version = 5;\nCOMMIT;\nPRAGMA foreign_keys = ON;\n";
+var create_schema_v5_default = "-- Empty Examined Human schema v5 for native Obsidian database creation.\n-- This file contains structure and canonical taxonomy seeds only; it contains no user data.\n\nPRAGMA foreign_keys = OFF;\nBEGIN IMMEDIATE;\n\nCREATE TABLE schema_migrations (\n    version INTEGER PRIMARY KEY,\n    name TEXT NOT NULL,\n    applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP\n);\n\nCREATE TABLE session_types (\n    id INTEGER PRIMARY KEY,\n    code TEXT NOT NULL COLLATE NOCASE UNIQUE,\n    label TEXT NOT NULL,\n    description TEXT,\n    is_active INTEGER NOT NULL DEFAULT 1 CHECK (is_active IN (0, 1)),\n    sort_order INTEGER NOT NULL DEFAULT 0,\n    CHECK (code <> '' AND code = lower(trim(code)))\n);\n\nCREATE TABLE engagement_types (\n    id INTEGER PRIMARY KEY,\n    code TEXT NOT NULL COLLATE NOCASE UNIQUE,\n    label TEXT NOT NULL,\n    description TEXT,\n    is_active INTEGER NOT NULL DEFAULT 1 CHECK (is_active IN (0, 1)),\n    sort_order INTEGER NOT NULL DEFAULT 0,\n    CHECK (code <> '' AND code = lower(trim(code)))\n);\n\nCREATE TABLE engagement_statuses (\n    id INTEGER PRIMARY KEY,\n    code TEXT NOT NULL COLLATE NOCASE UNIQUE,\n    label TEXT NOT NULL,\n    description TEXT,\n    is_active INTEGER NOT NULL DEFAULT 1 CHECK (is_active IN (0, 1)),\n    sort_order INTEGER NOT NULL DEFAULT 0,\n    CHECK (code <> '' AND code = lower(trim(code)))\n);\n\nCREATE TABLE engagements (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    name TEXT NOT NULL,\n    type_id INTEGER NOT NULL REFERENCES engagement_types(id),\n    status_id INTEGER REFERENCES engagement_statuses(id),\n    start_date DATE,\n    target_date DATE,\n    completion_date DATE,\n    notes TEXT\n);\n\nCREATE TABLE sessions (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    engagement_id INTEGER NOT NULL REFERENCES engagements(id),\n    date DATE NOT NULL,\n    start_time TEXT,\n    end_time TEXT,\n    duration_minutes INTEGER,\n    session_type_id INTEGER NOT NULL REFERENCES session_types(id),\n    notes TEXT\n);\n\nCREATE TABLE note_sources (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    note_date TEXT NOT NULL UNIQUE,\n    file_name TEXT NOT NULL,\n    file_path TEXT NOT NULL UNIQUE,\n    content_checksum TEXT NOT NULL,\n    lifecycle_state TEXT NOT NULL,\n    parse_status TEXT NOT NULL,\n    last_error TEXT,\n    first_seen_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,\n    last_scanned_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,\n    last_import_attempt_at TEXT,\n    finalized_at TEXT\n);\n\nCREATE TABLE planned_sessions (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    source_note_id INTEGER NOT NULL REFERENCES note_sources(id) ON DELETE CASCADE,\n    source_ordinal INTEGER NOT NULL,\n    date TEXT NOT NULL,\n    interval_raw TEXT,\n    start_time TEXT NOT NULL,\n    end_time TEXT NOT NULL,\n    duration_minutes INTEGER NOT NULL,\n    time_is_estimated INTEGER NOT NULL DEFAULT 0,\n    session_type_raw TEXT NOT NULL,\n    resolved_session_type_id INTEGER REFERENCES session_types(id) ON DELETE SET NULL,\n    engagement_raw TEXT NOT NULL,\n    resolved_engagement_id INTEGER REFERENCES engagements(id) ON DELETE SET NULL,\n    notes TEXT,\n    warning_text TEXT,\n    UNIQUE (source_note_id, source_ordinal)\n);\n\nCREATE TABLE daily_metrics (\n    date DATE PRIMARY KEY,\n    mood REAL,\n    energy REAL,\n    stress REAL,\n    weight_kg REAL,\n    sleep_hours REAL,\n    calories INTEGER,\n    protein_g INTEGER,\n    fasted INTEGER DEFAULT 0,\n    dieted INTEGER DEFAULT 0,\n    studied INTEGER DEFAULT 0,\n    worked INTEGER DEFAULT 0,\n    exercised INTEGER DEFAULT 0,\n    notes TEXT\n);\n\nCREATE TABLE imported_notes (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    note_date DATE NOT NULL,\n    file_name TEXT NOT NULL,\n    file_path TEXT NOT NULL,\n    imported_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,\n    checksum TEXT,\n    UNIQUE (file_name)\n);\n\nCREATE TABLE accounts (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    name TEXT NOT NULL,\n    type TEXT,\n    address TEXT,\n    currency TEXT DEFAULT NULL\n);\n\nCREATE TABLE account_aliases (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    account_id INTEGER NOT NULL REFERENCES accounts(id),\n    alias TEXT NOT NULL UNIQUE\n);\n\nCREATE TABLE transactions (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    account_id INTEGER NOT NULL REFERENCES accounts(id),\n    date DATE NOT NULL,\n    amount REAL NOT NULL,\n    category TEXT,\n    description TEXT\n);\n\nCREATE TABLE engagement_aliases (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    engagement_id INTEGER NOT NULL REFERENCES engagements(id),\n    alias TEXT NOT NULL UNIQUE\n);\n\nCREATE TABLE engagement_milestones (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    engagement_id INTEGER NOT NULL REFERENCES engagements(id),\n    name TEXT NOT NULL,\n    date DATE,\n    notes TEXT,\n    session_id INTEGER NOT NULL REFERENCES sessions(id) ON DELETE RESTRICT\n);\n\nCREATE TABLE engagement_measurements (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    milestone_id INTEGER NOT NULL REFERENCES engagement_milestones(id),\n    metric_name TEXT NOT NULL,\n    metric_value TEXT NOT NULL,\n    measurement_date DATE,\n    notes TEXT\n);\n\nCREATE TABLE exercises (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    name TEXT NOT NULL,\n    category TEXT\n);\n\nCREATE TABLE exercise_aliases (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    exercise_id INTEGER NOT NULL REFERENCES exercises(id),\n    alias TEXT NOT NULL UNIQUE\n);\n\nCREATE TABLE session_exercises (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    session_id INTEGER NOT NULL REFERENCES sessions(id),\n    exercise_id INTEGER NOT NULL REFERENCES exercises(id),\n    order_index INTEGER\n);\n\nCREATE TABLE exercise_sets (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    session_exercise_id INTEGER NOT NULL REFERENCES session_exercises(id),\n    set_number INTEGER,\n    weight REAL,\n    reps INTEGER,\n    distance REAL,\n    duration_minutes REAL,\n    notes TEXT,\n    pain_level REAL,\n    duration_seconds REAL\n);\n\nCREATE TABLE muscles (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    name TEXT NOT NULL UNIQUE,\n    body_region TEXT,\n    notes TEXT\n);\n\nCREATE TABLE exercise_muscles (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    exercise_id INTEGER NOT NULL REFERENCES exercises(id),\n    muscle_id INTEGER NOT NULL REFERENCES muscles(id),\n    role TEXT\n);\n\nCREATE TABLE people (\n    id INTEGER PRIMARY KEY,\n    name TEXT NOT NULL\n);\n\nCREATE TABLE reports (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    person_id INTEGER NOT NULL REFERENCES people(id),\n    report_timestamp TEXT NOT NULL,\n    report_type TEXT NOT NULL,\n    provider TEXT,\n    title TEXT,\n    relative_path TEXT NOT NULL\n);\n\nCREATE TABLE markers (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    name TEXT NOT NULL UNIQUE,\n    unit TEXT,\n    textbook_normal_range TEXT\n);\n\nCREATE TABLE measurements (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    report_id INTEGER NOT NULL REFERENCES reports(id),\n    marker_id INTEGER NOT NULL REFERENCES markers(id),\n    value REAL NOT NULL,\n    notes TEXT,\n    reference_range_at_time TEXT,\n    flag TEXT\n);\n\nCREATE TABLE stoicism_entries (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    date DATE NOT NULL,\n    score REAL,\n    notes TEXT\n);\n\nCREATE TABLE weekly_plans (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    week_start_date DATE NOT NULL UNIQUE,\n    source_file_name TEXT NOT NULL,\n    source_file_path TEXT NOT NULL UNIQUE,\n    source_checksum TEXT NOT NULL,\n    main_outcome TEXT,\n    important_deadline TEXT,\n    constraint_or_risk TEXT,\n    imported_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP\n);\n\nCREATE TABLE weekly_plan_sessions (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    weekly_plan_id INTEGER NOT NULL REFERENCES weekly_plans(id) ON DELETE CASCADE,\n    date DATE NOT NULL,\n    start_time TEXT NOT NULL,\n    end_time TEXT NOT NULL,\n    duration_minutes INTEGER NOT NULL CHECK (duration_minutes > 0),\n    session_type_id INTEGER REFERENCES session_types(id),\n    engagement_id INTEGER REFERENCES engagements(id),\n    original_cell_text TEXT NOT NULL,\n    notes TEXT,\n    source_row INTEGER NOT NULL,\n    source_column_start INTEGER NOT NULL,\n    source_column_end INTEGER NOT NULL,\n    UNIQUE (weekly_plan_id, date, start_time, end_time)\n);\n\nCREATE TABLE weekly_commitments (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    weekly_plan_id INTEGER NOT NULL REFERENCES weekly_plans(id) ON DELETE CASCADE,\n    source_ordinal INTEGER NOT NULL,\n    target_minutes INTEGER NOT NULL CHECK (target_minutes > 0),\n    engagement_id INTEGER NOT NULL REFERENCES engagements(id),\n    engagement_raw TEXT NOT NULL,\n    commitment_text TEXT NOT NULL,\n    UNIQUE (weekly_plan_id, source_ordinal)\n);\n\nCREATE TABLE meal_events (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    day DATE NOT NULL,\n    meal_type TEXT NOT NULL COLLATE NOCASE,\n    is_leisure INTEGER NOT NULL DEFAULT 0 CHECK (is_leisure IN (0, 1)),\n    classification_source TEXT NOT NULL DEFAULT 'default'\n        CHECK (classification_source IN ('default', 'manual', 'meal_limit', 'manual_and_meal_limit')),\n    calorie_limit_kcal REAL CHECK (calorie_limit_kcal IS NULL OR calorie_limit_kcal > 0),\n    notes TEXT,\n    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,\n    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,\n    CHECK (meal_type IN ('breakfast', 'lunch', 'dinner', 'snacks')),\n    UNIQUE (day, meal_type)\n);\n\nCREATE TABLE daily_meals (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    day DATE NOT NULL,\n    food TEXT NOT NULL CHECK (trim(food) <> ''),\n    calories INTEGER,\n    protein_g REAL,\n    meal_event_id INTEGER REFERENCES meal_events(id) ON DELETE CASCADE,\n    item_ordinal INTEGER CHECK (item_ordinal IS NULL OR item_ordinal > 0)\n);\n\nCREATE TABLE daily_meal_assessments (\n    day DATE PRIMARY KEY,\n    daily_calorie_limit_kcal REAL NOT NULL CHECK (daily_calorie_limit_kcal >= 0),\n    minimum_protein_g REAL NOT NULL DEFAULT 0 CHECK (minimum_protein_g >= 0),\n    daily_calories_kcal REAL CHECK (daily_calories_kcal IS NULL OR daily_calories_kcal >= 0),\n    daily_metrics_calories_kcal REAL CHECK (daily_metrics_calories_kcal IS NULL OR daily_metrics_calories_kcal >= 0),\n    meal_items_calories_kcal REAL NOT NULL DEFAULT 0 CHECK (meal_items_calories_kcal >= 0),\n    daily_calorie_source TEXT NOT NULL DEFAULT 'missing'\n        CHECK (daily_calorie_source IN ('daily_metrics', 'meal_items', 'higher_of_both', 'missing')),\n    protein_g REAL CHECK (protein_g IS NULL OR protein_g >= 0),\n    recorded_dieted INTEGER CHECK (recorded_dieted IS NULL OR recorded_dieted IN (0, 1)),\n    evaluated_dieted INTEGER CHECK (evaluated_dieted IS NULL OR evaluated_dieted IN (0, 1)),\n    evaluated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP\n);\n\nCREATE TABLE note_import_components (\n    note_date DATE NOT NULL,\n    component TEXT NOT NULL CHECK (trim(component) <> ''),\n    lifecycle_state TEXT NOT NULL CHECK (lifecycle_state IN ('ephemeral', 'finalized')),\n    source_file_path TEXT NOT NULL CHECK (trim(source_file_path) <> ''),\n    source_checksum TEXT NOT NULL CHECK (trim(source_checksum) <> ''),\n    plugin_version TEXT NOT NULL CHECK (trim(plugin_version) <> ''),\n    row_count INTEGER NOT NULL DEFAULT 0 CHECK (row_count >= 0),\n    imported_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,\n    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,\n    PRIMARY KEY (note_date, component)\n);\n\nCREATE UNIQUE INDEX uq_accounts_name_nocase ON accounts(name COLLATE NOCASE);\nCREATE UNIQUE INDEX uq_account_aliases_alias_nocase ON account_aliases(alias COLLATE NOCASE);\nCREATE UNIQUE INDEX uq_engagements_name_nocase ON engagements(name COLLATE NOCASE);\nCREATE UNIQUE INDEX uq_engagement_aliases_alias_nocase ON engagement_aliases(alias COLLATE NOCASE);\nCREATE UNIQUE INDEX uq_exercise_aliases_alias_nocase ON exercise_aliases(alias COLLATE NOCASE);\nCREATE UNIQUE INDEX uq_muscles_name_nocase ON muscles(name COLLATE NOCASE);\nCREATE INDEX idx_sessions_date ON sessions(date);\nCREATE INDEX idx_sessions_engagement ON sessions(engagement_id);\nCREATE INDEX idx_sessions_type ON sessions(session_type_id);\nCREATE INDEX idx_engagements_type ON engagements(type_id);\nCREATE INDEX idx_engagements_status ON engagements(status_id);\nCREATE INDEX idx_note_sources_date ON note_sources(note_date);\nCREATE INDEX idx_note_sources_state ON note_sources(lifecycle_state);\nCREATE INDEX idx_planned_sessions_date ON planned_sessions(date);\nCREATE INDEX idx_planned_sessions_source ON planned_sessions(source_note_id);\nCREATE INDEX idx_planned_sessions_type ON planned_sessions(resolved_session_type_id);\nCREATE INDEX idx_transactions_date ON transactions(date);\nCREATE INDEX idx_engagement_milestones_session ON engagement_milestones(session_id);\nCREATE INDEX idx_exercise_sets_session ON exercise_sets(session_exercise_id);\nCREATE INDEX idx_weekly_plan_sessions_plan ON weekly_plan_sessions(weekly_plan_id);\nCREATE INDEX idx_weekly_plan_sessions_date ON weekly_plan_sessions(date);\nCREATE INDEX idx_weekly_plan_sessions_type ON weekly_plan_sessions(session_type_id);\nCREATE INDEX idx_weekly_plan_sessions_engagement ON weekly_plan_sessions(engagement_id);\nCREATE INDEX idx_weekly_commitments_plan ON weekly_commitments(weekly_plan_id);\nCREATE INDEX idx_weekly_commitments_engagement ON weekly_commitments(engagement_id);\nCREATE INDEX idx_meal_events_day ON meal_events(day);\nCREATE INDEX idx_meal_events_type ON meal_events(meal_type);\nCREATE INDEX idx_daily_meals_day ON daily_meals(day);\nCREATE INDEX idx_daily_meals_meal_event ON daily_meals(meal_event_id, item_ordinal);\nCREATE INDEX idx_note_import_components_state ON note_import_components(lifecycle_state, note_date);\n\nCREATE TRIGGER sessions_require_active_type_insert\nBEFORE INSERT ON sessions\nWHEN NOT EXISTS (SELECT 1 FROM session_types WHERE id = NEW.session_type_id AND is_active = 1)\nBEGIN SELECT RAISE(ABORT, 'unknown or inactive session type'); END;\n\nCREATE TRIGGER sessions_require_active_type_update\nBEFORE UPDATE OF session_type_id ON sessions\nWHEN NOT EXISTS (SELECT 1 FROM session_types WHERE id = NEW.session_type_id AND is_active = 1)\nBEGIN SELECT RAISE(ABORT, 'unknown or inactive session type'); END;\n\nCREATE TRIGGER engagements_require_active_type_insert\nBEFORE INSERT ON engagements\nWHEN NOT EXISTS (SELECT 1 FROM engagement_types WHERE id = NEW.type_id AND is_active = 1)\nBEGIN SELECT RAISE(ABORT, 'unknown or inactive engagement type'); END;\n\nCREATE TRIGGER engagements_require_active_type_update\nBEFORE UPDATE OF type_id ON engagements\nWHEN NOT EXISTS (SELECT 1 FROM engagement_types WHERE id = NEW.type_id AND is_active = 1)\nBEGIN SELECT RAISE(ABORT, 'unknown or inactive engagement type'); END;\n\nCREATE TRIGGER engagements_require_active_status_insert\nBEFORE INSERT ON engagements\nWHEN NEW.status_id IS NOT NULL\n AND NOT EXISTS (SELECT 1 FROM engagement_statuses WHERE id = NEW.status_id AND is_active = 1)\nBEGIN SELECT RAISE(ABORT, 'unknown or inactive engagement status'); END;\n\nCREATE TRIGGER engagements_require_active_status_update\nBEFORE UPDATE OF status_id ON engagements\nWHEN NEW.status_id IS NOT NULL\n AND NOT EXISTS (SELECT 1 FROM engagement_statuses WHERE id = NEW.status_id AND is_active = 1)\nBEGIN SELECT RAISE(ABORT, 'unknown or inactive engagement status'); END;\n\nCREATE TRIGGER daily_meals_meal_event_day_insert\nBEFORE INSERT ON daily_meals\nWHEN NEW.meal_event_id IS NOT NULL\n AND NOT EXISTS (SELECT 1 FROM meal_events WHERE id = NEW.meal_event_id AND day = NEW.day)\nBEGIN SELECT RAISE(ABORT, 'daily_meals.day must match its meal event day'); END;\n\nCREATE TRIGGER daily_meals_meal_event_day_update\nBEFORE UPDATE OF meal_event_id, day ON daily_meals\nWHEN NEW.meal_event_id IS NOT NULL\n AND NOT EXISTS (SELECT 1 FROM meal_events WHERE id = NEW.meal_event_id AND day = NEW.day)\nBEGIN SELECT RAISE(ABORT, 'daily_meals.day must match its meal event day'); END;\n\nCREATE TRIGGER trg_exercises_name_nocase_insert\nBEFORE INSERT ON exercises\nWHEN EXISTS (SELECT 1 FROM exercises WHERE name = NEW.name COLLATE NOCASE)\nBEGIN SELECT RAISE(ABORT, 'exercise name already exists (case-insensitive)'); END;\n\nCREATE TRIGGER trg_exercises_name_nocase_update\nBEFORE UPDATE OF name ON exercises\nWHEN EXISTS (SELECT 1 FROM exercises WHERE id <> OLD.id AND name = NEW.name COLLATE NOCASE)\nBEGIN SELECT RAISE(ABORT, 'exercise name already exists (case-insensitive)'); END;\n\nCREATE VIEW meal_event_totals AS\nSELECT\n    me.id AS meal_event_id,\n    me.day,\n    me.meal_type,\n    me.is_leisure AS recorded_is_leisure,\n    me.classification_source,\n    me.calorie_limit_kcal,\n    COUNT(dm.id) AS item_count,\n    COALESCE(SUM(dm.calories), 0) AS total_calories_kcal,\n    COALESCE(SUM(dm.protein_g), 0.0) AS total_protein_g,\n    SUM(CASE WHEN dm.id IS NOT NULL AND dm.calories IS NULL THEN 1 ELSE 0 END) AS items_missing_calories,\n    CASE\n        WHEN me.meal_type = 'snacks' THEN 0\n        WHEN me.is_leisure = 1 THEN 1\n        WHEN me.calorie_limit_kcal IS NOT NULL\n         AND COALESCE(SUM(dm.calories), 0) > me.calorie_limit_kcal THEN 1\n        ELSE 0\n    END AS evaluated_is_leisure\nFROM meal_events AS me\nLEFT JOIN daily_meals AS dm ON dm.meal_event_id = me.id\nGROUP BY me.id, me.day, me.meal_type, me.is_leisure, me.classification_source, me.calorie_limit_kcal;\n\nCREATE VIEW daily_leisure_meal_summary AS\nWITH evaluated_days AS (\n    SELECT\n        dma.day,\n        dma.daily_calorie_limit_kcal,\n        dma.daily_calories_kcal,\n        COALESCE(SUM(CASE\n            WHEN met.meal_type IN ('breakfast', 'lunch', 'dinner') THEN met.evaluated_is_leisure\n            ELSE 0\n        END), 0) AS direct_leisure_meals\n    FROM daily_meal_assessments AS dma\n    LEFT JOIN meal_event_totals AS met ON met.day = dma.day\n    GROUP BY dma.day, dma.daily_calorie_limit_kcal, dma.daily_calories_kcal\n)\nSELECT\n    day,\n    3 AS counted_meals,\n    direct_leisure_meals,\n    daily_calories_kcal,\n    daily_calorie_limit_kcal,\n    CASE\n        WHEN daily_calories_kcal IS NOT NULL\n         AND daily_calories_kcal > daily_calorie_limit_kcal\n         AND daily_calorie_limit_kcal > 0 THEN 1\n        ELSE 0\n    END AS daily_limit_exceeded,\n    CASE\n        WHEN daily_calories_kcal IS NOT NULL\n         AND daily_calories_kcal > daily_calorie_limit_kcal\n         AND daily_calorie_limit_kcal > 0\n         AND direct_leisure_meals < 2 THEN 2\n        ELSE direct_leisure_meals\n    END AS leisure_meals\nFROM evaluated_days;\n\nINSERT INTO session_types (code, label, description, sort_order) VALUES\n('authorship', 'Authorship', 'Creating an authored work', 10),\n('chore', 'Chore', 'Routine personal or household work', 20),\n('exercise', 'Exercise', 'Physical training', 30),\n('leisure', 'Leisure', 'Recreation and unstructured leisure', 40),\n('maintenance', 'Maintenance', 'Maintaining systems, spaces, or obligations', 50),\n('meditation', 'Meditation', 'Meditation or contemplative practice', 60),\n('reading', 'Reading', 'Reading not classified as study or research', 70),\n('research', 'Research', 'Exploratory search and evidence gathering', 80),\n('social', 'Social', 'Social and relationship time', 90),\n('study', 'Study', 'Structured learning toward mastery', 100),\n('thinking', 'Thinking', 'Deliberate reflection or problem framing', 110),\n('work', 'Work', 'Professional execution', 120),\n('writing', 'Writing', 'Writing not classified as authorship', 130);\n\nINSERT INTO engagement_types (code, label, sort_order) VALUES\n('article', 'Article', 10), ('authorship', 'Authorship', 20), ('book', 'Book', 30),\n('career', 'Career', 40), ('certification', 'Certification', 50), ('course', 'Course', 60),\n('exam', 'Exam', 70), ('fitness', 'Fitness', 80), ('leisure', 'Leisure', 90),\n('maintenance', 'Maintenance', 100), ('practice', 'Practice', 110),\n('relationship', 'Relationship', 120), ('speech', 'Speech', 130), ('startup', 'Startup', 140);\n\nINSERT INTO engagement_statuses (code, label, sort_order) VALUES\n('planned', 'Planned', 10), ('pending', 'Pending', 20), ('active', 'Active', 30),\n('paused', 'Paused', 40), ('completed', 'Completed', 50), ('abandoned', 'Abandoned', 60);\n\nINSERT INTO schema_migrations (version, name) VALUES\n(1, 'add note-source tracking and planned sessions'),\n(2, 'link engagement milestones to achievement sessions'),\n(3, 'add canonical session and engagement taxonomies'),\n(4, 'normalize taxonomy references and add meals and weekly planning'),\n(5, 'add meal events, leisure assessment, and component provenance');\n\nPRAGMA user_version = 5;\nCOMMIT;\nPRAGMA foreign_keys = ON;\n";
 
 // src/native-logger/checksum.ts
 function toHex(bytes) {
@@ -4380,11 +4382,11 @@ function assertMealImportSchema(db) {
   var _a, _b;
   const version = Number((_b = (_a = rows2(db, "PRAGMA user_version")[0]) == null ? void 0 : _a.user_version) != null ? _b : 0);
   if (version !== 5) {
-    throw new Error(`Native Meals import requires EQH schema v5; this database reports v${version}.`);
+    throw new Error(`Native Meals import requires Examined Human schema v5; this database reports v${version}.`);
   }
   for (const [table, required] of Object.entries(REQUIRED_COLUMNS2)) {
     if (!hasColumns2(db, table, required)) {
-      throw new Error(`EQH schema v5 is incomplete: ${table} is missing required columns.`);
+      throw new Error(`Examined Human schema v5 is incomplete: ${table} is missing required columns.`);
     }
   }
 }
@@ -4695,7 +4697,7 @@ function splitFields(line, expected) {
 }
 function sectionsFromForm(sourceText) {
   const text = sourceText.replace(FEEDBACK_PATTERN, "\n");
-  const form = /^####\s+(?:EH|EQH)\s+Form\s*$/mi.exec(text);
+  const form = /^####\s+EH\s+Form\s*$/mi.exec(text);
   if (!form) throw new Error("The note does not contain an EH Form heading.");
   const formStart = form.index + form[0].length;
   const afterForm = text.slice(formStart);
@@ -5214,7 +5216,12 @@ function prepareDaily(db, input) {
   if (imported) errors.push(`${input.noteDate} is already represented by a canonical imported note.`);
   if (errors.length === 0) applyAdminEvents(db, parsed, input.noteDate, errors);
   if (errors.length === 0) validateFacts(db, parsed, errors, warnings);
-  else {
+  if (errors.length === 0) {
+    const existingMeals = queryMealComponentState(db, input.noteDate);
+    if ((existingMeals == null ? void 0 : existingMeals.lifecycleState) === "finalized" && !mealComponentMatchesInspection(db, input.noteDate, parsed.mealInspection)) {
+      errors.push(`Historical Meals for ${input.noteDate} differ from the finalized meal component and cannot be replaced.`);
+    }
+  } else {
     errors.push(...parsed.mealInspection.errors);
     warnings.push(...parsed.mealInspection.warnings);
   }
@@ -5477,7 +5484,7 @@ var ESTIMATED_DURATION_MINUTES = 60;
 var ESTIMATED_SLOTS_PER_DAY = 17;
 function formSections(text) {
   const issues = [];
-  const positions = ["#### EH Form", "#### EQH Form"].map((heading) => text.indexOf(heading)).filter((position) => position >= 0);
+  const positions = ["#### EH Form"].map((heading) => text.indexOf(heading)).filter((position) => position >= 0);
   if (positions.length === 0) return { sections: /* @__PURE__ */ new Map(), issues: ["No EH Form heading was found."] };
   const start = Math.min(...positions);
   let end = text.indexOf("#### END", start);
@@ -5933,7 +5940,7 @@ function sessionRows(db, planId) {
 }
 function sessionEntryLocation(text) {
   var _a, _b, _c, _d;
-  const form = /^#### (?:EH|EQH) Form\s*$/m.exec(text);
+  const form = /^#### EH Form\s*$/m.exec(text);
   if (!form) throw new Error("no EH Form heading");
   const formTail = text.slice(((_a = form.index) != null ? _a : 0) + form[0].length);
   const formEndMatch = /^#### END\s*$/m.exec(formTail);
@@ -6031,7 +6038,7 @@ function escapeRegExp(value) {
 function backupDirectoryForDatabase(databasePath) {
   const slash = databasePath.lastIndexOf("/");
   const directory = slash >= 0 ? databasePath.slice(0, slash) : "";
-  return [directory, ".eqh-backups"].filter(Boolean).join("/");
+  return [directory, ".examined-human-backups"].filter(Boolean).join("/");
 }
 function pluginBackupRetentionPlan(databasePath, files, retentionLimit, protectedPath) {
   const limit = Math.max(0, Math.floor(retentionLimit));
@@ -6166,7 +6173,7 @@ var NativeLoggerWriteService = class {
   importMeals(request) {
     return this.enqueue(async () => {
       const databasePath = normalizeVaultDatabasePath(request.databasePath);
-      const databaseFile = this.requireFile(databasePath, "EQH database");
+      const databaseFile = this.requireFile(databasePath, "Examined Human database");
       await this.assertNoUncheckpointedWal(databasePath);
       const originalBytes = new Uint8Array(await this.app.vault.readBinary(databaseFile));
       const originalChecksum = await sha256Bytes(originalBytes);
@@ -6198,7 +6205,7 @@ var NativeLoggerWriteService = class {
         const currentBytes = new Uint8Array(await this.app.vault.readBinary(databaseFile));
         const currentChecksum = await sha256Bytes(currentBytes);
         if (currentChecksum !== originalChecksum) {
-          throw new Error("EQH.db changed during validation. Refresh and retry; no data was written.");
+          throw new Error("EH.db changed during validation. Refresh and retry; no data was written.");
         }
         const durability = result.lifecycleState === "ephemeral" ? "ephemeral" : "durable";
         const backupPath = shouldCreateDatabaseBackup(durability) ? await this.createBackup(databasePath, originalBytes) : null;
@@ -6371,7 +6378,7 @@ var NativeLoggerWriteService = class {
   }
   async inspectDatabase(databasePathSetting, operation) {
     const databasePath = normalizeVaultDatabasePath(databasePathSetting);
-    const file = this.requireFile(databasePath, "EQH database");
+    const file = this.requireFile(databasePath, "Examined Human database");
     await this.assertNoUncheckpointedWal(databasePath);
     const bytes = new Uint8Array(await this.app.vault.readBinary(file));
     const SQL = await getSqlJs();
@@ -6385,7 +6392,7 @@ var NativeLoggerWriteService = class {
   }
   async mutateDatabase(databasePathSetting, backupLabel, operation, durability = "durable") {
     const databasePath = normalizeVaultDatabasePath(databasePathSetting);
-    const databaseFile = this.requireFile(databasePath, "EQH database");
+    const databaseFile = this.requireFile(databasePath, "Examined Human database");
     await this.assertNoUncheckpointedWal(databasePath);
     const originalBytes = new Uint8Array(await this.app.vault.readBinary(databaseFile));
     const originalChecksum = await sha256Bytes(originalBytes);
@@ -6411,7 +6418,7 @@ var NativeLoggerWriteService = class {
       await this.assertNoUncheckpointedWal(databasePath);
       const currentBytes = new Uint8Array(await this.app.vault.readBinary(databaseFile));
       if (await sha256Bytes(currentBytes) !== originalChecksum) {
-        throw new Error("EQH.db changed during validation. Refresh and retry; no data was written.");
+        throw new Error("EH.db changed during validation. Refresh and retry; no data was written.");
       }
       const backupPath = shouldCreateDatabaseBackup(durability) ? await this.createBackup(databasePath, originalBytes, backupLabel) : null;
       await this.app.vault.modifyBinary(databaseFile, arrayBufferFrom(stagedBytes));
@@ -6536,20 +6543,20 @@ var SessionDetailsModal = class extends import_obsidian5.Modal {
   onOpen() {
     var _a;
     const { contentEl } = this;
-    contentEl.addClass("eqh-session-modal");
+    contentEl.addClass("examined-human-session-modal");
     contentEl.createEl("h2", { text: this.event.title });
     if (this.event.dataWarning) {
-      const warning = contentEl.createDiv({ cls: "eqh-data-warning" });
+      const warning = contentEl.createDiv({ cls: "examined-human-data-warning" });
       warning.createEl("strong", { text: "Database correction required" });
       warning.createDiv({ text: this.event.dataWarning });
     }
     if (this.event.planningWarnings && this.event.planningWarnings.length > 0) {
-      const warning = contentEl.createDiv({ cls: "eqh-planning-warning" });
+      const warning = contentEl.createDiv({ cls: "examined-human-planning-warning" });
       warning.createEl("strong", { text: "Planning details" });
       const list = warning.createEl("ul");
       for (const message of this.event.planningWarnings) list.createEl("li", { text: message });
     }
-    const details = contentEl.createEl("dl", { cls: "eqh-session-details" });
+    const details = contentEl.createEl("dl", { cls: "examined-human-session-details" });
     this.addDetail(details, "Date", this.event.date);
     const timeSuffix = this.event.timeEstimated ? " (estimated display slot)" : "";
     this.addDetail(
@@ -6561,7 +6568,7 @@ var SessionDetailsModal = class extends import_obsidian5.Modal {
     this.addDetail(details, "Session type", this.event.sessionType);
     this.addDetail(details, "Engagement", this.event.engagementName);
     this.addDetail(details, "Engagement type", this.event.engagementType || "\u2014");
-    this.addDetail(details, "Source", this.event.sourceKind === "planned" ? "Planned journal note" : "Imported EQH data");
+    this.addDetail(details, "Source", this.event.sourceKind === "planned" ? "Planned journal note" : "Imported Examined Human data");
     if (this.event.sessionType.trim().toLowerCase() === "exercise" || this.event.exerciseDetails) {
       this.renderExerciseDetails(contentEl);
     }
@@ -6569,7 +6576,7 @@ var SessionDetailsModal = class extends import_obsidian5.Modal {
       this.renderMilestoneDetails(contentEl);
     }
     contentEl.createEl("h3", { text: "Notes" });
-    contentEl.createDiv({ cls: "eqh-session-notes", text: ((_a = this.event.notes) == null ? void 0 : _a.trim()) || "No notes recorded." });
+    contentEl.createDiv({ cls: "examined-human-session-notes", text: ((_a = this.event.notes) == null ? void 0 : _a.trim()) || "No notes recorded." });
   }
   onClose() {
     this.contentEl.empty();
@@ -6582,30 +6589,30 @@ var SessionDetailsModal = class extends import_obsidian5.Modal {
     parent.createEl("h3", { text: "Exercises" });
     if (!this.event.exerciseDetails) {
       parent.createDiv({
-        cls: "eqh-exercise-empty",
+        cls: "examined-human-exercise-empty",
         text: this.event.sourceKind === "planned" ? "Planned exercise targets are not imported yet." : "Exercise details are unavailable in this database."
       });
       return;
     }
     if (this.event.exerciseDetails.length === 0) {
-      parent.createDiv({ cls: "eqh-exercise-empty", text: "No exercises are attached to this session." });
+      parent.createDiv({ cls: "examined-human-exercise-empty", text: "No exercises are attached to this session." });
       return;
     }
-    const list = parent.createDiv({ cls: "eqh-exercise-list" });
+    const list = parent.createDiv({ cls: "examined-human-exercise-list" });
     for (const exercise of this.event.exerciseDetails) this.renderExercise(list, exercise);
   }
   renderExercise(parent, exercise) {
-    const card = parent.createEl("section", { cls: "eqh-exercise-card" });
-    const heading = card.createDiv({ cls: "eqh-exercise-heading" });
+    const card = parent.createEl("section", { cls: "examined-human-exercise-card" });
+    const heading = card.createDiv({ cls: "examined-human-exercise-heading" });
     heading.createEl("h4", { text: exercise.name || "Unnamed exercise" });
-    if (exercise.category) heading.createSpan({ cls: "eqh-exercise-category", text: exercise.category });
+    if (exercise.category) heading.createSpan({ cls: "examined-human-exercise-category", text: exercise.category });
     if (exercise.sets.length === 0) {
-      card.createDiv({ cls: "eqh-exercise-empty", text: "No sets recorded." });
+      card.createDiv({ cls: "examined-human-exercise-empty", text: "No sets recorded." });
       return;
     }
     const columns = this.exerciseColumns(exercise.sets);
-    const wrapper = card.createDiv({ cls: "eqh-exercise-table-wrap" });
-    const table = wrapper.createEl("table", { cls: "eqh-exercise-table" });
+    const wrapper = card.createDiv({ cls: "examined-human-exercise-table-wrap" });
+    const table = wrapper.createEl("table", { cls: "examined-human-exercise-table" });
     const headerRow = table.createEl("thead").createEl("tr");
     for (const column of columns) headerRow.createEl("th", { text: column.label });
     const body = table.createEl("tbody");
@@ -6617,18 +6624,18 @@ var SessionDetailsModal = class extends import_obsidian5.Modal {
   renderMilestoneDetails(parent) {
     var _a;
     parent.createEl("h3", { text: "Milestones" });
-    const list = parent.createDiv({ cls: "eqh-milestone-list" });
+    const list = parent.createDiv({ cls: "examined-human-milestone-list" });
     for (const milestone of (_a = this.event.milestoneDetails) != null ? _a : []) {
       this.renderMilestone(list, milestone);
     }
   }
   renderMilestone(parent, milestone) {
-    const card = parent.createEl("section", { cls: "eqh-milestone-card" });
-    const heading = card.createDiv({ cls: "eqh-milestone-heading" });
+    const card = parent.createEl("section", { cls: "examined-human-milestone-card" });
+    const heading = card.createDiv({ cls: "examined-human-milestone-heading" });
     heading.createEl("h4", { text: milestone.name || "Unnamed milestone" });
-    if (milestone.date) heading.createSpan({ cls: "eqh-milestone-date", text: milestone.date });
+    if (milestone.date) heading.createSpan({ cls: "examined-human-milestone-date", text: milestone.date });
     if (milestone.measurements.length > 0) {
-      const measurements = card.createEl("dl", { cls: "eqh-milestone-measurements" });
+      const measurements = card.createEl("dl", { cls: "examined-human-milestone-measurements" });
       for (const measurement of milestone.measurements) {
         measurements.createEl("dt", { text: measurement.metricName || "Measurement" });
         const value = measurement.measurementDate ? `${measurement.metricValue || "-"} | ${measurement.measurementDate}` : measurement.metricValue || "-";
@@ -6639,7 +6646,7 @@ var SessionDetailsModal = class extends import_obsidian5.Modal {
         }
       }
     }
-    if (milestone.notes) card.createDiv({ cls: "eqh-milestone-notes", text: milestone.notes });
+    if (milestone.notes) card.createDiv({ cls: "examined-human-milestone-notes", text: milestone.notes });
   }
   exerciseColumns(sets) {
     const columns = [{
@@ -6676,16 +6683,16 @@ function createSessionElement(app, event, overlapColumn, overlapCount, vertical,
   var _a, _b, _c;
   const element = createEl("button");
   element.className = [
-    "eqh-event",
-    event.dataWarning ? "eqh-event--warning" : "",
-    vertical.stacked ? "eqh-event--stacked" : ""
+    "examined-human-event",
+    event.dataWarning ? "examined-human-event--warning" : "",
+    vertical.stacked ? "examined-human-event--stacked" : ""
   ].filter(Boolean).join(" ");
   element.type = "button";
   element.style.top = `${vertical.startMinutes * pxPerMinute}px`;
   element.style.height = `${vertical.durationMinutes * pxPerMinute}px`;
   element.style.left = `calc(${overlapColumn * 100 / overlapCount}% + 2px)`;
   element.style.width = `calc(${100 / overlapCount}% - 4px)`;
-  element.style.setProperty("--eqh-event-color", colorForSession(event, sessionColors));
+  element.style.setProperty("--examined-human-event-color", colorForSession(event, sessionColors));
   const sourceLabel = event.sourceKind === "planned" ? ", planned journal session" : "";
   const estimatedLabel = event.timeEstimated ? ", estimated time" : "";
   const milestoneCount = (_b = (_a = event.milestoneDetails) == null ? void 0 : _a.length) != null ? _b : 0;
@@ -6708,16 +6715,16 @@ function createSessionElement(app, event, overlapColumn, overlapCount, vertical,
   tooltipLines.push(...(_c = event.planningWarnings) != null ? _c : []);
   element.title = tooltipLines.join("\n");
   const title = createSpan();
-  title.className = "eqh-event-title";
+  title.className = "examined-human-event-title";
   title.textContent = event.dataWarning ? `\u26A0 ${event.title}` : event.title;
   element.appendChild(title);
   const duration = createSpan();
-  duration.className = "eqh-event-duration";
+  duration.className = "examined-human-event-duration";
   duration.textContent = formatMinutesAsClock(event.durationMinutes);
   element.appendChild(duration);
   const renderedHeightPx = vertical.durationMinutes * pxPerMinute;
   if (shouldShowSessionTypeFooter(renderedHeightPx, vertical.stacked)) {
-    element.createSpan({ cls: "eqh-event-type", text: sessionFooterText(event) });
+    element.createSpan({ cls: "examined-human-event-type", text: sessionFooterText(event) });
   }
   element.addEventListener("click", () => new SessionDetailsModal(app, event).open());
   return element;
@@ -6890,7 +6897,7 @@ function visualEnd(positions, event) {
 }
 
 // src/DailyAssessmentView.ts
-var EQH_DAILY_ASSESSMENT_VIEW_TYPE = "eqh-daily-assessment";
+var EXAMINED_HUMAN_DAILY_ASSESSMENT_VIEW_TYPE = "examined-human-daily-assessment";
 var FINGERPRINT_INTERVAL_MS = 1e4;
 var DAY_PX_PER_MINUTE = 0.8;
 function formatDuration(totalMinutes) {
@@ -6918,16 +6925,16 @@ var DailyAssessmentView = class extends import_obsidian6.ItemView {
     this.actionButton = null;
   }
   getViewType() {
-    return EQH_DAILY_ASSESSMENT_VIEW_TYPE;
+    return EXAMINED_HUMAN_DAILY_ASSESSMENT_VIEW_TYPE;
   }
   getDisplayText() {
-    return "EH Dashboards \u2014 Daily Assessment";
+    return "Examined Human \u2014 Daily Assessment";
   }
   getIcon() {
     return "clipboard-check";
   }
   async onOpen() {
-    this.contentEl.addClass("eqh-daily-view");
+    this.contentEl.addClass("examined-human-daily-view");
     await this.refresh();
     this.registerEvent(this.app.vault.on("modify", (file) => {
       var _a;
@@ -6955,8 +6962,8 @@ var DailyAssessmentView = class extends import_obsidian6.ItemView {
     var _a, _b, _c, _d, _e;
     const generation = ++this.renderGeneration;
     this.contentEl.empty();
-    this.contentEl.addClass("eqh-daily-view");
-    this.contentEl.createDiv({ cls: "eqh-loading", text: "Loading Daily Assessment\u2026" });
+    this.contentEl.addClass("examined-human-daily-view");
+    this.contentEl.createDiv({ cls: "examined-human-loading", text: "Loading Daily Assessment\u2026" });
     try {
       const today = (0, import_obsidian6.moment)().format("YYYY-MM-DD");
       const index = await this.plugin.database.dailyNoteIndex(this.plugin.settings.databasePath);
@@ -7005,15 +7012,15 @@ var DailyAssessmentView = class extends import_obsidian6.ItemView {
   }
   renderDashboard() {
     this.contentEl.empty();
-    this.contentEl.addClass("eqh-daily-view");
+    this.contentEl.addClass("examined-human-daily-view");
     this.renderHeader();
     if (!this.selectedItem || !this.assessment) {
-      this.contentEl.createDiv({ cls: "eqh-daily-empty", text: "No EH Daily Notes were found." });
+      this.contentEl.createDiv({ cls: "examined-human-daily-empty", text: "No EH Daily Notes were found." });
       return;
     }
-    const body = this.contentEl.createDiv({ cls: "eqh-daily-layout" });
+    const body = this.contentEl.createDiv({ cls: "examined-human-daily-layout" });
     this.renderSidebar(body);
-    const main = body.createEl("main", { cls: "eqh-daily-main" });
+    const main = body.createEl("main", { cls: "examined-human-daily-main" });
     const events = this.displayEvents();
     this.renderValidation(main);
     this.renderDayTimeline(main, events);
@@ -7023,15 +7030,15 @@ var DailyAssessmentView = class extends import_obsidian6.ItemView {
     this.renderExercises(main);
   }
   renderHeader() {
-    const header = this.contentEl.createDiv({ cls: "eqh-toolbar eqh-daily-toolbar" });
-    const identity = header.createDiv({ cls: "eqh-toolbar-identity" });
-    identity.createEl("h2", { text: "EH Dashboards \u2014 Daily Assessment" });
+    const header = this.contentEl.createDiv({ cls: "examined-human-toolbar examined-human-daily-toolbar" });
+    const identity = header.createDiv({ cls: "examined-human-toolbar-identity" });
+    identity.createEl("h2", { text: "Examined Human \u2014 Daily Assessment" });
     identity.createDiv({
-      cls: "eqh-toolbar-status",
+      cls: "examined-human-toolbar-status",
       text: this.selectedItem ? `${(0, import_obsidian6.moment)(this.selectedItem.date, "YYYY-MM-DD").format("ddd, MMM D, YYYY")} \xB7 ${this.statusLabel(this.selectedItem)}` : "Review journal data and safely import historical notes"
     });
-    const actions = header.createDiv({ cls: "eqh-toolbar-actions" });
-    this.actionButton = actions.createEl("button", { cls: "eqh-toolbar-button mod-cta" });
+    const actions = header.createDiv({ cls: "examined-human-toolbar-actions" });
+    this.actionButton = actions.createEl("button", { cls: "examined-human-toolbar-button mod-cta" });
     if (!this.selectedItem) {
       this.actionButton.setText("Import");
       this.actionButton.disabled = true;
@@ -7044,26 +7051,26 @@ var DailyAssessmentView = class extends import_obsidian6.ItemView {
         void this.handleImport();
       });
     }
-    actions.createEl("button", { text: "Refresh", cls: "eqh-toolbar-button" }).addEventListener("click", () => {
+    actions.createEl("button", { text: "Refresh", cls: "examined-human-toolbar-button" }).addEventListener("click", () => {
       void this.plugin.refreshViews();
     });
   }
   renderSidebar(container) {
     const sidebar = container.createEl("aside", {
-      cls: "eqh-daily-sidebar",
+      cls: "examined-human-daily-sidebar",
       attr: { "aria-label": "Daily Notes, newest first" }
     });
     for (const item of this.items) {
       const button = sidebar.createEl("button", {
         cls: [
-          "eqh-daily-date-button",
+          "examined-human-daily-date-button",
           `is-${item.temporalState}`,
           item.date === this.selectedDate ? "is-selected" : ""
         ].join(" "),
         attr: { "aria-label": `${item.date}, ${this.statusLabel(item)}` }
       });
-      button.createSpan({ cls: "eqh-daily-date-primary", text: (0, import_obsidian6.moment)(item.date, "YYYY-MM-DD").format("MMM D, YYYY") });
-      button.createSpan({ cls: "eqh-daily-date-secondary", text: (0, import_obsidian6.moment)(item.date, "YYYY-MM-DD").format("dddd") });
+      button.createSpan({ cls: "examined-human-daily-date-primary", text: (0, import_obsidian6.moment)(item.date, "YYYY-MM-DD").format("MMM D, YYYY") });
+      button.createSpan({ cls: "examined-human-daily-date-secondary", text: (0, import_obsidian6.moment)(item.date, "YYYY-MM-DD").format("dddd") });
       button.addEventListener("click", () => {
         if (item.date === this.selectedDate) return;
         this.selectedDate = item.date;
@@ -7075,14 +7082,14 @@ var DailyAssessmentView = class extends import_obsidian6.ItemView {
   renderValidation(container) {
     const item = this.selectedItem;
     if (!item) return;
-    const section = container.createEl("section", { cls: "eqh-daily-validation" });
-    const heading = section.createDiv({ cls: "eqh-daily-section-heading" });
+    const section = container.createEl("section", { cls: "examined-human-daily-validation" });
+    const heading = section.createDiv({ cls: "examined-human-daily-section-heading" });
     heading.createEl("h3", { text: "Import readiness" });
-    const badge = heading.createSpan({ cls: "eqh-daily-status-badge" });
+    const badge = heading.createSpan({ cls: "examined-human-daily-status-badge" });
     if (item.status === "imported") {
       badge.addClass("is-ready");
       badge.setText("Imported");
-      section.createDiv({ text: "This date is finalized. Import controls are disabled.", cls: "eqh-daily-validation-note" });
+      section.createDiv({ text: "This date is finalized. Import controls are disabled.", cls: "examined-human-daily-validation-note" });
     } else if (this.inspection) {
       badge.addClass(this.inspection.ready ? "is-ready" : "is-blocked");
       badge.setText(this.inspection.ready ? "Ready for confirmation" : "Needs attention");
@@ -7099,16 +7106,16 @@ var DailyAssessmentView = class extends import_obsidian6.ItemView {
   }
   renderNativeMeals(container, item) {
     var _a, _b, _c;
-    const block = container.createDiv({ cls: "eqh-native-meals" });
-    const heading = block.createDiv({ cls: "eqh-daily-section-heading" });
+    const block = container.createDiv({ cls: "examined-human-native-meals" });
+    const heading = block.createDiv({ cls: "examined-human-daily-section-heading" });
     heading.createEl("h4", { text: "Native Meals" });
     const component = (_b = (_a = this.assessment) == null ? void 0 : _a.mealImport) != null ? _b : null;
-    const state = heading.createSpan({ cls: "eqh-daily-status-badge" });
+    const state = heading.createSpan({ cls: "examined-human-daily-status-badge" });
     if (item.status === "imported" || (component == null ? void 0 : component.lifecycleState) === "finalized") {
       state.addClass("is-ready");
       state.setText("Finalized");
       block.createDiv({
-        cls: "eqh-daily-validation-note",
+        cls: "examined-human-daily-validation-note",
         text: "Historical Meals are immutable once finalized by a component or full Daily Note import."
       });
       return;
@@ -7117,16 +7124,16 @@ var DailyAssessmentView = class extends import_obsidian6.ItemView {
     if (!inspection) {
       state.addClass("is-blocked");
       state.setText("Unavailable");
-      block.createDiv({ cls: "eqh-daily-validation-note", text: "The selected Daily Note could not be read." });
+      block.createDiv({ cls: "examined-human-daily-validation-note", text: "The selected Daily Note could not be read." });
       return;
     }
     state.addClass(inspection.ready ? "is-ready" : "is-blocked");
     state.setText(component ? "Ephemeral \xB7 replaceable" : inspection.ready ? "Ready" : "Needs attention");
     block.createDiv({
-      cls: "eqh-daily-section-subtitle",
+      cls: "examined-human-daily-section-subtitle",
       text: "Parsed and validated inside Obsidian on desktop and mobile. Snacks count toward daily calories but never directly as leisure."
     });
-    const grid = block.createDiv({ cls: "eqh-daily-completeness-grid" });
+    const grid = block.createDiv({ cls: "examined-human-daily-completeness-grid" });
     const values = [
       ["Foods", inspection.foodRowCount],
       ["Direct leisure", `${inspection.directLeisureMeals}/3`],
@@ -7136,7 +7143,7 @@ var DailyAssessmentView = class extends import_obsidian6.ItemView {
       ["Dieted", inspection.nutrition.evaluatedDieted == null ? "\u2014" : inspection.nutrition.evaluatedDieted === 1 ? "Yes" : "No"]
     ];
     for (const [label, value] of values) {
-      const card = grid.createDiv({ cls: "eqh-daily-mini-stat" });
+      const card = grid.createDiv({ cls: "examined-human-daily-mini-stat" });
       card.createSpan({ text: String(label) });
       card.createEl("strong", { text: String(value) });
     }
@@ -7146,7 +7153,7 @@ var DailyAssessmentView = class extends import_obsidian6.ItemView {
     if (inspection.errors.length > 0) {
       this.renderMessageList(block, "Meals blockers", inspection.errors, "is-error");
     }
-    const actions = block.createDiv({ cls: "eqh-native-meals-actions" });
+    const actions = block.createDiv({ cls: "examined-human-native-meals-actions" });
     const button = actions.createEl("button", {
       cls: "mod-cta",
       text: component ? "Replace Meals" : "Import Meals"
@@ -7157,18 +7164,18 @@ var DailyAssessmentView = class extends import_obsidian6.ItemView {
     });
     if (component) {
       actions.createSpan({
-        cls: "eqh-daily-validation-note",
+        cls: "examined-human-daily-validation-note",
         text: `Last written by v${component.pluginVersion} \xB7 ${component.rowCount} food row${component.rowCount === 1 ? "" : "s"}`
       });
       if (item.status === "needs-import" && component.lifecycleState === "ephemeral") {
         actions.createSpan({
-          cls: "eqh-daily-validation-note",
+          cls: "examined-human-daily-validation-note",
           text: "This replacement finalizes the completed historical Meals component."
         });
       }
     } else if (item.status === "needs-import") {
       actions.createSpan({
-        cls: "eqh-daily-validation-note",
+        cls: "examined-human-daily-validation-note",
         text: "First import finalizes this historical Meals component."
       });
     }
@@ -7176,7 +7183,7 @@ var DailyAssessmentView = class extends import_obsidian6.ItemView {
   renderCompleteness(container, inspection) {
     const completeness = inspection.completeness;
     if (!completeness) return;
-    const grid = container.createDiv({ cls: "eqh-daily-completeness-grid" });
+    const grid = container.createDiv({ cls: "examined-human-daily-completeness-grid" });
     const counts = [
       ["Sessions", completeness.session_count],
       ["Transactions", completeness.transaction_count],
@@ -7185,13 +7192,13 @@ var DailyAssessmentView = class extends import_obsidian6.ItemView {
       ["Milestones", completeness.milestone_count]
     ];
     for (const [label, value] of counts) {
-      const card = grid.createDiv({ cls: "eqh-daily-mini-stat" });
+      const card = grid.createDiv({ cls: "examined-human-daily-mini-stat" });
       card.createSpan({ text: String(label) });
       card.createEl("strong", { text: String(value) });
     }
     const missing = completeness.missing_daily_metrics;
     const metricState = container.createDiv({
-      cls: `eqh-daily-completeness-callout ${missing.length > 0 ? "is-incomplete" : "is-complete"}`
+      cls: `examined-human-daily-completeness-callout ${missing.length > 0 ? "is-incomplete" : "is-complete"}`
     });
     metricState.createEl("strong", {
       text: missing.length > 0 ? `${missing.length} empty daily metric cell${missing.length === 1 ? "" : "s"}` : "All daily metric cells are filled"
@@ -7199,40 +7206,40 @@ var DailyAssessmentView = class extends import_obsidian6.ItemView {
     if (missing.length > 0) metricState.createDiv({ text: missing.join(", ") });
   }
   renderMessageList(container, label, messages, className) {
-    const callout = container.createDiv({ cls: `eqh-daily-validation-callout ${className}` });
+    const callout = container.createDiv({ cls: `examined-human-daily-validation-callout ${className}` });
     callout.createEl("strong", { text: label });
     const list = callout.createEl("ul");
     for (const message of messages) list.createEl("li", { text: message });
   }
   renderCopyableOutput(container, label, output) {
-    const block = container.createDiv({ cls: "eqh-daily-output-block" });
-    const header = block.createDiv({ cls: "eqh-daily-output-header" });
+    const block = container.createDiv({ cls: "examined-human-daily-output-block" });
+    const header = block.createDiv({ cls: "examined-human-daily-output-header" });
     header.createEl("strong", { text: label });
-    header.createEl("button", { text: "Copy", cls: "eqh-toolbar-button" }).addEventListener("click", () => {
+    header.createEl("button", { text: "Copy", cls: "examined-human-toolbar-button" }).addEventListener("click", () => {
       void navigator.clipboard.writeText(output).then(() => new import_obsidian6.Notice("Copied logger output."));
     });
-    const textarea = block.createEl("textarea", { cls: "eqh-daily-output", attr: { readonly: "true", rows: "7" } });
+    const textarea = block.createEl("textarea", { cls: "examined-human-daily-output", attr: { readonly: "true", rows: "7" } });
     textarea.value = output;
   }
   renderDayTimeline(container, events) {
     var _a;
-    const section = container.createEl("section", { cls: "eqh-daily-panel" });
-    const heading = section.createDiv({ cls: "eqh-daily-section-heading" });
+    const section = container.createEl("section", { cls: "examined-human-daily-panel" });
+    const heading = section.createDiv({ cls: "examined-human-daily-section-heading" });
     heading.createEl("h3", { text: "Day timeline" });
-    heading.createSpan({ text: `${events.length} session${events.length === 1 ? "" : "s"}`, cls: "eqh-daily-section-meta" });
+    heading.createSpan({ text: `${events.length} session${events.length === 1 ? "" : "s"}`, cls: "examined-human-daily-section-meta" });
     if (events.length === 0) {
-      section.createDiv({ cls: "eqh-daily-empty-inline", text: "No sessions are available for this date." });
+      section.createDiv({ cls: "examined-human-daily-empty-inline", text: "No sessions are available for this date." });
       return;
     }
-    const scroll = section.createDiv({ cls: "eqh-daily-timeline-scroll" });
-    const grid = scroll.createDiv({ cls: "eqh-daily-timeline-grid" });
+    const scroll = section.createDiv({ cls: "examined-human-daily-timeline-scroll" });
+    const grid = scroll.createDiv({ cls: "examined-human-daily-timeline-grid" });
     grid.style.height = `${1440 * DAY_PX_PER_MINUTE}px`;
-    grid.style.setProperty("--eqh-px-per-minute", `${DAY_PX_PER_MINUTE}px`);
-    const gutter = grid.createDiv({ cls: "eqh-daily-time-gutter" });
-    const column = grid.createDiv({ cls: "eqh-day-column eqh-daily-session-column" });
+    grid.style.setProperty("--examined-human-px-per-minute", `${DAY_PX_PER_MINUTE}px`);
+    const gutter = grid.createDiv({ cls: "examined-human-daily-time-gutter" });
+    const column = grid.createDiv({ cls: "examined-human-day-column examined-human-daily-session-column" });
     column.style.backgroundSize = `100% ${60 * DAY_PX_PER_MINUTE}px, 100% ${30 * DAY_PX_PER_MINUTE}px`;
     for (let hour = 0; hour < 24; hour++) {
-      const label = gutter.createDiv({ cls: "eqh-hour-label", text: `${String(hour).padStart(2, "0")}:00` });
+      const label = gutter.createDiv({ cls: "examined-human-hour-label", text: `${String(hour).padStart(2, "0")}:00` });
       label.style.top = `${hour * 60 * DAY_PX_PER_MINUTE}px`;
     }
     const visualPositions = layoutVisualStack(events, DAY_PX_PER_MINUTE);
@@ -7261,31 +7268,31 @@ var DailyAssessmentView = class extends import_obsidian6.ItemView {
     const totals = /* @__PURE__ */ new Map();
     for (const event of events) totals.set(event.engagementName, ((_a = totals.get(event.engagementName)) != null ? _a : 0) + event.durationMinutes);
     const rows4 = [...totals.entries()].sort((left, right) => right[1] - left[1]);
-    const section = container.createEl("section", { cls: "eqh-daily-panel" });
+    const section = container.createEl("section", { cls: "examined-human-daily-panel" });
     section.createEl("h3", { text: "Time by engagement" });
-    section.createDiv({ cls: "eqh-daily-section-subtitle", text: "Logged or inspected session minutes for the selected date" });
+    section.createDiv({ cls: "examined-human-daily-section-subtitle", text: "Logged or inspected session minutes for the selected date" });
     if (rows4.length === 0) {
-      section.createDiv({ cls: "eqh-daily-empty-inline", text: "No engagement time is available." });
+      section.createDiv({ cls: "examined-human-daily-empty-inline", text: "No engagement time is available." });
       return;
     }
     const maximum = Math.max(...rows4.map(([, minutes]) => minutes));
-    const chart = section.createDiv({ cls: "eqh-daily-engagement-chart" });
+    const chart = section.createDiv({ cls: "examined-human-daily-engagement-chart" });
     for (const [engagement, minutes] of rows4) {
-      const row = chart.createDiv({ cls: "eqh-daily-engagement-row" });
-      const labels = row.createDiv({ cls: "eqh-daily-engagement-labels" });
+      const row = chart.createDiv({ cls: "examined-human-daily-engagement-row" });
+      const labels = row.createDiv({ cls: "examined-human-daily-engagement-labels" });
       labels.createSpan({ text: engagement });
       labels.createEl("strong", { text: formatDuration(minutes) });
-      const track = row.createDiv({ cls: "eqh-daily-engagement-track" });
-      const bar = track.createDiv({ cls: "eqh-daily-engagement-bar" });
+      const track = row.createDiv({ cls: "examined-human-daily-engagement-track" });
+      const bar = track.createDiv({ cls: "examined-human-daily-engagement-bar" });
       bar.style.width = `${minutes / maximum * 100}%`;
     }
   }
   renderMetrics(container) {
     var _a;
     const metrics = this.displayMetrics();
-    const section = container.createEl("section", { cls: "eqh-daily-panel" });
+    const section = container.createEl("section", { cls: "examined-human-daily-panel" });
     section.createEl("h3", { text: "Daily metrics" });
-    const grid = section.createDiv({ cls: "eqh-daily-metrics-grid" });
+    const grid = section.createDiv({ cls: "examined-human-daily-metrics-grid" });
     const definitions = [
       ["Mood", "mood", ""],
       ["Energy", "energy", ""],
@@ -7299,15 +7306,15 @@ var DailyAssessmentView = class extends import_obsidian6.ItemView {
     ];
     for (const [label, key, suffix] of definitions) {
       const value = (_a = metrics == null ? void 0 : metrics[key]) != null ? _a : null;
-      const card = grid.createDiv({ cls: `eqh-daily-metric-card ${value == null ? "is-empty" : ""}` });
-      card.createDiv({ cls: "eqh-weekly-eyebrow", text: label });
+      const card = grid.createDiv({ cls: `examined-human-daily-metric-card ${value == null ? "is-empty" : ""}` });
+      card.createDiv({ cls: "examined-human-weekly-eyebrow", text: label });
       const display = (key === "fasted" || key === "dieted") && value != null ? Number(value) === 1 ? "Yes" : "No" : value == null ? "\u2014" : `${value}${suffix}`;
-      card.createDiv({ cls: "eqh-daily-metric-value", text: display });
+      card.createDiv({ cls: "examined-human-daily-metric-value", text: display });
     }
     const meals = this.displayMeals();
     if (meals.length > 0) {
       section.createEl("h4", { text: "Foods" });
-      const list = section.createEl("ul", { cls: "eqh-daily-food-list" });
+      const list = section.createEl("ul", { cls: "examined-human-daily-food-list" });
       for (const meal of meals) {
         const details = [
           meal.calories == null ? null : `${meal.calories} kcal`,
@@ -7319,16 +7326,16 @@ var DailyAssessmentView = class extends import_obsidian6.ItemView {
   }
   renderTransactions(container) {
     const transactions = this.displayTransactions();
-    const section = container.createEl("section", { cls: "eqh-daily-panel" });
-    const heading = section.createDiv({ cls: "eqh-daily-section-heading" });
+    const section = container.createEl("section", { cls: "examined-human-daily-panel" });
+    const heading = section.createDiv({ cls: "examined-human-daily-section-heading" });
     heading.createEl("h3", { text: "Transactions" });
-    heading.createSpan({ text: String(transactions.length), cls: "eqh-daily-section-meta" });
+    heading.createSpan({ text: String(transactions.length), cls: "examined-human-daily-section-meta" });
     if (transactions.length === 0) {
-      section.createDiv({ cls: "eqh-daily-empty-inline", text: "No transactions recorded." });
+      section.createDiv({ cls: "examined-human-daily-empty-inline", text: "No transactions recorded." });
       return;
     }
-    const wrap = section.createDiv({ cls: "eqh-exercise-table-wrap" });
-    const table = wrap.createEl("table", { cls: "eqh-exercise-table eqh-daily-transaction-table" });
+    const wrap = section.createDiv({ cls: "examined-human-exercise-table-wrap" });
+    const table = wrap.createEl("table", { cls: "examined-human-exercise-table examined-human-daily-transaction-table" });
     const header = table.createEl("thead").createEl("tr");
     for (const label of ["Account", "Amount", "Engagement", "Description"]) header.createEl("th", { text: label });
     const body = table.createEl("tbody");
@@ -7343,21 +7350,21 @@ var DailyAssessmentView = class extends import_obsidian6.ItemView {
   renderExercises(container) {
     var _a;
     const exercises = this.displayExercises();
-    const section = container.createEl("section", { cls: "eqh-daily-panel" });
-    const heading = section.createDiv({ cls: "eqh-daily-section-heading" });
+    const section = container.createEl("section", { cls: "examined-human-daily-panel" });
+    const heading = section.createDiv({ cls: "examined-human-daily-section-heading" });
     heading.createEl("h3", { text: "Exercise details" });
-    heading.createSpan({ text: String(exercises.length), cls: "eqh-daily-section-meta" });
+    heading.createSpan({ text: String(exercises.length), cls: "examined-human-daily-section-meta" });
     if (exercises.length === 0) {
-      section.createDiv({ cls: "eqh-daily-empty-inline", text: "No exercise details recorded." });
+      section.createDiv({ cls: "examined-human-daily-empty-inline", text: "No exercise details recorded." });
       return;
     }
-    const grid = section.createDiv({ cls: "eqh-daily-exercise-grid" });
+    const grid = section.createDiv({ cls: "examined-human-daily-exercise-grid" });
     for (const exercise of exercises) {
-      const card = grid.createDiv({ cls: "eqh-daily-exercise-card" });
+      const card = grid.createDiv({ cls: "examined-human-daily-exercise-card" });
       card.createEl("h4", { text: exercise.name });
-      if (exercise.category) card.createDiv({ cls: "eqh-exercise-category", text: exercise.category });
+      if (exercise.category) card.createDiv({ cls: "examined-human-exercise-category", text: exercise.category });
       if (exercise.sets.length > 0) {
-        const table = card.createEl("table", { cls: "eqh-exercise-table" });
+        const table = card.createEl("table", { cls: "examined-human-exercise-table" });
         const head = table.createEl("thead").createEl("tr");
         for (const label of ["Set", "Weight", "Reps", "Distance", "Duration"]) head.createEl("th", { text: label });
         const body = table.createEl("tbody");
@@ -7370,7 +7377,7 @@ var DailyAssessmentView = class extends import_obsidian6.ItemView {
           row.createEl("td", { text: set.durationMinutes == null ? "\u2014" : formatDuration(set.durationMinutes) });
         }
       }
-      if (exercise.notes) card.createDiv({ cls: "eqh-session-notes", text: exercise.notes });
+      if (exercise.notes) card.createDiv({ cls: "examined-human-session-notes", text: exercise.notes });
     }
   }
   displayEvents() {
@@ -7643,7 +7650,7 @@ var DailyAssessmentView = class extends import_obsidian6.ItemView {
     return item.sourceState ? "Future \xB7 projected" : "Future";
   }
   renderError(error) {
-    const panel = this.contentEl.createDiv({ cls: "eqh-error-panel" });
+    const panel = this.contentEl.createDiv({ cls: "examined-human-error-panel" });
     panel.createEl("h3", { text: "Could not open Daily Assessment" });
     panel.createDiv({ text: error instanceof Error ? error.message : String(error) });
   }
@@ -7667,13 +7674,13 @@ var import_obsidian7 = require("obsidian");
 function renderDismissibleWarning(container, plugin, key, message, className) {
   if (plugin.settings.dismissedWarningKeys.includes(key)) return null;
   const warning = container.createDiv({
-    cls: `${className} eqh-dismissible-warning`,
+    cls: `${className} examined-human-dismissible-warning`,
     attr: { role: "note" }
   });
-  warning.createDiv({ cls: "eqh-dismissible-warning-message", text: message });
-  const actions = warning.createDiv({ cls: "eqh-dismissible-warning-actions" });
+  warning.createDiv({ cls: "examined-human-dismissible-warning-message", text: message });
+  const actions = warning.createDiv({ cls: "examined-human-dismissible-warning-actions" });
   actions.createEl("button", {
-    cls: "eqh-dismissible-warning-never",
+    cls: "examined-human-dismissible-warning-never",
     text: "Don't show again",
     attr: { "aria-label": `Don't show this warning again` }
   }).addEventListener("click", () => {
@@ -7686,7 +7693,7 @@ function renderDismissibleWarning(container, plugin, key, message, className) {
     })();
   });
   const close = actions.createEl("button", {
-    cls: "clickable-icon eqh-dismissible-warning-close",
+    cls: "clickable-icon examined-human-dismissible-warning-close",
     attr: { "aria-label": "Close warning", title: "Close warning" }
   });
   (0, import_obsidian7.setIcon)(close, "x");
@@ -7716,7 +7723,7 @@ function sanitizeDismissedWarningKeys(value) {
 }
 
 // src/EngagementDashboardView.ts
-var EQH_ENGAGEMENT_DASHBOARD_VIEW_TYPE = "eqh-engagement-dashboard";
+var EXAMINED_HUMAN_ENGAGEMENT_DASHBOARD_VIEW_TYPE = "examined-human-engagement-dashboard";
 var FINGERPRINT_INTERVAL_MS2 = 1e4;
 var MAX_ACTIVITY_BUCKETS = 16;
 function humanizeCode(value) {
@@ -7740,11 +7747,9 @@ function formatAmount(value, currency) {
   const formatted = new Intl.NumberFormat(void 0, { maximumFractionDigits: 2 }).format(value);
   return `${formatted} ${currency}`;
 }
-function rangeStart(range, endDate) {
+function rangeStart(range, endDate, days) {
   const end = (0, import_obsidian8.moment)(endDate, "YYYY-MM-DD", true);
-  if (range === "30d") return end.clone().subtract(29, "days").format("YYYY-MM-DD");
-  if (range === "90d") return end.clone().subtract(89, "days").format("YYYY-MM-DD");
-  if (range === "1y") return end.clone().subtract(1, "year").add(1, "day").format("YYYY-MM-DD");
+  if (range === "days") return end.clone().subtract(Math.max(1, days) - 1, "days").format("YYYY-MM-DD");
   return null;
 }
 function rangeLabel(range, startDate, endDate) {
@@ -7786,7 +7791,7 @@ var EngagementDashboardView = class extends import_obsidian8.ItemView {
     this.plugin = plugin;
     this.result = null;
     this.selectedEngagementId = null;
-    this.selectedRange = "all";
+    this.selectedRange = "days";
     this.searchQuery = "";
     this.statusFilter = "all";
     this.typeFilter = "all";
@@ -7796,16 +7801,16 @@ var EngagementDashboardView = class extends import_obsidian8.ItemView {
     this.lastFingerprint = null;
   }
   getViewType() {
-    return EQH_ENGAGEMENT_DASHBOARD_VIEW_TYPE;
+    return EXAMINED_HUMAN_ENGAGEMENT_DASHBOARD_VIEW_TYPE;
   }
   getDisplayText() {
-    return "EH Dashboards \u2014 Engagements";
+    return "Examined Human \u2014 Engagements";
   }
   getIcon() {
     return "target";
   }
   async onOpen() {
-    this.contentEl.addClass("eqh-engagement-view");
+    this.contentEl.addClass("examined-human-engagement-view");
     await this.refresh();
     this.registerEvent(this.app.vault.on("modify", (file) => {
       try {
@@ -7832,11 +7837,11 @@ var EngagementDashboardView = class extends import_obsidian8.ItemView {
     var _a, _b;
     const generation = ++this.renderGeneration;
     this.contentEl.empty();
-    this.contentEl.addClass("eqh-engagement-view");
-    this.contentEl.createDiv({ cls: "eqh-loading", text: "Loading Engagement Dashboard\u2026" });
+    this.contentEl.addClass("examined-human-engagement-view");
+    this.contentEl.createDiv({ cls: "examined-human-loading", text: "Loading Engagement Dashboard\u2026" });
     try {
       const endDate = (0, import_obsidian8.moment)().format("YYYY-MM-DD");
-      const startDate = rangeStart(this.selectedRange, endDate);
+      const startDate = rangeStart(this.selectedRange, endDate, this.plugin.settings.defaultDashboardDays);
       const result = await this.plugin.database.engagementDashboard(
         this.plugin.settings.databasePath,
         this.selectedEngagementId,
@@ -7857,21 +7862,21 @@ var EngagementDashboardView = class extends import_obsidian8.ItemView {
   }
   renderDashboard() {
     this.contentEl.empty();
-    this.contentEl.addClass("eqh-engagement-view");
+    this.contentEl.addClass("examined-human-engagement-view");
     this.renderHeader();
     if (!this.result || this.result.engagements.length === 0) {
       this.contentEl.createDiv({
-        cls: "eqh-engagement-empty",
+        cls: "examined-human-engagement-empty",
         text: "No engagements were found in the configured database."
       });
       return;
     }
-    const layout = this.contentEl.createDiv({ cls: "eqh-engagement-layout" });
+    const layout = this.contentEl.createDiv({ cls: "examined-human-engagement-layout" });
     this.renderSidebar(layout);
-    const main = layout.createEl("main", { cls: "eqh-engagement-main" });
+    const main = layout.createEl("main", { cls: "examined-human-engagement-main" });
     const selected = this.result.selectedEngagement;
     if (!selected) {
-      main.createDiv({ cls: "eqh-engagement-empty", text: "Select an engagement to inspect it." });
+      main.createDiv({ cls: "examined-human-engagement-empty", text: "Select an engagement to inspect it." });
       return;
     }
     this.renderIdentity(main, selected);
@@ -7885,24 +7890,22 @@ var EngagementDashboardView = class extends import_obsidian8.ItemView {
   renderHeader() {
     var _a, _b;
     const result = this.result;
-    const header = this.contentEl.createDiv({ cls: "eqh-toolbar eqh-engagement-toolbar" });
-    const identity = header.createDiv({ cls: "eqh-toolbar-identity" });
-    identity.createEl("h2", { text: "EH Dashboards \u2014 Engagements" });
+    const header = this.contentEl.createDiv({ cls: "examined-human-toolbar examined-human-engagement-toolbar" });
+    const identity = header.createDiv({ cls: "examined-human-toolbar-identity" });
+    identity.createEl("h2", { text: "Examined Human \u2014 Engagements" });
     const activeInRange = (_a = result == null ? void 0 : result.engagements.filter((engagement) => engagement.sessionCount > 0).length) != null ? _a : 0;
     const totalMinutes = (_b = result == null ? void 0 : result.engagements.reduce((sum, engagement) => sum + engagement.totalMinutes, 0)) != null ? _b : 0;
     identity.createDiv({
-      cls: "eqh-toolbar-status",
+      cls: "examined-human-toolbar-status",
       text: result ? `${result.engagements.length} engagements \xB7 ${activeInRange} with activity \xB7 ${formatDuration2(totalMinutes)} logged` : "Time, milestones, and linked money by engagement"
     });
-    const controls = header.createDiv({ cls: "eqh-engagement-toolbar-controls" });
+    const controls = header.createDiv({ cls: "examined-human-engagement-toolbar-controls" });
     const rangeSelect = controls.createEl("select", {
-      cls: "dropdown eqh-engagement-range",
+      cls: "dropdown examined-human-engagement-range",
       attr: { "aria-label": "Engagement dashboard date range" }
     });
     const options = [
-      ["30d", "Last 30 days"],
-      ["90d", "Last 90 days"],
-      ["1y", "Last year"],
+      ["days", `Last ${this.plugin.settings.defaultDashboardDays} days`],
       ["all", "All time"]
     ];
     for (const [value, text] of options) {
@@ -7913,21 +7916,39 @@ var EngagementDashboardView = class extends import_obsidian8.ItemView {
       this.selectedRange = rangeSelect.value;
       void this.refresh();
     });
-    controls.createEl("button", { text: "Refresh", cls: "eqh-toolbar-button" }).addEventListener("click", () => {
+    if (this.selectedRange === "days") {
+      const days = controls.createEl("input", {
+        type: "number",
+        cls: "examined-human-dashboard-days-input",
+        attr: { min: "1", step: "1", inputmode: "numeric", "aria-label": "Number of engagement dashboard days" }
+      });
+      days.value = String(this.plugin.settings.defaultDashboardDays);
+      days.addEventListener("change", () => {
+        const parsed = Number(days.value);
+        if (!Number.isSafeInteger(parsed) || parsed < 1) {
+          days.value = String(this.plugin.settings.defaultDashboardDays);
+          return;
+        }
+        this.plugin.settings.defaultDashboardDays = parsed;
+        void this.plugin.saveSettings();
+        void this.refresh();
+      });
+    }
+    controls.createEl("button", { text: "Refresh", cls: "examined-human-toolbar-button" }).addEventListener("click", () => {
       void this.plugin.refreshViews();
     });
   }
   renderSidebar(container) {
     if (!this.result) return;
     const sidebar = container.createEl("aside", {
-      cls: "eqh-engagement-sidebar",
+      cls: "examined-human-engagement-sidebar",
       attr: { "aria-label": "Engagement navigator" }
     });
-    const filters = sidebar.createDiv({ cls: "eqh-engagement-filters" });
+    const filters = sidebar.createDiv({ cls: "examined-human-engagement-filters" });
     const search = filters.createEl("input", {
       type: "search",
       value: this.searchQuery,
-      cls: "eqh-engagement-search",
+      cls: "examined-human-engagement-search",
       attr: { "aria-label": "Search engagements", placeholder: "Search engagements\u2026" }
     });
     const statusSelect = filters.createEl("select", {
@@ -7940,7 +7961,7 @@ var EngagementDashboardView = class extends import_obsidian8.ItemView {
       attr: { "aria-label": "Filter by engagement type" }
     });
     this.addFilterOptions(typeSelect, "All types", this.result.engagements.map((item) => item.type), this.typeFilter);
-    const list = sidebar.createDiv({ cls: "eqh-engagement-list" });
+    const list = sidebar.createDiv({ cls: "examined-human-engagement-list" });
     const rerenderList = () => this.renderEngagementList(list);
     search.addEventListener("input", () => {
       this.searchQuery = search.value;
@@ -7972,21 +7993,21 @@ var EngagementDashboardView = class extends import_obsidian8.ItemView {
     container.empty();
     const filtered = this.filteredEngagements();
     if (filtered.length === 0) {
-      container.createDiv({ cls: "eqh-engagement-empty-inline", text: "No engagements match these filters." });
+      container.createDiv({ cls: "examined-human-engagement-empty-inline", text: "No engagements match these filters." });
       return;
     }
     for (const engagement of filtered) {
       const button = container.createEl("button", {
-        cls: `eqh-engagement-list-item${engagement.id === this.selectedEngagementId ? " is-selected" : ""}`,
+        cls: `examined-human-engagement-list-item${engagement.id === this.selectedEngagementId ? " is-selected" : ""}`,
         attr: {
           "aria-label": `${engagement.name}, ${humanizeCode(engagement.status)}, ${humanizeCode(engagement.type)}, ${formatDuration2(engagement.totalMinutes)} logged`
         }
       });
-      const heading = button.createDiv({ cls: "eqh-engagement-list-heading" });
+      const heading = button.createDiv({ cls: "examined-human-engagement-list-heading" });
       heading.createSpan({ text: engagement.name });
       heading.createEl("strong", { text: formatDuration2(engagement.totalMinutes) });
       button.createDiv({
-        cls: "eqh-engagement-list-meta",
+        cls: "examined-human-engagement-list-meta",
         text: `${humanizeCode(engagement.status)} \xB7 ${humanizeCode(engagement.type)} \xB7 ${engagement.sessionCount} sessions`
       });
       button.addEventListener("click", () => {
@@ -8013,33 +8034,33 @@ var EngagementDashboardView = class extends import_obsidian8.ItemView {
   }
   renderIdentity(container, engagement) {
     if (!this.result) return;
-    const section = container.createEl("section", { cls: "eqh-engagement-identity" });
-    const titleRow = section.createDiv({ cls: "eqh-engagement-title-row" });
+    const section = container.createEl("section", { cls: "examined-human-engagement-identity" });
+    const titleRow = section.createDiv({ cls: "examined-human-engagement-title-row" });
     titleRow.createEl("h3", { text: engagement.name });
-    const badges = titleRow.createDiv({ cls: "eqh-engagement-badges" });
-    badges.createSpan({ cls: `eqh-engagement-badge is-${engagement.status}`, text: humanizeCode(engagement.status) });
-    badges.createSpan({ cls: "eqh-engagement-badge", text: humanizeCode(engagement.type) });
+    const badges = titleRow.createDiv({ cls: "examined-human-engagement-badges" });
+    badges.createSpan({ cls: `examined-human-engagement-badge is-${engagement.status}`, text: humanizeCode(engagement.status) });
+    badges.createSpan({ cls: "examined-human-engagement-badge", text: humanizeCode(engagement.type) });
     section.createDiv({
-      cls: "eqh-engagement-period",
+      cls: "examined-human-engagement-period",
       text: rangeLabel(this.selectedRange, this.result.startDate, this.result.endDate)
     });
-    const dates = section.createDiv({ cls: "eqh-engagement-dates" });
+    const dates = section.createDiv({ cls: "examined-human-engagement-dates" });
     for (const [label, value] of [
       ["Started", engagement.startDate],
       ["Target", engagement.targetDate],
       ["Completed", engagement.completionDate]
     ]) {
-      const item = dates.createDiv({ cls: "eqh-engagement-date" });
+      const item = dates.createDiv({ cls: "examined-human-engagement-date" });
       item.createSpan({ text: label });
       item.createEl("strong", { text: formatDate(value) });
     }
     if (engagement.notes) {
-      section.createDiv({ cls: "eqh-engagement-notes", text: engagement.notes });
+      section.createDiv({ cls: "examined-human-engagement-notes", text: engagement.notes });
     }
   }
   renderSummary(container, engagement) {
     const grid = container.createEl("section", {
-      cls: "eqh-engagement-summary",
+      cls: "examined-human-engagement-summary",
       attr: { "aria-label": "Engagement summary" }
     });
     const cards = [
@@ -8049,10 +8070,10 @@ var EngagementDashboardView = class extends import_obsidian8.ItemView {
       ["Last activity", formatDate(engagement.lastSessionDate), "Selected period"]
     ];
     for (const [label, value, context] of cards) {
-      const card = grid.createDiv({ cls: "eqh-engagement-summary-card" });
-      card.createDiv({ cls: "eqh-engagement-eyebrow", text: label });
-      card.createDiv({ cls: "eqh-engagement-summary-value", text: value });
-      card.createDiv({ cls: "eqh-engagement-card-context", text: context });
+      const card = grid.createDiv({ cls: "examined-human-engagement-summary-card" });
+      card.createDiv({ cls: "examined-human-engagement-eyebrow", text: label });
+      card.createDiv({ cls: "examined-human-engagement-summary-value", text: value });
+      card.createDiv({ cls: "examined-human-engagement-card-context", text: context });
     }
   }
   renderDataCoverage(container) {
@@ -8062,13 +8083,13 @@ var EngagementDashboardView = class extends import_obsidian8.ItemView {
       this.plugin,
       DASHBOARD_WARNING_KEYS.engagementUnresolvedTransactions,
       `${this.result.unassignedTransactionCount} legacy or unresolved transaction rows in this period are excluded because they do not identify an engagement.`,
-      "eqh-engagement-coverage-warning"
+      "examined-human-engagement-coverage-warning"
     );
   }
   renderCharts(container, engagement) {
     if (!this.result) return;
-    const grid = container.createDiv({ cls: "eqh-engagement-chart-grid" });
-    const activitySection = grid.createEl("section", { cls: "eqh-engagement-panel" });
+    const grid = container.createDiv({ cls: "examined-human-engagement-chart-grid" });
+    const activitySection = grid.createEl("section", { cls: "examined-human-engagement-panel" });
     activitySection.createEl("h3", { text: "Activity trend" });
     const activity = buildActivityBuckets(
       this.result.dailyActivity,
@@ -8076,77 +8097,77 @@ var EngagementDashboardView = class extends import_obsidian8.ItemView {
       this.result.endDate,
       engagement.firstSessionDate
     );
-    activitySection.createDiv({ cls: "eqh-engagement-panel-subtitle", text: activity.subtitle });
+    activitySection.createDiv({ cls: "examined-human-engagement-panel-subtitle", text: activity.subtitle });
     if (activity.buckets.every((bucket) => bucket.minutes === 0)) {
-      activitySection.createDiv({ cls: "eqh-engagement-empty-inline", text: "No sessions in this period." });
+      activitySection.createDiv({ cls: "examined-human-engagement-empty-inline", text: "No sessions in this period." });
     } else {
       const maxMinutes = Math.max(...activity.buckets.map((bucket) => bucket.minutes), 1);
-      const scroller = activitySection.createDiv({ cls: "eqh-engagement-activity-scroll" });
-      const chart = scroller.createDiv({ cls: "eqh-engagement-activity-chart" });
+      const scroller = activitySection.createDiv({ cls: "examined-human-engagement-activity-scroll" });
+      const chart = scroller.createDiv({ cls: "examined-human-engagement-activity-chart" });
       for (const bucket of activity.buckets) {
         const column = chart.createDiv({
-          cls: "eqh-engagement-activity-column",
+          cls: "examined-human-engagement-activity-column",
           attr: { "aria-label": `${bucket.ariaLabel}: ${formatDuration2(bucket.minutes)}` }
         });
-        column.createDiv({ cls: "eqh-engagement-activity-value", text: bucket.minutes > 0 ? formatDuration2(bucket.minutes) : "\u2014" });
-        const stage = column.createDiv({ cls: "eqh-engagement-activity-stage" });
-        const bar = stage.createDiv({ cls: "eqh-engagement-activity-bar" });
-        bar.style.setProperty("--eqh-activity-height", `${Math.max(bucket.minutes > 0 ? 4 : 0, bucket.minutes / maxMinutes * 100)}%`);
-        column.createDiv({ cls: "eqh-engagement-activity-label", text: bucket.label });
+        column.createDiv({ cls: "examined-human-engagement-activity-value", text: bucket.minutes > 0 ? formatDuration2(bucket.minutes) : "\u2014" });
+        const stage = column.createDiv({ cls: "examined-human-engagement-activity-stage" });
+        const bar = stage.createDiv({ cls: "examined-human-engagement-activity-bar" });
+        bar.style.setProperty("--examined-human-activity-height", `${Math.max(bucket.minutes > 0 ? 4 : 0, bucket.minutes / maxMinutes * 100)}%`);
+        column.createDiv({ cls: "examined-human-engagement-activity-label", text: bucket.label });
       }
     }
-    const mixSection = grid.createEl("section", { cls: "eqh-engagement-panel" });
+    const mixSection = grid.createEl("section", { cls: "examined-human-engagement-panel" });
     mixSection.createEl("h3", { text: "Session type mix" });
-    mixSection.createDiv({ cls: "eqh-engagement-panel-subtitle", text: "Logged time by canonical session type" });
+    mixSection.createDiv({ cls: "examined-human-engagement-panel-subtitle", text: "Logged time by canonical session type" });
     if (this.result.sessionTypes.length === 0) {
-      mixSection.createDiv({ cls: "eqh-engagement-empty-inline", text: "No session types in this period." });
+      mixSection.createDiv({ cls: "examined-human-engagement-empty-inline", text: "No session types in this period." });
     } else {
       const maxMinutes = Math.max(...this.result.sessionTypes.map((item) => item.totalMinutes), 1);
-      const chart = mixSection.createDiv({ cls: "eqh-engagement-type-chart" });
+      const chart = mixSection.createDiv({ cls: "examined-human-engagement-type-chart" });
       for (const item of this.result.sessionTypes) {
-        const row = chart.createDiv({ cls: "eqh-engagement-type-row" });
-        const labels = row.createDiv({ cls: "eqh-engagement-type-labels" });
+        const row = chart.createDiv({ cls: "examined-human-engagement-type-row" });
+        const labels = row.createDiv({ cls: "examined-human-engagement-type-labels" });
         labels.createSpan({ text: humanizeCode(item.sessionType) });
         labels.createEl("strong", { text: `${formatDuration2(item.totalMinutes)} \xB7 ${item.sessionCount}` });
-        const track = row.createDiv({ cls: "eqh-engagement-type-track" });
-        const bar = track.createDiv({ cls: "eqh-engagement-type-bar" });
-        bar.style.setProperty("--eqh-type-width", `${Math.max(3, item.totalMinutes / maxMinutes * 100)}%`);
+        const track = row.createDiv({ cls: "examined-human-engagement-type-track" });
+        const bar = track.createDiv({ cls: "examined-human-engagement-type-bar" });
+        bar.style.setProperty("--examined-human-type-width", `${Math.max(3, item.totalMinutes / maxMinutes * 100)}%`);
       }
     }
   }
   renderTransactions(container) {
     var _a;
     if (!this.result) return;
-    const section = container.createEl("section", { cls: "eqh-engagement-panel" });
-    const heading = section.createDiv({ cls: "eqh-engagement-section-heading" });
+    const section = container.createEl("section", { cls: "examined-human-engagement-panel" });
+    const heading = section.createDiv({ cls: "examined-human-engagement-section-heading" });
     heading.createEl("h3", { text: "Linked money by currency" });
-    heading.createSpan({ text: "Currencies are never converted or combined", cls: "eqh-engagement-panel-subtitle" });
+    heading.createSpan({ text: "Currencies are never converted or combined", cls: "examined-human-engagement-panel-subtitle" });
     if (this.result.transactionTotals.length === 0) {
       section.createDiv({
-        cls: "eqh-engagement-empty-inline",
+        cls: "examined-human-engagement-empty-inline",
         text: "No engagement-linked transactions were recorded in this period."
       });
       return;
     }
-    const grid = section.createDiv({ cls: "eqh-engagement-money-grid" });
+    const grid = section.createDiv({ cls: "examined-human-engagement-money-grid" });
     for (const total of this.result.transactionTotals) {
-      const card = grid.createDiv({ cls: "eqh-engagement-money-card" });
-      card.createDiv({ cls: "eqh-engagement-eyebrow", text: total.currency });
-      card.createDiv({ cls: "eqh-engagement-money-net", text: formatAmount(total.net, total.currency) });
-      const details = card.createDiv({ cls: "eqh-engagement-money-details" });
+      const card = grid.createDiv({ cls: "examined-human-engagement-money-card" });
+      card.createDiv({ cls: "examined-human-engagement-eyebrow", text: total.currency });
+      card.createDiv({ cls: "examined-human-engagement-money-net", text: formatAmount(total.net, total.currency) });
+      const details = card.createDiv({ cls: "examined-human-engagement-money-details" });
       details.createSpan({ text: `In ${formatAmount(total.inflow, total.currency)}` });
       details.createSpan({ text: `Out ${formatAmount(total.outflow, total.currency)}` });
       details.createSpan({ text: `${total.transactionCount} transactions` });
     }
-    const ledger = section.createDiv({ cls: "eqh-engagement-transaction-ledger" });
-    const ledgerHeading = ledger.createDiv({ cls: "eqh-engagement-section-heading" });
+    const ledger = section.createDiv({ cls: "examined-human-engagement-transaction-ledger" });
+    const ledgerHeading = ledger.createDiv({ cls: "examined-human-engagement-section-heading" });
     ledgerHeading.createEl("h4", { text: "Transactions" });
     ledgerHeading.createSpan({
-      cls: "eqh-engagement-panel-subtitle",
+      cls: "examined-human-engagement-panel-subtitle",
       text: `All ${this.result.transactions.length} linked transaction${this.result.transactions.length === 1 ? "" : "s"} in the selected period`
     });
-    const wrapper = ledger.createDiv({ cls: "eqh-engagement-table-wrap" });
-    const table = wrapper.createEl("table", { cls: "eqh-engagement-detail-table eqh-engagement-transaction-table" });
+    const wrapper = ledger.createDiv({ cls: "examined-human-engagement-table-wrap" });
+    const table = wrapper.createEl("table", { cls: "examined-human-engagement-detail-table examined-human-engagement-transaction-table" });
     const header = table.createEl("thead").createEl("tr");
     for (const label of ["Date", "Account", "Description", "Amount"]) header.createEl("th", { text: label });
     const body = table.createEl("tbody");
@@ -8168,26 +8189,26 @@ var EngagementDashboardView = class extends import_obsidian8.ItemView {
   renderMilestones(container) {
     var _a;
     if (!this.result) return;
-    const section = container.createEl("section", { cls: "eqh-engagement-panel" });
-    const heading = section.createDiv({ cls: "eqh-engagement-section-heading" });
+    const section = container.createEl("section", { cls: "examined-human-engagement-panel" });
+    const heading = section.createDiv({ cls: "examined-human-engagement-section-heading" });
     heading.createEl("h3", { text: "Milestones" });
-    heading.createSpan({ text: "Lifetime achievements and their owner sessions", cls: "eqh-engagement-panel-subtitle" });
+    heading.createSpan({ text: "Lifetime achievements and their owner sessions", cls: "examined-human-engagement-panel-subtitle" });
     if (this.result.milestones.length === 0) {
-      section.createDiv({ cls: "eqh-engagement-empty-inline", text: "No milestones are recorded." });
+      section.createDiv({ cls: "examined-human-engagement-empty-inline", text: "No milestones are recorded." });
       return;
     }
-    const list = section.createDiv({ cls: "eqh-engagement-milestone-list" });
+    const list = section.createDiv({ cls: "examined-human-engagement-milestone-list" });
     for (const milestone of this.result.milestones) {
-      const item = list.createDiv({ cls: "eqh-engagement-milestone" });
-      const title = item.createDiv({ cls: "eqh-engagement-milestone-title" });
+      const item = list.createDiv({ cls: "examined-human-engagement-milestone" });
+      const title = item.createDiv({ cls: "examined-human-engagement-milestone-title" });
       title.createEl("h4", { text: milestone.name });
       title.createSpan({ text: formatDate((_a = milestone.date) != null ? _a : milestone.ownerSessionDate) });
       item.createDiv({
-        cls: `eqh-engagement-owner${milestone.ownerSessionId == null ? " is-unlinked" : ""}`,
+        cls: `examined-human-engagement-owner${milestone.ownerSessionId == null ? " is-unlinked" : ""}`,
         text: milestone.ownerSessionId == null ? "Legacy milestone without an owner session" : `Owner session \xB7 ${formatDate(milestone.ownerSessionDate)} \xB7 ${formatTimeRange(milestone.ownerStartTime, milestone.ownerEndTime)}`
       });
       if (milestone.measurements.length > 0) {
-        const measurements = item.createDiv({ cls: "eqh-engagement-measurements" });
+        const measurements = item.createDiv({ cls: "examined-human-engagement-measurements" });
         for (const measurement of milestone.measurements) {
           measurements.createSpan({
             text: `${humanizeCode(measurement.metricName)}: ${measurement.metricValue}`,
@@ -8195,22 +8216,22 @@ var EngagementDashboardView = class extends import_obsidian8.ItemView {
           });
         }
       }
-      if (milestone.notes) item.createDiv({ cls: "eqh-engagement-item-notes", text: milestone.notes });
+      if (milestone.notes) item.createDiv({ cls: "examined-human-engagement-item-notes", text: milestone.notes });
     }
   }
   renderRecentSessions(container) {
     var _a;
     if (!this.result) return;
-    const section = container.createEl("section", { cls: "eqh-engagement-panel" });
-    const heading = section.createDiv({ cls: "eqh-engagement-section-heading" });
+    const section = container.createEl("section", { cls: "examined-human-engagement-panel" });
+    const heading = section.createDiv({ cls: "examined-human-engagement-section-heading" });
     heading.createEl("h3", { text: "Recent sessions" });
-    heading.createSpan({ text: "Latest 12 in the selected period", cls: "eqh-engagement-panel-subtitle" });
+    heading.createSpan({ text: "Latest 12 in the selected period", cls: "examined-human-engagement-panel-subtitle" });
     if (this.result.recentSessions.length === 0) {
-      section.createDiv({ cls: "eqh-engagement-empty-inline", text: "No sessions were logged in this period." });
+      section.createDiv({ cls: "examined-human-engagement-empty-inline", text: "No sessions were logged in this period." });
       return;
     }
-    const wrapper = section.createDiv({ cls: "eqh-engagement-table-wrap" });
-    const table = wrapper.createEl("table", { cls: "eqh-engagement-detail-table eqh-engagement-session-table" });
+    const wrapper = section.createDiv({ cls: "examined-human-engagement-table-wrap" });
+    const table = wrapper.createEl("table", { cls: "examined-human-engagement-detail-table examined-human-engagement-session-table" });
     const header = table.createEl("thead").createEl("tr");
     for (const label of ["Date", "Time", "Type", "Duration", "Notes"]) header.createEl("th", { text: label });
     const body = table.createEl("tbody");
@@ -8225,11 +8246,11 @@ var EngagementDashboardView = class extends import_obsidian8.ItemView {
   }
   renderError(error) {
     const message = error instanceof Error ? error.message : String(error);
-    const section = this.contentEl.createDiv({ cls: "eqh-error eqh-engagement-error" });
+    const section = this.contentEl.createDiv({ cls: "examined-human-error examined-human-engagement-error" });
     section.createEl("h3", { text: "Could not load the Engagement Dashboard" });
     section.createEl("p", { text: message });
     section.createEl("p", {
-      text: `Check the vault-relative database path in EH Dashboards settings: ${this.plugin.settings.databasePath}`
+      text: `Check the vault-relative database path in Examined Human settings: ${this.plugin.settings.databasePath}`
     });
   }
   async checkDatabaseFingerprint() {
@@ -8249,11 +8270,9 @@ var import_obsidian10 = require("obsidian");
 // src/DashboardViewBase.ts
 var import_obsidian9 = require("obsidian");
 var FINGERPRINT_INTERVAL_MS3 = 1e4;
-function dashboardRangeStart(range, endDate) {
+function dashboardRangeStart(range, endDate, days) {
   const end = (0, import_obsidian9.moment)(endDate, "YYYY-MM-DD", true);
-  if (range === "30d") return end.clone().subtract(29, "days").format("YYYY-MM-DD");
-  if (range === "90d") return end.clone().subtract(89, "days").format("YYYY-MM-DD");
-  if (range === "1y") return end.clone().subtract(1, "year").add(1, "day").format("YYYY-MM-DD");
+  if (range === "days") return end.clone().subtract(Math.max(1, days) - 1, "days").format("YYYY-MM-DD");
   return null;
 }
 function formatDashboardDate(value) {
@@ -8280,55 +8299,55 @@ function humanizeDashboardCode(value) {
   return value.split("_").join(" ").replace(/\b[a-z]/g, (letter) => letter.toUpperCase());
 }
 function createDashboardMetric(container, label, value, detail, tone) {
-  const card = container.createDiv({ cls: `eqh-domain-metric${tone ? ` is-${tone}` : ""}` });
-  card.createDiv({ cls: "eqh-domain-metric-label", text: label });
-  card.createDiv({ cls: "eqh-domain-metric-value", text: value });
-  card.createDiv({ cls: "eqh-domain-metric-detail", text: detail });
+  const card = container.createDiv({ cls: `examined-human-domain-metric${tone ? ` is-${tone}` : ""}` });
+  card.createDiv({ cls: "examined-human-domain-metric-label", text: label });
+  card.createDiv({ cls: "examined-human-domain-metric-value", text: value });
+  card.createDiv({ cls: "examined-human-domain-metric-detail", text: detail });
   return card;
 }
 function createDashboardPanel(container, title, subtitle, wide = false) {
-  const panel = container.createEl("section", { cls: `eqh-domain-panel${wide ? " is-wide" : ""}` });
-  const header = panel.createDiv({ cls: "eqh-domain-panel-header" });
+  const panel = container.createEl("section", { cls: `examined-human-domain-panel${wide ? " is-wide" : ""}` });
+  const header = panel.createDiv({ cls: "examined-human-domain-panel-header" });
   header.createEl("h3", { text: title });
-  header.createDiv({ cls: "eqh-domain-panel-subtitle", text: subtitle });
+  header.createDiv({ cls: "examined-human-domain-panel-subtitle", text: subtitle });
   return panel;
 }
 function renderDashboardBars(container, records) {
   if (records.length === 0) {
-    container.createDiv({ cls: "eqh-domain-empty", text: "No data was recorded in this period." });
+    container.createDiv({ cls: "examined-human-domain-empty", text: "No data was recorded in this period." });
     return;
   }
   const max = Math.max(...records.map((record) => Math.abs(record.value)), 1);
-  const list = container.createDiv({ cls: "eqh-domain-bars" });
+  const list = container.createDiv({ cls: "examined-human-domain-bars" });
   for (const record of records) {
-    const row = list.createDiv({ cls: "eqh-domain-bar-row" });
-    const heading = row.createDiv({ cls: "eqh-domain-bar-heading" });
+    const row = list.createDiv({ cls: "examined-human-domain-bar-row" });
+    const heading = row.createDiv({ cls: "examined-human-domain-bar-heading" });
     heading.createSpan({ text: record.label });
     heading.createEl("strong", { text: record.displayValue });
-    const track = row.createDiv({ cls: "eqh-domain-bar-track" });
-    const fill = track.createDiv({ cls: "eqh-domain-bar-fill" });
+    const track = row.createDiv({ cls: "examined-human-domain-bar-track" });
+    const fill = track.createDiv({ cls: "examined-human-domain-bar-fill" });
     fill.style.width = `${Math.max(2, Math.abs(record.value) / max * 100)}%`;
-    if (record.detail) row.createDiv({ cls: "eqh-domain-bar-detail", text: record.detail });
+    if (record.detail) row.createDiv({ cls: "examined-human-domain-bar-detail", text: record.detail });
   }
 }
 function renderDashboardTrend(container, records) {
   if (records.length === 0) {
-    container.createDiv({ cls: "eqh-domain-empty", text: "No trend data was recorded in this period." });
+    container.createDiv({ cls: "examined-human-domain-empty", text: "No trend data was recorded in this period." });
     return;
   }
   const max = Math.max(...records.map((record) => record.value), 1);
-  const chart = container.createEl("ol", { cls: "eqh-domain-trend" });
+  const chart = container.createEl("ol", { cls: "examined-human-domain-trend" });
   for (const record of records) {
     const item = chart.createEl("li", {
-      cls: "eqh-domain-trend-item",
+      cls: "examined-human-domain-trend-item",
       attr: { "aria-label": `${record.ariaLabel}: ${record.displayValue}`, title: `${record.ariaLabel}: ${record.displayValue}` }
     });
     item.createDiv({
-      cls: "eqh-domain-trend-value",
+      cls: "examined-human-domain-trend-value",
       text: record.displayValue,
-      attr: { style: `--eqh-domain-height:${Math.max(4, record.value / max * 100)}%` }
+      attr: { style: `--examined-human-domain-height:${Math.max(4, record.value / max * 100)}%` }
     });
-    item.createDiv({ cls: "eqh-domain-trend-label", text: record.label });
+    item.createDiv({ cls: "examined-human-domain-trend-label", text: record.label });
   }
 }
 var DashboardViewBase = class extends import_obsidian9.ItemView {
@@ -8336,7 +8355,7 @@ var DashboardViewBase = class extends import_obsidian9.ItemView {
     super(leaf);
     this.plugin = plugin;
     this.result = null;
-    this.selectedRange = "90d";
+    this.selectedRange = "days";
     this.startDate = null;
     this.endDate = "";
     this.renderGeneration = 0;
@@ -8344,7 +8363,7 @@ var DashboardViewBase = class extends import_obsidian9.ItemView {
     this.lastFingerprint = null;
   }
   async onOpen() {
-    this.contentEl.addClass("eqh-domain-view");
+    this.contentEl.addClass("examined-human-domain-view");
     await this.refresh();
     this.registerEvent(this.app.vault.on("modify", (file) => {
       try {
@@ -8369,10 +8388,10 @@ var DashboardViewBase = class extends import_obsidian9.ItemView {
   async refresh() {
     const generation = ++this.renderGeneration;
     this.endDate = (0, import_obsidian9.moment)().format("YYYY-MM-DD");
-    this.startDate = dashboardRangeStart(this.selectedRange, this.endDate);
+    this.startDate = dashboardRangeStart(this.selectedRange, this.endDate, this.plugin.settings.defaultDashboardDays);
     this.contentEl.empty();
-    this.contentEl.addClass("eqh-domain-view");
-    this.contentEl.createDiv({ cls: "eqh-loading", text: `Loading ${this.dashboardTitle()}\u2026` });
+    this.contentEl.addClass("examined-human-domain-view");
+    this.contentEl.createDiv({ cls: "examined-human-loading", text: `Loading ${this.dashboardTitle()}\u2026` });
     try {
       const result = await this.loadDashboard(this.startDate, this.endDate);
       if (generation !== this.renderGeneration) return;
@@ -8385,26 +8404,24 @@ var DashboardViewBase = class extends import_obsidian9.ItemView {
       this.contentEl.empty();
       this.renderToolbar("Source-backed personal analytics");
       const message = error instanceof Error ? error.message : String(error);
-      const panel = this.contentEl.createDiv({ cls: "eqh-error" });
+      const panel = this.contentEl.createDiv({ cls: "examined-human-error" });
       panel.createEl("strong", { text: `${this.dashboardTitle()} could not load.` });
       panel.createDiv({ text: message });
       panel.createDiv({ text: `Configured database: ${this.plugin.settings.databasePath || "(not set)"}` });
     }
   }
   renderToolbar(subtitle, buildExtraControls) {
-    const toolbar = this.contentEl.createDiv({ cls: "eqh-toolbar eqh-domain-toolbar" });
-    const identity = toolbar.createDiv({ cls: "eqh-toolbar-identity" });
-    identity.createEl("h2", { text: `EH Dashboards \u2014 ${this.dashboardTitle()}` });
-    identity.createDiv({ cls: "eqh-toolbar-status", text: subtitle });
-    const controls = toolbar.createDiv({ cls: "eqh-domain-toolbar-controls" });
+    const toolbar = this.contentEl.createDiv({ cls: "examined-human-toolbar examined-human-domain-toolbar" });
+    const identity = toolbar.createDiv({ cls: "examined-human-toolbar-identity" });
+    identity.createEl("h2", { text: `Examined Human \u2014 ${this.dashboardTitle()}` });
+    identity.createDiv({ cls: "examined-human-toolbar-status", text: subtitle });
+    const controls = toolbar.createDiv({ cls: "examined-human-domain-toolbar-controls" });
     const range = controls.createEl("select", {
       cls: "dropdown",
       attr: { "aria-label": `${this.dashboardTitle()} date range` }
     });
     const options = [
-      ["30d", "Last 30 days"],
-      ["90d", "Last 90 days"],
-      ["1y", "Last year"],
+      ["days", `Last ${this.plugin.settings.defaultDashboardDays} days`],
       ["all", "All time"]
     ];
     for (const [value, label] of options) {
@@ -8415,8 +8432,26 @@ var DashboardViewBase = class extends import_obsidian9.ItemView {
       this.selectedRange = range.value;
       void this.refresh();
     });
+    if (this.selectedRange === "days") {
+      const days = controls.createEl("input", {
+        type: "number",
+        cls: "examined-human-dashboard-days-input",
+        attr: { min: "1", step: "1", inputmode: "numeric", "aria-label": "Number of dashboard days" }
+      });
+      days.value = String(this.plugin.settings.defaultDashboardDays);
+      days.addEventListener("change", () => {
+        const parsed = Number(days.value);
+        if (!Number.isSafeInteger(parsed) || parsed < 1) {
+          days.value = String(this.plugin.settings.defaultDashboardDays);
+          return;
+        }
+        this.plugin.settings.defaultDashboardDays = parsed;
+        void this.plugin.saveSettings();
+        void this.refresh();
+      });
+    }
     buildExtraControls == null ? void 0 : buildExtraControls(controls);
-    controls.createEl("button", { cls: "eqh-toolbar-button", text: "Refresh" }).addEventListener("click", () => {
+    controls.createEl("button", { cls: "examined-human-toolbar-button", text: "Refresh" }).addEventListener("click", () => {
       void this.plugin.refreshViews();
     });
   }
@@ -8439,16 +8474,16 @@ var DashboardViewBase = class extends import_obsidian9.ItemView {
 };
 
 // src/ExerciseDashboardView.ts
-var EQH_EXERCISE_DASHBOARD_VIEW_TYPE = "eqh-exercise-dashboard";
+var EXAMINED_HUMAN_EXERCISE_DASHBOARD_VIEW_TYPE = "examined-human-exercise-dashboard";
 var ExerciseDashboardView = class extends DashboardViewBase {
   constructor(leaf, plugin) {
     super(leaf, plugin);
   }
   getViewType() {
-    return EQH_EXERCISE_DASHBOARD_VIEW_TYPE;
+    return EXAMINED_HUMAN_EXERCISE_DASHBOARD_VIEW_TYPE;
   }
   getDisplayText() {
-    return "EH Dashboards \u2014 Exercise";
+    return "Examined Human \u2014 Exercise";
   }
   getIcon() {
     return "dumbbell";
@@ -8461,7 +8496,7 @@ var ExerciseDashboardView = class extends DashboardViewBase {
   }
   renderDashboard(result) {
     this.renderToolbar(`${this.periodLabel()} \xB7 Canonical workouts and optional set-level detail`);
-    const metrics = this.contentEl.createDiv({ cls: "eqh-domain-metrics" });
+    const metrics = this.contentEl.createDiv({ cls: "examined-human-domain-metrics" });
     createDashboardMetric(metrics, "Workouts", formatDashboardNumber(result.workoutCount, 0), `${result.trainingDays} training days`);
     createDashboardMetric(metrics, "Logged time", formatDashboardDuration(result.totalMinutes), "Canonical workout session duration");
     createDashboardMetric(metrics, "Detailed workouts", formatDashboardNumber(result.detailedWorkoutCount, 0), `${result.workoutCount - result.detailedWorkoutCount} without exercise rows`);
@@ -8480,10 +8515,10 @@ var ExerciseDashboardView = class extends DashboardViewBase {
         this.plugin,
         DASHBOARD_WARNING_KEYS.exerciseIncompleteDetails,
         `${result.workoutCount - result.detailedWorkoutCount} workout sessions have time evidence but no structured exercise details. They remain included in workout and duration totals.`,
-        "eqh-domain-warning"
+        "examined-human-domain-warning"
       );
     }
-    const panels = this.contentEl.createDiv({ cls: "eqh-domain-panel-grid" });
+    const panels = this.contentEl.createDiv({ cls: "examined-human-domain-panel-grid" });
     this.renderActivityTrend(panels, result);
     this.renderExerciseMix(panels, result);
     this.renderMuscleCoverage(panels, result);
@@ -8521,10 +8556,10 @@ var ExerciseDashboardView = class extends DashboardViewBase {
   renderPerformanceTable(container, result) {
     const panel = createDashboardPanel(container, "Exercise performance", "Recorded maxima and additive measurements; units follow the source database", true);
     if (result.exercises.length === 0) {
-      panel.createDiv({ cls: "eqh-domain-empty", text: "No structured exercises were recorded in this period." });
+      panel.createDiv({ cls: "examined-human-domain-empty", text: "No structured exercises were recorded in this period." });
       return;
     }
-    const table = panel.createEl("table", { cls: "eqh-domain-table" });
+    const table = panel.createEl("table", { cls: "examined-human-domain-table" });
     const head = table.createEl("thead").createEl("tr");
     for (const label of ["Exercise", "Workouts", "Sets", "Max weight", "Max reps", "Load \xD7 reps", "Distance", "Timed", "Last"]) {
       head.createEl("th", { text: label });
@@ -8547,10 +8582,10 @@ var ExerciseDashboardView = class extends DashboardViewBase {
     var _a;
     const panel = createDashboardPanel(container, "Recent workouts", "Select a workout to open its full session and exercise details", true);
     if (result.recentWorkouts.length === 0) {
-      panel.createDiv({ cls: "eqh-domain-empty", text: "No workouts were recorded in this period." });
+      panel.createDiv({ cls: "examined-human-domain-empty", text: "No workouts were recorded in this period." });
       return;
     }
-    const table = panel.createEl("table", { cls: "eqh-domain-table" });
+    const table = panel.createEl("table", { cls: "examined-human-domain-table" });
     const head = table.createEl("thead").createEl("tr");
     for (const label of ["Date", "Engagement", "Time", "Exercises", "Sets", "Load \xD7 reps", "Distance", "Notes"]) {
       head.createEl("th", { text: label });
@@ -8561,7 +8596,7 @@ var ExerciseDashboardView = class extends DashboardViewBase {
       row.createEl("td", { text: formatDashboardDate(workout.date) });
       const engagement = row.createEl("td");
       const detailsButton = engagement.createEl("button", {
-        cls: "eqh-domain-table-link",
+        cls: "examined-human-domain-table-link",
         text: workout.engagementName,
         attr: {
           "aria-label": `Open exercise details for ${workout.engagementName} on ${formatDashboardDate(workout.date)}`
@@ -8601,7 +8636,7 @@ var ExerciseDashboardView = class extends DashboardViewBase {
 
 // src/FinancialDashboardView.ts
 var import_obsidian11 = require("obsidian");
-var EQH_FINANCIAL_DASHBOARD_VIEW_TYPE = "eqh-financial-dashboard";
+var EXAMINED_HUMAN_FINANCIAL_DASHBOARD_VIEW_TYPE = "examined-human-financial-dashboard";
 function buildFlowBuckets(records) {
   var _a;
   if (records.length === 0) return [];
@@ -8629,12 +8664,13 @@ var FinancialDashboardView = class extends DashboardViewBase {
   constructor(leaf, plugin) {
     super(leaf, plugin);
     this.selectedCurrency = "all";
+    this.selectedAccountId = null;
   }
   getViewType() {
-    return EQH_FINANCIAL_DASHBOARD_VIEW_TYPE;
+    return EXAMINED_HUMAN_FINANCIAL_DASHBOARD_VIEW_TYPE;
   }
   getDisplayText() {
-    return "EH Dashboards \u2014 Finance";
+    return "Examined Human \u2014 Finance";
   }
   getIcon() {
     return "landmark";
@@ -8668,12 +8704,12 @@ var FinancialDashboardView = class extends DashboardViewBase {
       });
     });
     const currencies = this.filteredCurrencies(result.currencies);
-    const currencyGrid = this.contentEl.createDiv({ cls: "eqh-domain-currency-grid" });
+    const currencyGrid = this.contentEl.createDiv({ cls: "examined-human-domain-currency-grid" });
     for (const currency of currencies) this.renderCurrencyCard(currencyGrid, currency);
     if (currencies.length === 0) {
-      currencyGrid.createDiv({ cls: "eqh-domain-empty", text: "No transactions were recorded in this period." });
+      currencyGrid.createDiv({ cls: "examined-human-domain-empty", text: "No transactions were recorded in this period." });
     }
-    const panels = this.contentEl.createDiv({ cls: "eqh-domain-panel-grid" });
+    const panels = this.contentEl.createDiv({ cls: "examined-human-domain-panel-grid" });
     for (const currency of currencies) this.renderFlowTrend(panels, result, currency.currency);
     this.renderEngagementSpending(panels, result);
     this.renderAccountFlow(panels, result);
@@ -8683,11 +8719,11 @@ var FinancialDashboardView = class extends DashboardViewBase {
     return this.selectedCurrency === "all" ? currencies : currencies.filter((currency) => currency.currency === this.selectedCurrency);
   }
   renderCurrencyCard(container, record) {
-    const card = container.createEl("section", { cls: "eqh-domain-currency-card" });
-    const header = card.createDiv({ cls: "eqh-domain-currency-heading" });
+    const card = container.createEl("section", { cls: "examined-human-domain-currency-card" });
+    const header = card.createDiv({ cls: "examined-human-domain-currency-heading" });
     header.createEl("h3", { text: record.currency });
     header.createSpan({ text: `${record.transactionCount} transactions` });
-    const values = card.createDiv({ cls: "eqh-domain-currency-values" });
+    const values = card.createDiv({ cls: "examined-human-domain-currency-values" });
     const inflow = values.createDiv();
     inflow.createSpan({ text: "Inflow" });
     inflow.createEl("strong", { text: formatDashboardAmount(record.inflow, record.currency) });
@@ -8723,22 +8759,43 @@ var FinancialDashboardView = class extends DashboardViewBase {
   renderAccountFlow(container, result) {
     const records = result.accounts.filter((record) => this.selectedCurrency === "all" || record.currency === this.selectedCurrency).sort((left, right) => right.transactionCount - left.transactionCount || left.accountName.localeCompare(right.accountName)).slice(0, 12);
     const panel = createDashboardPanel(container, "Most used accounts", "Transaction frequency in the selected period; this is not an account balance");
-    renderDashboardBars(panel, records.map((record) => ({
-      label: record.accountName,
-      value: record.transactionCount,
-      displayValue: `${record.transactionCount} transaction${record.transactionCount === 1 ? "" : "s"}`,
-      detail: `${record.currency} \xB7 ${humanizeDashboardCode(record.accountType)} \xB7 net ${formatDashboardAmount(record.net, record.currency)}`
-    })));
+    if (records.length === 0) {
+      panel.createDiv({ cls: "examined-human-domain-empty", text: "No accounts were used in this period." });
+      return;
+    }
+    const list = panel.createDiv({ cls: "examined-human-domain-bars" });
+    for (const record of records) {
+      const row = list.createEl("button", {
+        cls: `examined-human-domain-bar-row examined-human-domain-bar-button${this.selectedAccountId === record.accountId ? " is-selected" : ""}`,
+        attr: { type: "button", "aria-pressed": String(this.selectedAccountId === record.accountId) }
+      });
+      const heading = row.createDiv({ cls: "examined-human-domain-bar-heading" });
+      heading.createSpan({ text: record.accountName });
+      heading.createEl("strong", { text: `${record.transactionCount} transaction${record.transactionCount === 1 ? "" : "s"}` });
+      const track = row.createDiv({ cls: "examined-human-domain-bar-track" });
+      const fill = track.createDiv({ cls: "examined-human-domain-bar-fill" });
+      const max = Math.max(...records.map((item) => item.transactionCount), 1);
+      fill.style.width = `${Math.max(2, record.transactionCount / max * 100)}%`;
+      row.createDiv({ cls: "examined-human-domain-bar-detail", text: `${record.currency} \xB7 ${humanizeDashboardCode(record.accountType)} \xB7 net ${formatDashboardAmount(record.net, record.currency)}` });
+      row.addEventListener("click", () => {
+        this.selectedAccountId = this.selectedAccountId === record.accountId ? null : record.accountId;
+        this.contentEl.empty();
+        this.renderDashboard(result);
+      });
+    }
   }
   renderRecentTransactions(container, result) {
     var _a, _b;
-    const records = result.recentTransactions.filter((record) => this.selectedCurrency === "all" || record.currency === this.selectedCurrency);
-    const panel = createDashboardPanel(container, "Recent transactions", "Newest recorded activity in the selected period", true);
+    const records = result.recentTransactions.filter((record) => this.selectedAccountId == null || record.accountId === this.selectedAccountId).filter((record) => this.selectedCurrency === "all" || record.currency === this.selectedCurrency);
+    const selectedAccount = result.accounts.find((account) => account.accountId === this.selectedAccountId);
+    const title = selectedAccount ? `${selectedAccount.accountName} activity` : "Recent transactions";
+    const subtitle = selectedAccount ? `${selectedAccount.currency} \xB7 ${humanizeDashboardCode(selectedAccount.accountType)} \xB7 newest recorded activity` : "Newest recorded activity in the selected period";
+    const panel = createDashboardPanel(container, title, subtitle, true);
     if (records.length === 0) {
-      panel.createDiv({ cls: "eqh-domain-empty", text: "No transactions were recorded in this period." });
+      panel.createDiv({ cls: "examined-human-domain-empty", text: "No transactions were recorded in this period." });
       return;
     }
-    const table = panel.createEl("table", { cls: "eqh-domain-table" });
+    const table = panel.createEl("table", { cls: "examined-human-domain-table" });
     const head = table.createEl("thead").createEl("tr");
     for (const label of ["Date", "Account", "Engagement", "Description", "Amount"]) head.createEl("th", { text: label });
     const body = table.createEl("tbody");
@@ -8758,7 +8815,7 @@ var FinancialDashboardView = class extends DashboardViewBase {
 
 // src/NutritionDashboardView.ts
 var import_obsidian12 = require("obsidian");
-var EQH_NUTRITION_DASHBOARD_VIEW_TYPE = "eqh-nutrition-dashboard";
+var EXAMINED_HUMAN_NUTRITION_DASHBOARD_VIEW_TYPE = "examined-human-nutrition-dashboard";
 function average(values) {
   const available = values.filter((value) => value != null && Number.isFinite(value));
   return available.length > 0 ? available.reduce((sum, value) => sum + value, 0) / available.length : null;
@@ -8771,10 +8828,10 @@ var NutritionDashboardView = class extends DashboardViewBase {
     super(leaf, plugin);
   }
   getViewType() {
-    return EQH_NUTRITION_DASHBOARD_VIEW_TYPE;
+    return EXAMINED_HUMAN_NUTRITION_DASHBOARD_VIEW_TYPE;
   }
   getDisplayText() {
-    return "EH Dashboards \u2014 Nutrition";
+    return "Examined Human \u2014 Nutrition";
   }
   getIcon() {
     return "utensils";
@@ -8791,7 +8848,7 @@ var NutritionDashboardView = class extends DashboardViewBase {
     const avgProtein = average(result.daily.map((day) => day.proteinG));
     const adherenceRate = result.dietedEvaluatedDays > 0 ? result.dietedDays / result.dietedEvaluatedDays : null;
     const debt = result.leisureDebt;
-    const metrics = this.contentEl.createDiv({ cls: "eqh-domain-metrics" });
+    const metrics = this.contentEl.createDiv({ cls: "examined-human-domain-metrics" });
     createDashboardMetric(metrics, "Recorded days", formatDashboardNumber(result.recordedDays, 0), `${result.missingCaloriesDays} without calories`);
     createDashboardMetric(metrics, "Average calories", avgCalories == null ? "\u2014" : `${formatDashboardNumber(avgCalories, 0)} kcal`, "Days with a calorie value");
     createDashboardMetric(metrics, "Average protein", avgProtein == null ? "\u2014" : `${formatDashboardNumber(avgProtein, 1)} g`, "Days with a protein value");
@@ -8822,10 +8879,10 @@ var NutritionDashboardView = class extends DashboardViewBase {
         this.plugin,
         DASHBOARD_WARNING_KEYS.nutritionIncompleteMealEvidence,
         `Leisure debt uses ${debt.assessedDays} schema-v5 assessed meal days; ${result.recordedDays - debt.assessedDays} nutrition days do not contain meal-level leisure evidence. Diet adherence still uses their recorded dieted value.`,
-        "eqh-domain-warning"
+        "examined-human-domain-warning"
       );
     }
-    const panels = this.contentEl.createDiv({ cls: "eqh-domain-panel-grid" });
+    const panels = this.contentEl.createDiv({ cls: "examined-human-domain-panel-grid" });
     this.renderCalorieTrend(panels, result);
     this.renderProteinTrend(panels, result);
     this.renderMealMix(panels, result);
@@ -8881,10 +8938,10 @@ var NutritionDashboardView = class extends DashboardViewBase {
     const records = [...result.daily].reverse().slice(0, 20);
     const panel = createDashboardPanel(container, "Recent nutrition days", "Effective values prefer schema-v5 assessment snapshots", true);
     if (records.length === 0) {
-      panel.createDiv({ cls: "eqh-domain-empty", text: "No nutrition days were recorded in this period." });
+      panel.createDiv({ cls: "examined-human-domain-empty", text: "No nutrition days were recorded in this period." });
       return;
     }
-    const table = panel.createEl("table", { cls: "eqh-domain-table" });
+    const table = panel.createEl("table", { cls: "examined-human-domain-table" });
     const head = table.createEl("thead").createEl("tr");
     for (const label of ["Date", "Calories", "Protein", "Dieted", "Leisure meals", "Evidence"]) head.createEl("th", { text: label });
     const body = table.createEl("tbody");
@@ -8902,7 +8959,7 @@ var NutritionDashboardView = class extends DashboardViewBase {
 
 // src/TimelineView.ts
 var import_obsidian13 = require("obsidian");
-var EQH_CALENDAR_VIEW_TYPE = "eqh-calendar";
+var EXAMINED_HUMAN_CALENDAR_VIEW_TYPE = "examined-human";
 var INITIAL_DAYS_EACH_SIDE = 45;
 var WINDOW_SHIFT_DAYS = 28;
 var GUTTER_WIDTH = 68;
@@ -8929,16 +8986,16 @@ var TimelineView = class extends import_obsidian13.ItemView {
     this.warningNoticeShown = false;
   }
   getViewType() {
-    return EQH_CALENDAR_VIEW_TYPE;
+    return EXAMINED_HUMAN_CALENDAR_VIEW_TYPE;
   }
   getDisplayText() {
-    return "EH Dashboards \u2014 Calendar";
+    return "Examined Human \u2014 Calendar";
   }
   getIcon() {
     return "calendar-clock";
   }
   async onOpen() {
-    this.contentEl.addClass("eqh-calendar-view");
+    this.contentEl.addClass("examined-human-view");
     await this.renderCalendar({
       viewport: {
         centerDate: (0, import_obsidian13.moment)().format("YYYY-MM-DD"),
@@ -8994,9 +9051,9 @@ var TimelineView = class extends import_obsidian13.ItemView {
     const generation = ++this.renderGeneration;
     const viewport = (_a = options.viewport) != null ? _a : this.captureViewport();
     this.contentEl.empty();
-    this.contentEl.addClass("eqh-calendar-view");
+    this.contentEl.addClass("examined-human-view");
     this.renderHeader();
-    const loading = this.contentEl.createDiv({ cls: "eqh-loading", text: "Loading EQH sessions\u2026" });
+    const loading = this.contentEl.createDiv({ cls: "examined-human-loading", text: "Loading Examined Human sessions\u2026" });
     let result;
     try {
       result = await this.plugin.database.sessionsBetween(
@@ -9039,42 +9096,42 @@ var TimelineView = class extends import_obsidian13.ItemView {
     });
   }
   renderHeader() {
-    const header = this.contentEl.createDiv({ cls: "eqh-toolbar" });
-    const identity = header.createDiv({ cls: "eqh-toolbar-identity" });
-    identity.createEl("h2", { text: "EH Dashboards \u2014 Calendar" });
-    this.statusEl = identity.createDiv({ cls: "eqh-status", text: "Loading\u2026" });
-    this.warningEl = header.createDiv({ cls: "eqh-toolbar-warning-host eqh-hidden" });
-    const actions = header.createDiv({ cls: "eqh-toolbar-actions" });
-    actions.createEl("button", { text: "Today", cls: "eqh-toolbar-button" }).addEventListener("click", () => {
+    const header = this.contentEl.createDiv({ cls: "examined-human-toolbar" });
+    const identity = header.createDiv({ cls: "examined-human-toolbar-identity" });
+    identity.createEl("h2", { text: "Examined Human \u2014 Calendar" });
+    this.statusEl = identity.createDiv({ cls: "examined-human-status", text: "Loading\u2026" });
+    this.warningEl = header.createDiv({ cls: "examined-human-toolbar-warning-host examined-human-hidden" });
+    const actions = header.createDiv({ cls: "examined-human-toolbar-actions" });
+    actions.createEl("button", { text: "Today", cls: "examined-human-toolbar-button" }).addEventListener("click", () => {
       void this.goToToday();
     });
-    actions.createEl("button", { text: "Refresh", cls: "eqh-toolbar-button", attr: { "aria-label": "Refresh database" } }).addEventListener("click", () => {
+    actions.createEl("button", { text: "Refresh", cls: "examined-human-toolbar-button", attr: { "aria-label": "Refresh database" } }).addEventListener("click", () => {
       void this.plugin.refreshViews();
     });
-    actions.createEl("button", { text: "\u2212", cls: "eqh-toolbar-button eqh-zoom-button", attr: { "aria-label": "Zoom out" } }).addEventListener("click", () => {
+    actions.createEl("button", { text: "\u2212", cls: "examined-human-toolbar-button examined-human-zoom-button", attr: { "aria-label": "Zoom out" } }).addEventListener("click", () => {
       void this.changeZoom(-1);
     });
-    actions.createEl("button", { text: "+", cls: "eqh-toolbar-button eqh-zoom-button", attr: { "aria-label": "Zoom in" } }).addEventListener("click", () => {
+    actions.createEl("button", { text: "+", cls: "examined-human-toolbar-button examined-human-zoom-button", attr: { "aria-label": "Zoom in" } }).addEventListener("click", () => {
       void this.changeZoom(1);
     });
   }
   renderWarnings(messages) {
     if (!this.warningEl || messages.length === 0) return;
     const chorMessages = messages.filter((message) => message.includes('"chor"'));
-    const label = chorMessages.length > 0 && chorMessages.length === messages.length ? `${chorMessages.length} \u201Cchor\u201D session${chorMessages.length === 1 ? "" : "s"} \u2014 fix the type in EQH.db` : `${messages.length} calendar warning${messages.length === 1 ? "" : "s"}`;
+    const label = chorMessages.length > 0 && chorMessages.length === messages.length ? `${chorMessages.length} \u201Cchor\u201D session${chorMessages.length === 1 ? "" : "s"} \u2014 fix the type in EH.db` : `${messages.length} calendar warning${messages.length === 1 ? "" : "s"}`;
     const warning = renderDismissibleWarning(
       this.warningEl,
       this.plugin,
       DASHBOARD_WARNING_KEYS.calendarDataQuality,
       label,
-      "eqh-toolbar-warning"
+      "examined-human-toolbar-warning"
     );
     if (!warning) return;
-    this.warningEl.removeClass("eqh-hidden");
+    this.warningEl.removeClass("examined-human-hidden");
     warning.setAttribute("title", messages.join("\n"));
     if (chorMessages.length > 0 && !this.warningNoticeShown) {
       this.warningNoticeShown = true;
-      new import_obsidian13.Notice(`EH Dashboards found ${chorMessages.length} session${chorMessages.length === 1 ? "" : "s"} with type "chor". Correct the data in EQH.db.`, 1e4);
+      new import_obsidian13.Notice(`Examined Human found ${chorMessages.length} session${chorMessages.length === 1 ? "" : "s"} with type "chor". Correct the data in EH.db.`, 1e4);
     }
   }
   renderGrid(eventsByDate, dayStates) {
@@ -9082,14 +9139,14 @@ var TimelineView = class extends import_obsidian13.ItemView {
     const days = [];
     for (let day = this.rangeStart.clone(); day.isSameOrBefore(this.rangeEnd, "day"); day.add(1, "day"))
       days.push(day.clone());
-    const scroll = this.contentEl.createDiv({ cls: "eqh-scroll" });
+    const scroll = this.contentEl.createDiv({ cls: "examined-human-scroll" });
     this.scrollEl = scroll;
-    const grid = scroll.createDiv({ cls: "eqh-grid" });
-    grid.style.setProperty("--eqh-day-width", `${this.dayWidth}px`);
-    grid.style.setProperty("--eqh-px-per-minute", `${this.pxPerMinute}px`);
+    const grid = scroll.createDiv({ cls: "examined-human-grid" });
+    grid.style.setProperty("--examined-human-day-width", `${this.dayWidth}px`);
+    grid.style.setProperty("--examined-human-px-per-minute", `${this.pxPerMinute}px`);
     grid.style.gridTemplateColumns = `${GUTTER_WIDTH}px repeat(${days.length}, ${this.dayWidth}px)`;
     grid.style.gridTemplateRows = `${HEADER_HEIGHT}px ${1440 * this.pxPerMinute}px`;
-    const corner = grid.createDiv({ cls: "eqh-grid-corner" });
+    const corner = grid.createDiv({ cls: "examined-human-grid-corner" });
     corner.setText("Time");
     const today = (0, import_obsidian13.moment)().format("YYYY-MM-DD");
     for (let index = 0; index < days.length; index++) {
@@ -9099,24 +9156,24 @@ var TimelineView = class extends import_obsidian13.ItemView {
       const dayState = dayStates[date];
       const dayHeader = grid.createDiv({
         cls: [
-          "eqh-day-header",
-          `eqh-day-header--${relation}`,
-          (dayState == null ? void 0 : dayState.overdue) ? "eqh-day-header--awaiting" : ""
+          "examined-human-day-header",
+          `examined-human-day-header--${relation}`,
+          (dayState == null ? void 0 : dayState.overdue) ? "examined-human-day-header--awaiting" : ""
         ].filter(Boolean).join(" ")
       });
-      dayHeader.style.setProperty("--eqh-grid-column", String(index + 2));
+      dayHeader.style.setProperty("--examined-human-grid-column", String(index + 2));
       if (dayState) {
         dayHeader.setAttribute(
           "title",
           dayState.message || (dayState.overdue ? "This journal note is awaiting historical finalization." : "This date is sourced from a planned journal note.")
         );
       }
-      dayHeader.createDiv({ cls: "eqh-day-weekday", text: day.format("ddd") });
-      dayHeader.createDiv({ cls: "eqh-day-date", text: day.format("MMM D") });
+      dayHeader.createDiv({ cls: "examined-human-day-weekday", text: day.format("ddd") });
+      dayHeader.createDiv({ cls: "examined-human-day-date", text: day.format("MMM D") });
     }
-    const hourGutter = grid.createDiv({ cls: "eqh-hour-gutter" });
+    const hourGutter = grid.createDiv({ cls: "examined-human-hour-gutter" });
     for (let hour = 0; hour < 24; hour++) {
-      const label = hourGutter.createDiv({ cls: "eqh-hour-label", text: `${String(hour).padStart(2, "0")}:00` });
+      const label = hourGutter.createDiv({ cls: "examined-human-hour-label", text: `${String(hour).padStart(2, "0")}:00` });
       label.style.top = `${hour * 60 * this.pxPerMinute}px`;
     }
     for (let index = 0; index < days.length; index++) {
@@ -9125,12 +9182,12 @@ var TimelineView = class extends import_obsidian13.ItemView {
       const relation = date === today ? "today" : date < today ? "past" : "future";
       const column = grid.createDiv({
         cls: [
-          "eqh-day-column",
-          `eqh-day-column--${relation}`,
-          ((_a = dayStates[date]) == null ? void 0 : _a.overdue) ? "eqh-day-column--awaiting" : ""
+          "examined-human-day-column",
+          `examined-human-day-column--${relation}`,
+          ((_a = dayStates[date]) == null ? void 0 : _a.overdue) ? "examined-human-day-column--awaiting" : ""
         ].filter(Boolean).join(" ")
       });
-      column.style.setProperty("--eqh-grid-column", String(index + 2));
+      column.style.setProperty("--examined-human-grid-column", String(index + 2));
       column.dataset.date = date;
       column.style.backgroundSize = `100% ${60 * this.pxPerMinute}px, 100% ${30 * this.pxPerMinute}px`;
       const events = (_b = eventsByDate.get(date)) != null ? _b : [];
@@ -9154,18 +9211,18 @@ var TimelineView = class extends import_obsidian13.ItemView {
       }
       if (relation === "today") {
         const now = (0, import_obsidian13.moment)();
-        const nowLine = column.createDiv({ cls: "eqh-now-line" });
+        const nowLine = column.createDiv({ cls: "examined-human-now-line" });
         nowLine.style.top = `${(now.hours() * 60 + now.minutes()) * this.pxPerMinute}px`;
       }
     }
     scroll.addEventListener("scroll", () => this.scheduleEdgeCheck(), { passive: true });
   }
   renderError(error) {
-    const panel = this.contentEl.createDiv({ cls: "eqh-error-panel" });
-    panel.createEl("h3", { text: "Could not open EQH database" });
+    const panel = this.contentEl.createDiv({ cls: "examined-human-error-panel" });
+    panel.createEl("h3", { text: "Could not open Examined Human database" });
     panel.createDiv({ text: error instanceof Error ? error.message : String(error) });
     panel.createEl("code", { text: this.plugin.settings.databasePath || "(no path configured)" });
-    panel.createEl("p", { text: "Set the vault-relative database path in Settings \u2192 Community plugins \u2192 EH Dashboards, then use Test connection." });
+    panel.createEl("p", { text: "Set the vault-relative database path in Settings \u2192 Community plugins \u2192 Examined Human, then use Test connection." });
   }
   captureViewport() {
     if (!this.scrollEl) return void 0;
@@ -9242,20 +9299,20 @@ var WeeklyActionConfirmationModal = class extends import_obsidian14.Modal {
     this.resolved = false;
   }
   onOpen() {
-    this.modalEl.addClass("eqh-daily-confirm-modal");
+    this.modalEl.addClass("examined-human-daily-confirm-modal");
     this.contentEl.createEl("h2", { text: this.options.title });
     this.contentEl.createEl("p", { text: this.options.explanation });
     const details = this.contentEl.createEl("details", {
-      cls: "eqh-daily-dry-run-details",
+      cls: "examined-human-daily-dry-run-details",
       attr: { open: "true" }
     });
     details.createEl("summary", { text: "Dry-run output" });
     const output = details.createEl("textarea", {
-      cls: "eqh-daily-output",
+      cls: "examined-human-daily-output",
       attr: { readonly: "true", rows: "12" }
     });
     output.value = this.options.dryRunOutput;
-    const warning = this.contentEl.createEl("p", { cls: "eqh-daily-confirm-warning" });
+    const warning = this.contentEl.createEl("p", { cls: "examined-human-daily-confirm-warning" });
     warning.createEl("strong", { text: "Nothing has been changed yet. " });
     warning.appendText(this.options.warning);
     const actions = this.contentEl.createDiv({ cls: "modal-button-container" });
@@ -9341,7 +9398,7 @@ async function buildWeeklyNoteList(app, index, todayDate) {
 }
 
 // src/WeeklyAssessmentView.ts
-var EQH_WEEKLY_ASSESSMENT_VIEW_TYPE = "eqh-weekly-assessment";
+var EXAMINED_HUMAN_WEEKLY_ASSESSMENT_VIEW_TYPE = "examined-human-weekly-assessment";
 var FINGERPRINT_INTERVAL_MS5 = 1e4;
 var WEEKLY_NOTE_PATTERN2 = /^\d{4}-W\d{1,2}\.md$/i;
 function formatDuration3(totalMinutes) {
@@ -9403,16 +9460,16 @@ var WeeklyAssessmentView = class extends import_obsidian15.ItemView {
     this.actionButton = null;
   }
   getViewType() {
-    return EQH_WEEKLY_ASSESSMENT_VIEW_TYPE;
+    return EXAMINED_HUMAN_WEEKLY_ASSESSMENT_VIEW_TYPE;
   }
   getDisplayText() {
-    return "EH Dashboards \u2014 Weekly Assessment";
+    return "Examined Human \u2014 Weekly Assessment";
   }
   getIcon() {
     return "chart-column";
   }
   async onOpen() {
-    this.contentEl.addClass("eqh-weekly-view");
+    this.contentEl.addClass("examined-human-weekly-view");
     await this.refresh();
     this.registerEvent(this.app.vault.on("modify", (file) => {
       var _a;
@@ -9451,8 +9508,8 @@ var WeeklyAssessmentView = class extends import_obsidian15.ItemView {
     var _a, _b, _c, _d, _e, _f;
     const generation = ++this.renderGeneration;
     this.contentEl.empty();
-    this.contentEl.addClass("eqh-weekly-view");
-    this.contentEl.createDiv({ cls: "eqh-loading", text: "Loading Weekly Assessment\u2026" });
+    this.contentEl.addClass("examined-human-weekly-view");
+    this.contentEl.createDiv({ cls: "examined-human-loading", text: "Loading Weekly Assessment\u2026" });
     try {
       const today = (0, import_obsidian15.moment)().format("YYYY-MM-DD");
       const index = await this.plugin.database.weeklyPlanIndex(this.plugin.settings.databasePath);
@@ -9478,22 +9535,22 @@ var WeeklyAssessmentView = class extends import_obsidian15.ItemView {
   }
   renderDashboard() {
     this.contentEl.empty();
-    this.contentEl.addClass("eqh-weekly-view");
+    this.contentEl.addClass("examined-human-weekly-view");
     this.renderHeader();
     if (!this.selectedItem) {
       this.contentEl.createDiv({
-        cls: "eqh-weekly-empty",
+        cls: "examined-human-weekly-empty",
         text: "No weekly notes or imported weekly plans were found."
       });
       return;
     }
-    const body = this.contentEl.createDiv({ cls: "eqh-weekly-layout" });
+    const body = this.contentEl.createDiv({ cls: "examined-human-weekly-layout" });
     this.renderSidebar(body);
-    const main = body.createEl("main", { cls: "eqh-weekly-main" });
+    const main = body.createEl("main", { cls: "examined-human-weekly-main" });
     this.renderActionStatus(main);
     if (!this.assessment) {
       main.createDiv({
-        cls: "eqh-weekly-empty",
+        cls: "examined-human-weekly-empty",
         text: "Import this weekly note to display its direction, commitments, and actual progress."
       });
       return;
@@ -9506,18 +9563,18 @@ var WeeklyAssessmentView = class extends import_obsidian15.ItemView {
     var _a;
     const item = this.selectedItem;
     const today = (0, import_obsidian15.moment)().format("YYYY-MM-DD");
-    const header = this.contentEl.createDiv({ cls: "eqh-toolbar eqh-weekly-toolbar" });
-    const identity = header.createDiv({ cls: "eqh-toolbar-identity" });
-    identity.createEl("h2", { text: "EH Dashboards \u2014 Weekly Assessment" });
+    const header = this.contentEl.createDiv({ cls: "examined-human-toolbar examined-human-weekly-toolbar" });
+    const identity = header.createDiv({ cls: "examined-human-toolbar-identity" });
+    identity.createEl("h2", { text: "Examined Human \u2014 Weekly Assessment" });
     identity.createDiv({
-      cls: "eqh-toolbar-status",
+      cls: "examined-human-toolbar-status",
       text: item ? `${formatWeekRange(item.weekStartDate, item.weekEndDate)} \xB7 ${item.fileName} \xB7 ${this.statusLabel(item)}` : "Committed time compared with logged sessions"
     });
-    const controls = header.createDiv({ cls: "eqh-weekly-controls" });
+    const controls = header.createDiv({ cls: "examined-human-weekly-controls" });
     const dateInput = controls.createEl("input", {
       type: "text",
       value: (_a = item == null ? void 0 : item.weekStartDate) != null ? _a : today,
-      cls: "eqh-weekly-date-input",
+      cls: "examined-human-weekly-date-input",
       attr: {
         "aria-label": "Date within a weekly note",
         placeholder: "YYYY-MM-DD",
@@ -9542,8 +9599,8 @@ var WeeklyAssessmentView = class extends import_obsidian15.ItemView {
     dateInput.addEventListener("keydown", (event) => {
       if (event.key === "Enter") submitDate();
     });
-    controls.createEl("button", { text: "Go", cls: "eqh-toolbar-button" }).addEventListener("click", submitDate);
-    this.actionButton = controls.createEl("button", { cls: "eqh-toolbar-button mod-cta" });
+    controls.createEl("button", { text: "Go", cls: "examined-human-toolbar-button" }).addEventListener("click", submitDate);
+    this.actionButton = controls.createEl("button", { cls: "examined-human-toolbar-button mod-cta" });
     const syncEligible = item != null && item.status === "imported" && item.weekEndDate >= today;
     if (!item) {
       this.actionButton.setText("Import week");
@@ -9562,20 +9619,20 @@ var WeeklyAssessmentView = class extends import_obsidian15.ItemView {
       this.actionButton.setText("Already imported");
       this.actionButton.disabled = true;
     }
-    controls.createEl("button", { text: "Refresh", cls: "eqh-toolbar-button" }).addEventListener("click", () => {
+    controls.createEl("button", { text: "Refresh", cls: "examined-human-toolbar-button" }).addEventListener("click", () => {
       void this.plugin.refreshViews();
     });
   }
   renderSidebar(container) {
     const sidebar = container.createEl("aside", {
-      cls: "eqh-daily-sidebar eqh-weekly-sidebar",
+      cls: "examined-human-daily-sidebar examined-human-weekly-sidebar",
       attr: { "aria-label": "Weekly notes, newest first" }
     });
     for (const item of this.items) {
       const button = sidebar.createEl("button", {
         cls: [
-          "eqh-daily-date-button",
-          "eqh-weekly-date-button",
+          "examined-human-daily-date-button",
+          "examined-human-weekly-date-button",
           `is-${item.temporalState}`,
           item.weekStartDate === this.selectedWeekStart ? "is-selected" : ""
         ].join(" "),
@@ -9583,9 +9640,9 @@ var WeeklyAssessmentView = class extends import_obsidian15.ItemView {
           "aria-label": `${item.weekLabel}, ${this.statusLabel(item)}, ${formatWeekRange(item.weekStartDate, item.weekEndDate)}`
         }
       });
-      button.createSpan({ cls: "eqh-daily-date-primary", text: item.weekLabel });
+      button.createSpan({ cls: "examined-human-daily-date-primary", text: item.weekLabel });
       button.createSpan({
-        cls: "eqh-daily-date-secondary",
+        cls: "examined-human-daily-date-secondary",
         text: formatWeekRange(item.weekStartDate, item.weekEndDate)
       });
       button.addEventListener("click", () => {
@@ -9599,47 +9656,47 @@ var WeeklyAssessmentView = class extends import_obsidian15.ItemView {
   renderActionStatus(container) {
     const item = this.selectedItem;
     if (!item) return;
-    const section = container.createEl("section", { cls: "eqh-daily-validation eqh-weekly-action-status" });
-    const heading = section.createDiv({ cls: "eqh-daily-section-heading" });
+    const section = container.createEl("section", { cls: "examined-human-daily-validation examined-human-weekly-action-status" });
+    const heading = section.createDiv({ cls: "examined-human-daily-section-heading" });
     heading.createEl("h3", { text: "Week readiness" });
-    const badge = heading.createSpan({ cls: "eqh-daily-status-badge" });
+    const badge = heading.createSpan({ cls: "examined-human-daily-status-badge" });
     if (item.status === "pending") {
       badge.addClass("is-blocked");
       badge.setText("Pending import");
       section.createDiv({
-        cls: "eqh-daily-validation-note",
+        cls: "examined-human-daily-validation-note",
         text: "Importing validates and records the weekly plan. It does not write Daily Notes."
       });
     } else if (item.weekEndDate >= (0, import_obsidian15.moment)().format("YYYY-MM-DD")) {
       badge.addClass("is-ready");
       badge.setText("Ready to sync");
       section.createDiv({
-        cls: "eqh-daily-validation-note",
+        cls: "examined-human-daily-validation-note",
         text: "Sync week writes planned rows only to empty Daily Note Sessions sections, then refreshes future database projections."
       });
     } else {
       badge.addClass("is-ready");
       badge.setText("Imported");
       section.createDiv({
-        cls: "eqh-daily-validation-note",
+        cls: "examined-human-daily-validation-note",
         text: "This historical weekly plan is available for assessment. Note-writing controls are disabled."
       });
     }
     section.createDiv({
-      cls: "eqh-daily-validation-note",
+      cls: "examined-human-daily-validation-note",
       text: "Validation, import, Daily Note writing, and projection sync run natively on desktop and mobile."
     });
     if (this.loggerOutput) this.renderCopyableOutput(section, "Logger output", this.loggerOutput);
   }
   renderCopyableOutput(container, label, output) {
-    const block = container.createDiv({ cls: "eqh-daily-output-block" });
-    const header = block.createDiv({ cls: "eqh-daily-output-header" });
+    const block = container.createDiv({ cls: "examined-human-daily-output-block" });
+    const header = block.createDiv({ cls: "examined-human-daily-output-header" });
     header.createEl("strong", { text: label });
-    header.createEl("button", { text: "Copy", cls: "eqh-toolbar-button" }).addEventListener("click", () => {
+    header.createEl("button", { text: "Copy", cls: "examined-human-toolbar-button" }).addEventListener("click", () => {
       void navigator.clipboard.writeText(output).then(() => new import_obsidian15.Notice("Copied logger output."));
     });
     const textarea = block.createEl("textarea", {
-      cls: "eqh-daily-output",
+      cls: "examined-human-daily-output",
       attr: { readonly: "true", rows: "9" }
     });
     textarea.value = output;
@@ -9651,14 +9708,14 @@ var WeeklyAssessmentView = class extends import_obsidian15.ItemView {
       ["Constraint or risk", result.constraintOrRisk]
     ];
     if (!values.some(([, value]) => value)) return;
-    const section = container.createEl("section", { cls: "eqh-weekly-direction" });
+    const section = container.createEl("section", { cls: "examined-human-weekly-direction" });
     section.createEl("h3", { text: "Weekly direction" });
-    const grid = section.createDiv({ cls: "eqh-weekly-direction-grid" });
+    const grid = section.createDiv({ cls: "examined-human-weekly-direction-grid" });
     for (const [label, value] of values) {
       if (!value) continue;
-      const card = grid.createDiv({ cls: "eqh-weekly-direction-card" });
-      card.createDiv({ cls: "eqh-weekly-eyebrow", text: label });
-      card.createDiv({ cls: "eqh-weekly-direction-value", text: value });
+      const card = grid.createDiv({ cls: "examined-human-weekly-direction-card" });
+      card.createDiv({ cls: "examined-human-weekly-eyebrow", text: label });
+      card.createDiv({ cls: "examined-human-weekly-direction-value", text: value });
     }
   }
   renderSummary(container, commitments) {
@@ -9666,7 +9723,7 @@ var WeeklyAssessmentView = class extends import_obsidian15.ItemView {
     const actual = commitments.reduce((sum, commitment) => sum + commitment.actualMinutes, 0);
     const remaining = Math.max(0, target - actual);
     const summary = container.createEl("section", {
-      cls: "eqh-weekly-summary",
+      cls: "examined-human-weekly-summary",
       attr: { "aria-label": "Weekly totals" }
     });
     const cards = [
@@ -9676,60 +9733,60 @@ var WeeklyAssessmentView = class extends import_obsidian15.ItemView {
       [actual > target ? "Above commitment" : "Remaining", formatDuration3(Math.abs(actual > target ? actual - target : remaining))]
     ];
     for (const [label, value] of cards) {
-      const card = summary.createDiv({ cls: "eqh-weekly-summary-card" });
-      card.createDiv({ cls: "eqh-weekly-eyebrow", text: label });
-      card.createDiv({ cls: "eqh-weekly-summary-value", text: value });
+      const card = summary.createDiv({ cls: "examined-human-weekly-summary-card" });
+      card.createDiv({ cls: "examined-human-weekly-eyebrow", text: label });
+      card.createDiv({ cls: "examined-human-weekly-summary-value", text: value });
     }
   }
   renderCommitments(container, result) {
-    const section = container.createEl("section", { cls: "eqh-weekly-commitments" });
-    const heading = section.createDiv({ cls: "eqh-weekly-section-heading" });
+    const section = container.createEl("section", { cls: "examined-human-weekly-commitments" });
+    const heading = section.createDiv({ cls: "examined-human-weekly-section-heading" });
     const copy = heading.createDiv();
     copy.createEl("h3", { text: "Commitment assessment" });
     copy.createDiv({
-      cls: "eqh-weekly-chart-subtitle",
+      cls: "examined-human-weekly-chart-subtitle",
       text: `Hours for ${formatWeekRange(result.weekStartDate, result.weekEndDate)} \xB7 all logged session types`
     });
-    const legend = heading.createDiv({ cls: "eqh-weekly-legend", attr: { "aria-label": "Chart legend" } });
+    const legend = heading.createDiv({ cls: "examined-human-weekly-legend", attr: { "aria-label": "Chart legend" } });
     this.renderLegendItem(legend, "Committed target", "target");
     this.renderLegendItem(legend, "Actual logged", "actual");
     if (result.commitments.length === 0) {
-      section.createDiv({ cls: "eqh-weekly-empty", text: "This weekly plan has no commitments." });
+      section.createDiv({ cls: "examined-human-weekly-empty", text: "This weekly plan has no commitments." });
       return;
     }
     const maximum = Math.max(1, ...result.commitments.flatMap((item) => [item.targetMinutes, item.actualMinutes]));
-    const chart = section.createDiv({ cls: "eqh-weekly-chart" });
+    const chart = section.createDiv({ cls: "examined-human-weekly-chart" });
     for (const commitment of result.commitments) this.renderCommitment(chart, commitment, maximum);
   }
   renderLegendItem(container, text, type) {
-    const item = container.createDiv({ cls: "eqh-weekly-legend-item" });
-    item.createSpan({ cls: `eqh-weekly-legend-swatch eqh-weekly-legend-swatch--${type}` });
+    const item = container.createDiv({ cls: "examined-human-weekly-legend-item" });
+    item.createSpan({ cls: `examined-human-weekly-legend-swatch examined-human-weekly-legend-swatch--${type}` });
     item.createSpan({ text });
   }
   renderCommitment(container, commitment, maximum) {
-    const item = container.createEl("article", { cls: "eqh-weekly-commitment-card" });
+    const item = container.createEl("article", { cls: "examined-human-weekly-commitment-card" });
     item.createEl("h4", { text: commitment.engagementName });
     const stage = item.createDiv({
-      cls: "eqh-weekly-bar-stage",
+      cls: "examined-human-weekly-bar-stage",
       attr: {
         "aria-label": `${commitment.engagementName}: committed ${formatDuration3(commitment.targetMinutes)}, actual ${formatDuration3(commitment.actualMinutes)}`
       }
     });
-    const target = stage.createDiv({ cls: "eqh-weekly-bar-column" });
-    target.createDiv({ cls: "eqh-weekly-bar-value", text: formatDuration3(commitment.targetMinutes) });
-    const targetBar = target.createDiv({ cls: "eqh-weekly-bar eqh-weekly-bar--target" });
+    const target = stage.createDiv({ cls: "examined-human-weekly-bar-column" });
+    target.createDiv({ cls: "examined-human-weekly-bar-value", text: formatDuration3(commitment.targetMinutes) });
+    const targetBar = target.createDiv({ cls: "examined-human-weekly-bar examined-human-weekly-bar--target" });
     targetBar.style.height = `calc((100% - 52px) * ${commitment.targetMinutes / maximum})`;
-    target.createDiv({ cls: "eqh-weekly-bar-label", text: "Planned" });
-    const actual = stage.createDiv({ cls: "eqh-weekly-bar-column" });
-    actual.createDiv({ cls: "eqh-weekly-bar-value", text: formatDuration3(commitment.actualMinutes) });
-    const actualBar = actual.createDiv({ cls: "eqh-weekly-bar eqh-weekly-bar--actual" });
+    target.createDiv({ cls: "examined-human-weekly-bar-label", text: "Planned" });
+    const actual = stage.createDiv({ cls: "examined-human-weekly-bar-column" });
+    actual.createDiv({ cls: "examined-human-weekly-bar-value", text: formatDuration3(commitment.actualMinutes) });
+    const actualBar = actual.createDiv({ cls: "examined-human-weekly-bar examined-human-weekly-bar--actual" });
     actualBar.style.height = `calc((100% - 52px) * ${commitment.actualMinutes / maximum})`;
-    actual.createDiv({ cls: "eqh-weekly-bar-label", text: "Actual" });
-    item.createDiv({ cls: "eqh-weekly-goal-label", text: "Goal" });
-    item.createDiv({ cls: "eqh-weekly-goal", text: commitment.commitmentText });
+    actual.createDiv({ cls: "examined-human-weekly-bar-label", text: "Actual" });
+    item.createDiv({ cls: "examined-human-weekly-goal-label", text: "Goal" });
+    item.createDiv({ cls: "examined-human-weekly-goal", text: commitment.commitmentText });
     const difference = commitment.targetMinutes - commitment.actualMinutes;
     item.createDiv({
-      cls: `eqh-weekly-variance ${difference >= 0 ? "is-remaining" : "is-exceeded"}`,
+      cls: `examined-human-weekly-variance ${difference >= 0 ? "is-remaining" : "is-exceeded"}`,
       text: difference >= 0 ? `${formatDuration3(difference)} remaining` : `${formatDuration3(Math.abs(difference))} above commitment`
     });
   }
@@ -9770,7 +9827,7 @@ var WeeklyAssessmentView = class extends import_obsidian15.ItemView {
     const output = weeklyImportOutput(preview);
     const confirmed = await confirmWeeklyAction(this.app, {
       title: `Import ${item.weekLabel}`,
-      explanation: "The weekly note passed validation. Importing records its direction, schedule, and commitments in EQH.db.",
+      explanation: "The weekly note passed validation. Importing records its direction, schedule, and commitments in EH.db.",
       confirmLabel: "Import week",
       dryRunOutput: output,
       warning: "Confirm only after reviewing the native weekly parser output."
@@ -9868,7 +9925,7 @@ ${backupMutationOutput(futureLive).join("\n")}`
     return "Future week";
   }
   renderError(error) {
-    const panel = this.contentEl.createDiv({ cls: "eqh-error-panel" });
+    const panel = this.contentEl.createDiv({ cls: "examined-human-error-panel" });
     panel.createEl("h3", { text: "Could not open Weekly Assessment" });
     panel.createDiv({ text: error instanceof Error ? error.message : String(error) });
     panel.createEl("code", { text: this.plugin.settings.databasePath || "(no path configured)" });
@@ -9886,7 +9943,7 @@ ${backupMutationOutput(futureLive).join("\n")}`
 // src/settings.ts
 var import_obsidian16 = require("obsidian");
 var DEFAULT_SETTINGS = {
-  databasePath: "EQH.db",
+  databasePath: "EH.db",
   journalFolder: DEFAULT_JOURNAL_FOLDER,
   mealCalorieLimitKcal: 0,
   dailyCalorieLimitKcal: 1850,
@@ -9896,9 +9953,10 @@ var DEFAULT_SETTINGS = {
   initialScrollHour: 7,
   dayColumnWidth: 180,
   mobileDayColumnWidth: 160,
+  defaultDashboardDays: 14,
   sessionColors: { ...DEFAULT_SESSION_COLORS }
 };
-var EqhCalendarSettingTab = class extends import_obsidian16.PluginSettingTab {
+var ExaminedHumanSettingTab = class extends import_obsidian16.PluginSettingTab {
   constructor(app, plugin) {
     super(app, plugin);
     this.plugin = plugin;
@@ -9911,7 +9969,7 @@ var EqhCalendarSettingTab = class extends import_obsidian16.PluginSettingTab {
       text: "Dashboard queries remain read-only. Native schema-v5 creation and confirmed component imports use a separate guarded writer with backups and integrity checks.",
       cls: "setting-item-description"
     });
-    new import_obsidian16.Setting(containerEl).setName("Database path").setDesc("Path relative to the vault root, for example EQH.db or data/EQH.db. Absolute paths are not supported.").addText((text) => text.setPlaceholder("EQH.db").setValue(this.plugin.settings.databasePath).onChange(async (value) => {
+    new import_obsidian16.Setting(containerEl).setName("Database path").setDesc("Path relative to the vault root, for example EH.db or data/EH.db. Absolute paths are not supported.").addText((text) => text.setPlaceholder("EH.db").setValue(this.plugin.settings.databasePath).onChange(async (value) => {
       this.plugin.settings.databasePath = value.trim();
       await this.plugin.saveSettings();
     })).addButton((button) => button.setButtonText("Test connection").onClick(async () => {
@@ -9919,9 +9977,9 @@ var EqhCalendarSettingTab = class extends import_obsidian16.PluginSettingTab {
       try {
         const result = await this.plugin.database.inspect(this.plugin.settings.databasePath);
         const range = result.firstDate && result.lastDate ? `${result.firstDate} to ${result.lastDate}` : "no dated sessions";
-        new import_obsidian16.Notice(`EQH database OK: ${result.sessionCount} sessions across ${result.distinctDays} days (${range}).`, 8e3);
+        new import_obsidian16.Notice(`Examined Human database OK: ${result.sessionCount} sessions across ${result.distinctDays} days (${range}).`, 8e3);
       } catch (error) {
-        new import_obsidian16.Notice(`EQH database error: ${error instanceof Error ? error.message : String(error)}`, 1e4);
+        new import_obsidian16.Notice(`Examined Human database error: ${error instanceof Error ? error.message : String(error)}`, 1e4);
       } finally {
         button.setDisabled(false);
       }
@@ -9929,10 +9987,10 @@ var EqhCalendarSettingTab = class extends import_obsidian16.PluginSettingTab {
       button.setDisabled(true);
       try {
         const result = await this.plugin.nativeLogger.createDatabase(this.plugin.settings.databasePath);
-        new import_obsidian16.Notice(`Created an empty EQH schema v${result.schemaVersion} database at ${result.databasePath}.`, 9e3);
+        new import_obsidian16.Notice(`Created an empty Examined Human schema v${result.schemaVersion} database at ${result.databasePath}.`, 9e3);
         await this.plugin.refreshViews();
       } catch (error) {
-        new import_obsidian16.Notice(`EQH database creation failed: ${error instanceof Error ? error.message : String(error)}`, 1e4);
+        new import_obsidian16.Notice(`Examined Human database creation failed: ${error instanceof Error ? error.message : String(error)}`, 1e4);
       } finally {
         button.setDisabled(false);
       }
@@ -9952,7 +10010,7 @@ var EqhCalendarSettingTab = class extends import_obsidian16.PluginSettingTab {
     });
     new import_obsidian16.Setting(containerEl).setName("Journal notes").setHeading();
     containerEl.createEl("p", {
-      text: "EH Dashboards recursively scans the selected vault folder for Daily Notes. The currently supported canonical filename format is YYYY-MM-DD.md.",
+      text: "Examined Human recursively scans the selected vault folder for Daily Notes. The currently supported canonical filename format is YYYY-MM-DD.md.",
       cls: "setting-item-description"
     });
     new import_obsidian16.Setting(containerEl).setName("Journal folder").setDesc("Vault-relative base folder containing Daily Notes, including any year or daily subfolders. Leave blank to scan the entire vault.").addText((text) => text.setPlaceholder(DEFAULT_JOURNAL_FOLDER).setValue(this.plugin.settings.journalFolder).onChange(async (value) => {
@@ -10009,6 +10067,18 @@ var EqhCalendarSettingTab = class extends import_obsidian16.PluginSettingTab {
       text: "Daily validation and import, current/future projections, weekly-plan import, and weekly Daily Note writing run inside Obsidian on desktop and mobile. Python is not required.",
       cls: "setting-item-description"
     });
+    new import_obsidian16.Setting(containerEl).setName("Default dashboard period").setDesc("Number of inclusive days used by Finance, Nutrition, Exercise, and other analytical dashboards when they open. Use All time inside a dashboard for the complete history.").addText((text) => {
+      text.inputEl.type = "number";
+      text.inputEl.min = "1";
+      text.inputEl.step = "1";
+      text.setValue(String(this.plugin.settings.defaultDashboardDays));
+      text.onChange(async (value) => {
+        const parsed = Number(value);
+        if (!Number.isSafeInteger(parsed) || parsed < 1) return;
+        this.plugin.settings.defaultDashboardDays = parsed;
+        await this.plugin.saveSettings();
+      });
+    });
     new import_obsidian16.Setting(containerEl).setName("Hidden dashboard warnings").setDesc(`${this.plugin.settings.dismissedWarningKeys.length} warning type${this.plugin.settings.dismissedWarningKeys.length === 1 ? "" : "s"} hidden with \u201CDon't show again\u201D. Import blockers and safety confirmations cannot be hidden.`).addButton((button) => button.setButtonText("Show all warnings").setDisabled(this.plugin.settings.dismissedWarningKeys.length === 0).onClick(async () => {
       this.plugin.settings.dismissedWarningKeys = [];
       await this.plugin.saveSettings();
@@ -10019,19 +10089,16 @@ var EqhCalendarSettingTab = class extends import_obsidian16.PluginSettingTab {
       this.plugin.settings.initialScrollHour = value;
       await this.plugin.saveSettings();
     }));
-    if (import_obsidian16.Platform.isMobile) {
-      new import_obsidian16.Setting(containerEl).setName("Mobile day width").setDesc("Width of each calendar day while scrolling horizontally on mobile.").addSlider((slider) => slider.setLimits(120, 280, 10).setDynamicTooltip().setValue(this.plugin.settings.mobileDayColumnWidth).onChange(async (value) => {
-        this.plugin.settings.mobileDayColumnWidth = value;
-        await this.plugin.saveSettings();
-        await this.plugin.refreshViews();
-      }));
-    } else {
-      new import_obsidian16.Setting(containerEl).setName("Day column width").setDesc("Width of each day while scrolling horizontally on desktop.").addSlider((slider) => slider.setLimits(120, 280, 10).setDynamicTooltip().setValue(this.plugin.settings.dayColumnWidth).onChange(async (value) => {
-        this.plugin.settings.dayColumnWidth = value;
-        await this.plugin.saveSettings();
-        await this.plugin.refreshViews();
-      }));
-    }
+    new import_obsidian16.Setting(containerEl).setName("Desktop day width").setDesc("Width of each calendar day while scrolling horizontally on desktop.").addSlider((slider) => slider.setLimits(120, 280, 10).setDynamicTooltip().setValue(this.plugin.settings.dayColumnWidth).onChange(async (value) => {
+      this.plugin.settings.dayColumnWidth = value;
+      await this.plugin.saveSettings();
+      await this.plugin.refreshViews();
+    }));
+    new import_obsidian16.Setting(containerEl).setName("Mobile day width").setDesc("Width of each calendar day while scrolling horizontally on mobile.").addSlider((slider) => slider.setLimits(120, 280, 10).setDynamicTooltip().setValue(this.plugin.settings.mobileDayColumnWidth).onChange(async (value) => {
+      this.plugin.settings.mobileDayColumnWidth = value;
+      await this.plugin.saveSettings();
+      await this.plugin.refreshViews();
+    }));
     new import_obsidian16.Setting(containerEl).setName("Session colors").setHeading();
     containerEl.createEl("p", {
       text: "Colors are keyed by the canonical session_types.code referenced by sessions.session_type_id. Unknown values render in gray.",
@@ -10064,7 +10131,7 @@ function storedJournalFolder(value) {
     return DEFAULT_SETTINGS.journalFolder;
   }
 }
-var EqhCalendarPlugin = class extends import_obsidian17.Plugin {
+var ExaminedHumanPlugin = class extends import_obsidian17.Plugin {
   constructor() {
     super(...arguments);
     this.settings = DEFAULT_SETTINGS;
@@ -10072,20 +10139,20 @@ var EqhCalendarPlugin = class extends import_obsidian17.Plugin {
   }
   async onload() {
     await this.loadSettings();
-    this.database = new EqhDatabase(this.app);
+    this.database = new ExaminedHumanDatabase(this.app);
     this.nativeLogger = new NativeLoggerWriteService(
       this.app,
       this.manifest.version,
       () => this.settings.backupRetentionLimit
     );
-    this.registerView(EQH_CALENDAR_VIEW_TYPE, (leaf) => new TimelineView(leaf, this));
-    this.registerView(EQH_WEEKLY_ASSESSMENT_VIEW_TYPE, (leaf) => new WeeklyAssessmentView(leaf, this));
-    this.registerView(EQH_DAILY_ASSESSMENT_VIEW_TYPE, (leaf) => new DailyAssessmentView(leaf, this));
-    this.registerView(EQH_ENGAGEMENT_DASHBOARD_VIEW_TYPE, (leaf) => new EngagementDashboardView(leaf, this));
-    this.registerView(EQH_FINANCIAL_DASHBOARD_VIEW_TYPE, (leaf) => new FinancialDashboardView(leaf, this));
-    this.registerView(EQH_NUTRITION_DASHBOARD_VIEW_TYPE, (leaf) => new NutritionDashboardView(leaf, this));
-    this.registerView(EQH_EXERCISE_DASHBOARD_VIEW_TYPE, (leaf) => new ExerciseDashboardView(leaf, this));
-    this.addRibbonIcon("calendar-clock", "Open EH Dashboards calendar", () => {
+    this.registerView(EXAMINED_HUMAN_CALENDAR_VIEW_TYPE, (leaf) => new TimelineView(leaf, this));
+    this.registerView(EXAMINED_HUMAN_WEEKLY_ASSESSMENT_VIEW_TYPE, (leaf) => new WeeklyAssessmentView(leaf, this));
+    this.registerView(EXAMINED_HUMAN_DAILY_ASSESSMENT_VIEW_TYPE, (leaf) => new DailyAssessmentView(leaf, this));
+    this.registerView(EXAMINED_HUMAN_ENGAGEMENT_DASHBOARD_VIEW_TYPE, (leaf) => new EngagementDashboardView(leaf, this));
+    this.registerView(EXAMINED_HUMAN_FINANCIAL_DASHBOARD_VIEW_TYPE, (leaf) => new FinancialDashboardView(leaf, this));
+    this.registerView(EXAMINED_HUMAN_NUTRITION_DASHBOARD_VIEW_TYPE, (leaf) => new NutritionDashboardView(leaf, this));
+    this.registerView(EXAMINED_HUMAN_EXERCISE_DASHBOARD_VIEW_TYPE, (leaf) => new ExerciseDashboardView(leaf, this));
+    this.addRibbonIcon("calendar-clock", "Open Examined Human calendar", () => {
       void this.activateView();
     });
     this.addCommand({
@@ -10139,12 +10206,12 @@ var EqhCalendarPlugin = class extends import_obsidian17.Plugin {
     });
     this.addCommand({
       id: "refresh-calendar",
-      name: "Reload EQH.db and refresh all dashboards",
+      name: "Reload EH.db and refresh all dashboards",
       callback: () => {
         void this.refreshViews();
       }
     });
-    this.addSettingTab(new EqhCalendarSettingTab(this.app, this));
+    this.addSettingTab(new ExaminedHumanSettingTab(this.app, this));
     this.registerInterval(window.setInterval(() => {
       if (!this.nativeLogger.isRunning) void this.refreshViews();
     }, AUTHORITATIVE_DATABASE_RELOAD_INTERVAL_MS));
@@ -10171,6 +10238,12 @@ var EqhCalendarPlugin = class extends import_obsidian17.Plugin {
         120,
         280
       ),
+      defaultDashboardDays: boundedInteger(
+        stored == null ? void 0 : stored.defaultDashboardDays,
+        DEFAULT_SETTINGS.defaultDashboardDays,
+        1,
+        3650
+      ),
       dismissedWarningKeys: sanitizeDismissedWarningKeys(stored == null ? void 0 : stored.dismissedWarningKeys)
     };
     if (hadLegacyPythonSetting) await this.saveData(this.settings);
@@ -10180,48 +10253,48 @@ var EqhCalendarPlugin = class extends import_obsidian17.Plugin {
   }
   async activateView() {
     const { workspace } = this.app;
-    let leaf = workspace.getLeavesOfType(EQH_CALENDAR_VIEW_TYPE)[0];
+    let leaf = workspace.getLeavesOfType(EXAMINED_HUMAN_CALENDAR_VIEW_TYPE)[0];
     if (!leaf) {
       leaf = workspace.getLeaf("tab");
-      await leaf.setViewState({ type: EQH_CALENDAR_VIEW_TYPE, active: true });
+      await leaf.setViewState({ type: EXAMINED_HUMAN_CALENDAR_VIEW_TYPE, active: true });
     }
     await workspace.revealLeaf(leaf);
   }
   async activateWeeklyAssessmentView() {
     const { workspace } = this.app;
-    let leaf = workspace.getLeavesOfType(EQH_WEEKLY_ASSESSMENT_VIEW_TYPE)[0];
+    let leaf = workspace.getLeavesOfType(EXAMINED_HUMAN_WEEKLY_ASSESSMENT_VIEW_TYPE)[0];
     if (!leaf) {
       leaf = workspace.getLeaf("tab");
-      await leaf.setViewState({ type: EQH_WEEKLY_ASSESSMENT_VIEW_TYPE, active: true });
+      await leaf.setViewState({ type: EXAMINED_HUMAN_WEEKLY_ASSESSMENT_VIEW_TYPE, active: true });
     }
     await workspace.revealLeaf(leaf);
   }
   async activateDailyAssessmentView() {
     const { workspace } = this.app;
-    let leaf = workspace.getLeavesOfType(EQH_DAILY_ASSESSMENT_VIEW_TYPE)[0];
+    let leaf = workspace.getLeavesOfType(EXAMINED_HUMAN_DAILY_ASSESSMENT_VIEW_TYPE)[0];
     if (!leaf) {
       leaf = workspace.getLeaf("tab");
-      await leaf.setViewState({ type: EQH_DAILY_ASSESSMENT_VIEW_TYPE, active: true });
+      await leaf.setViewState({ type: EXAMINED_HUMAN_DAILY_ASSESSMENT_VIEW_TYPE, active: true });
     }
     await workspace.revealLeaf(leaf);
   }
   async activateEngagementDashboardView() {
     const { workspace } = this.app;
-    let leaf = workspace.getLeavesOfType(EQH_ENGAGEMENT_DASHBOARD_VIEW_TYPE)[0];
+    let leaf = workspace.getLeavesOfType(EXAMINED_HUMAN_ENGAGEMENT_DASHBOARD_VIEW_TYPE)[0];
     if (!leaf) {
       leaf = workspace.getLeaf("tab");
-      await leaf.setViewState({ type: EQH_ENGAGEMENT_DASHBOARD_VIEW_TYPE, active: true });
+      await leaf.setViewState({ type: EXAMINED_HUMAN_ENGAGEMENT_DASHBOARD_VIEW_TYPE, active: true });
     }
     await workspace.revealLeaf(leaf);
   }
   async activateFinancialDashboardView() {
-    await this.activateDashboardView(EQH_FINANCIAL_DASHBOARD_VIEW_TYPE);
+    await this.activateDashboardView(EXAMINED_HUMAN_FINANCIAL_DASHBOARD_VIEW_TYPE);
   }
   async activateNutritionDashboardView() {
-    await this.activateDashboardView(EQH_NUTRITION_DASHBOARD_VIEW_TYPE);
+    await this.activateDashboardView(EXAMINED_HUMAN_NUTRITION_DASHBOARD_VIEW_TYPE);
   }
   async activateExerciseDashboardView() {
-    await this.activateDashboardView(EQH_EXERCISE_DASHBOARD_VIEW_TYPE);
+    await this.activateDashboardView(EXAMINED_HUMAN_EXERCISE_DASHBOARD_VIEW_TYPE);
   }
   async activateDashboardView(viewType) {
     const { workspace } = this.app;
@@ -10243,26 +10316,26 @@ var EqhCalendarPlugin = class extends import_obsidian17.Plugin {
     }
   }
   async performAuthoritativeRefresh() {
-    this.database = new EqhDatabase(this.app);
-    const calendarRefreshes = this.app.workspace.getLeavesOfType(EQH_CALENDAR_VIEW_TYPE).map(async (leaf) => {
+    this.database = new ExaminedHumanDatabase(this.app);
+    const calendarRefreshes = this.app.workspace.getLeavesOfType(EXAMINED_HUMAN_CALENDAR_VIEW_TYPE).map(async (leaf) => {
       if (leaf.view instanceof TimelineView) await leaf.view.refresh();
     });
-    const weeklyRefreshes = this.app.workspace.getLeavesOfType(EQH_WEEKLY_ASSESSMENT_VIEW_TYPE).map(async (leaf) => {
+    const weeklyRefreshes = this.app.workspace.getLeavesOfType(EXAMINED_HUMAN_WEEKLY_ASSESSMENT_VIEW_TYPE).map(async (leaf) => {
       if (leaf.view instanceof WeeklyAssessmentView) await leaf.view.refresh();
     });
-    const dailyRefreshes = this.app.workspace.getLeavesOfType(EQH_DAILY_ASSESSMENT_VIEW_TYPE).map(async (leaf) => {
+    const dailyRefreshes = this.app.workspace.getLeavesOfType(EXAMINED_HUMAN_DAILY_ASSESSMENT_VIEW_TYPE).map(async (leaf) => {
       if (leaf.view instanceof DailyAssessmentView) await leaf.view.refresh();
     });
-    const engagementRefreshes = this.app.workspace.getLeavesOfType(EQH_ENGAGEMENT_DASHBOARD_VIEW_TYPE).map(async (leaf) => {
+    const engagementRefreshes = this.app.workspace.getLeavesOfType(EXAMINED_HUMAN_ENGAGEMENT_DASHBOARD_VIEW_TYPE).map(async (leaf) => {
       if (leaf.view instanceof EngagementDashboardView) await leaf.view.refresh();
     });
-    const financialRefreshes = this.app.workspace.getLeavesOfType(EQH_FINANCIAL_DASHBOARD_VIEW_TYPE).map(async (leaf) => {
+    const financialRefreshes = this.app.workspace.getLeavesOfType(EXAMINED_HUMAN_FINANCIAL_DASHBOARD_VIEW_TYPE).map(async (leaf) => {
       if (leaf.view instanceof FinancialDashboardView) await leaf.view.refresh();
     });
-    const nutritionRefreshes = this.app.workspace.getLeavesOfType(EQH_NUTRITION_DASHBOARD_VIEW_TYPE).map(async (leaf) => {
+    const nutritionRefreshes = this.app.workspace.getLeavesOfType(EXAMINED_HUMAN_NUTRITION_DASHBOARD_VIEW_TYPE).map(async (leaf) => {
       if (leaf.view instanceof NutritionDashboardView) await leaf.view.refresh();
     });
-    const exerciseRefreshes = this.app.workspace.getLeavesOfType(EQH_EXERCISE_DASHBOARD_VIEW_TYPE).map(async (leaf) => {
+    const exerciseRefreshes = this.app.workspace.getLeavesOfType(EXAMINED_HUMAN_EXERCISE_DASHBOARD_VIEW_TYPE).map(async (leaf) => {
       if (leaf.view instanceof ExerciseDashboardView) await leaf.view.refresh();
     });
     await Promise.all([

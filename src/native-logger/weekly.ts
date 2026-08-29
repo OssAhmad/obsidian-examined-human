@@ -335,7 +335,7 @@ function sessionRows(db: Database, planId: number): Map<string, string[]> {
 }
 
 function sessionEntryLocation(text: string): { position: number; prefix: string; occupied: boolean } {
-  const form = /^#### (?:EH|EQH) Form\s*$/m.exec(text);
+  const form = /^#### EH Form\s*$/m.exec(text);
   if (!form) throw new Error('no EH Form heading');
   const formTail = text.slice((form.index ?? 0) + form[0].length);
   const formEndMatch = /^#### END\s*$/m.exec(formTail);

@@ -30,7 +30,7 @@ class NativeMealImportConfirmationModal extends Modal {
 
   onOpen(): void {
     const { inspection } = this.options;
-    this.modalEl.addClass('eqh-daily-confirm-modal');
+    this.modalEl.addClass('examined-human-daily-confirm-modal');
     this.contentEl.createEl('h2', {
       text: this.options.replacing
         ? `Replace Meals for ${this.options.date}`
@@ -42,7 +42,7 @@ class NativeMealImportConfirmationModal extends Modal {
         : 'This is an ephemeral component import. You can replace it freely while the date is current or future.',
     });
 
-    const summary = this.contentEl.createDiv({ cls: 'eqh-daily-confirm-summary' });
+    const summary = this.contentEl.createDiv({ cls: 'examined-human-daily-confirm-summary' });
     const values = [
       ['Food rows', inspection.foodRowCount],
       ['Direct leisure', `${inspection.directLeisureMeals}/3`],
@@ -54,19 +54,19 @@ class NativeMealImportConfirmationModal extends Modal {
         : inspection.nutrition.evaluatedDieted === 1 ? 'Yes' : 'No'],
     ];
     for (const [label, value] of values) {
-      const card = summary.createDiv({ cls: 'eqh-daily-confirm-stat' });
-      card.createDiv({ cls: 'eqh-weekly-eyebrow', text: String(label) });
-      card.createDiv({ cls: 'eqh-daily-confirm-value', text: String(value) });
+      const card = summary.createDiv({ cls: 'examined-human-daily-confirm-stat' });
+      card.createDiv({ cls: 'examined-human-weekly-eyebrow', text: String(label) });
+      card.createDiv({ cls: 'examined-human-daily-confirm-value', text: String(value) });
     }
 
     if (inspection.warnings.length > 0) {
-      const warnings = this.contentEl.createDiv({ cls: 'eqh-daily-validation-callout is-warning' });
+      const warnings = this.contentEl.createDiv({ cls: 'examined-human-daily-validation-callout is-warning' });
       warnings.createEl('strong', { text: 'Validation warnings' });
       const list = warnings.createEl('ul');
       for (const warning of inspection.warnings) list.createEl('li', { text: warning });
     }
 
-    const safety = this.contentEl.createEl('p', { cls: 'eqh-daily-confirm-warning' });
+    const safety = this.contentEl.createEl('p', { cls: 'examined-human-daily-confirm-warning' });
     safety.createEl('strong', {
       text: this.options.historical
         ? 'A database backup will be created first. '

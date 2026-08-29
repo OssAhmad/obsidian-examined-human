@@ -1,11 +1,11 @@
 import { createRequire } from 'node:module';
 import { readFile } from 'node:fs/promises';
 import initSqlJs from 'sql.js';
-import { inspectDatabase, querySessions } from '../src/eqh-query.ts';
+import { inspectDatabase, querySessions } from '../src/examined-human-query.ts';
 
 const databasePath = process.argv[2];
 if (!databasePath) {
-  console.error('Usage: npm run validate:database -- /path/to/EQH.db');
+  console.error('Usage: npm run validate:database -- /path/to/EH.db');
   process.exit(2);
 }
 

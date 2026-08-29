@@ -72,11 +72,11 @@ function requireIsoDate(value: string, label: string): void {
 export function assertMealImportSchema(db: Database): void {
   const version = Number(rows(db, 'PRAGMA user_version')[0]?.user_version ?? 0);
   if (version !== 5) {
-    throw new Error(`Native Meals import requires EQH schema v5; this database reports v${version}.`);
+    throw new Error(`Native Meals import requires Examined Human schema v5; this database reports v${version}.`);
   }
   for (const [table, required] of Object.entries(REQUIRED_COLUMNS)) {
     if (!hasColumns(db, table, required)) {
-      throw new Error(`EQH schema v5 is incomplete: ${table} is missing required columns.`);
+      throw new Error(`Examined Human schema v5 is incomplete: ${table} is missing required columns.`);
     }
   }
 }

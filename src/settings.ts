@@ -1,9 +1,9 @@
 import { App, Notice, Platform, PluginSettingTab, Setting } from 'obsidian';
 import { DEFAULT_SESSION_COLORS, SESSION_TYPES } from './events.ts';
 import { DEFAULT_JOURNAL_FOLDER, normalizeJournalFolder } from './journal-folder.ts';
-import type EqhCalendarPlugin from './main.ts';
+import type ExaminedHumanPlugin from './main.ts';
 
-export interface EqhCalendarSettings {
+export interface ExaminedHumanSettings {
   databasePath: string;
   journalFolder: string;
   mealCalorieLimitKcal: number;
@@ -14,11 +14,12 @@ export interface EqhCalendarSettings {
   initialScrollHour: number;
   dayColumnWidth: number;
   mobileDayColumnWidth: number;
+  defaultDashboardDays: number;
   sessionColors: Record<string, string>;
 }
 
-export const DEFAULT_SETTINGS: EqhCalendarSettings = {
-  databasePath: 'EQH.db',
+export const DEFAULT_SETTINGS: ExaminedHumanSettings = {
+  databasePath: 'EH.db',
   journalFolder: DEFAULT_JOURNAL_FOLDER,
   mealCalorieLimitKcal: 0,
   dailyCalorieLimitKcal: 1850,
@@ -28,11 +29,12 @@ export const DEFAULT_SETTINGS: EqhCalendarSettings = {
   initialScrollHour: 7,
   dayColumnWidth: 180,
   mobileDayColumnWidth: 160,
+  defaultDashboardDays: 14,
   sessionColors: { ...DEFAULT_SESSION_COLORS },
 };
 
-export class EqhCalendarSettingTab extends PluginSettingTab {
-  constructor(app: App, private plugin: EqhCalendarPlugin) {
+export class ExaminedHumanSettingTab extends PluginSettingTab {
+  constructor(app: App, private plugin: ExaminedHumanPlugin) {
     super(app, plugin);
   }
 
@@ -48,9 +50,9 @@ export class EqhCalendarSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName('Database path')
-      .setDesc('Path relative to the vault root, for example EQH.db or data/EQH.db. Absolute paths are not supported.')
+      .setDesc('Path relative to the vault root, for example EH.db or data/EH.db. Absolute paths are not supported.')
       .addText((text) => text
-        .setPlaceholder('EQH.db')
+        .setPlaceholder('EH.db')
         .setValue(this.plugin.settings.databasePath)
         .onChange(async (value) => {
           this.plugin.settings.databasePath = value.trim();
@@ -63,9 +65,9 @@ export class EqhCalendarSettingTab extends PluginSettingTab {
           try {
             const result = await this.plugin.database.inspect(this.plugin.settings.databasePath);
             const range = result.firstDate && result.lastDate ? `${result.firstDate} to ${result.lastDate}` : 'no dated sessions';
-            new Notice(`EQH database OK: ${result.sessionCount} sessions across ${result.distinctDays} days (${range}).`, 8000);
+            new Notice(`Examined Human database OK: ${result.sessionCount} sessions across ${result.distinctDays} days (${range}).`, 8000);
           } catch (error) {
-            new Notice(`EQH database error: ${error instanceof Error ? error.message : String(error)}`, 10000);
+            new Notice(`Examined Human database error: ${error instanceof Error ? error.message : String(error)}`, 10000);
           } finally {
             button.setDisabled(false);
           }
@@ -76,10 +78,10 @@ export class EqhCalendarSettingTab extends PluginSettingTab {
           button.setDisabled(true);
           try {
             const result = await this.plugin.nativeLogger.createDatabase(this.plugin.settings.databasePath);
-            new Notice(`Created an empty EQH schema v${result.schemaVersion} database at ${result.databasePath}.`, 9000);
+            new Notice(`Created an empty Examined Human schema v${result.schemaVersion} database at ${result.databasePath}.`, 9000);
             await this.plugin.refreshViews();
           } catch (error) {
-            new Notice(`EQH database creation failed: ${error instanceof Error ? error.message : String(error)}`, 10000);
+            new Notice(`Examined Human database creation failed: ${error instanceof Error ? error.message : String(error)}`, 10000);
           } finally {
             button.setDisabled(false);
           }
@@ -104,7 +106,7 @@ export class EqhCalendarSettingTab extends PluginSettingTab {
 
     new Setting(containerEl).setName('Journal notes').setHeading();
     containerEl.createEl('p', {
-      text: 'EH Dashboards recursively scans the selected vault folder for Daily Notes. The currently supported canonical filename format is YYYY-MM-DD.md.',
+      text: 'Examined Human recursively scans the selected vault folder for Daily Notes. The currently supported canonical filename format is YYYY-MM-DD.md.',
       cls: 'setting-item-description',
     });
 
@@ -184,6 +186,22 @@ export class EqhCalendarSettingTab extends PluginSettingTab {
     });
 
     new Setting(containerEl)
+      .setName('Default dashboard period')
+      .setDesc('Number of inclusive days used by Finance, Nutrition, Exercise, and other analytical dashboards when they open. Use All time inside a dashboard for the complete history.')
+      .addText((text) => {
+        text.inputEl.type = 'number';
+        text.inputEl.min = '1';
+        text.inputEl.step = '1';
+        text.setValue(String(this.plugin.settings.defaultDashboardDays));
+        text.onChange(async (value) => {
+          const parsed = Number(value);
+          if (!Number.isSafeInteger(parsed) || parsed < 1) return;
+          this.plugin.settings.defaultDashboardDays = parsed;
+          await this.plugin.saveSettings();
+        });
+      });
+
+    new Setting(containerEl)
       .setName('Hidden dashboard warnings')
       .setDesc(`${this.plugin.settings.dismissedWarningKeys.length} warning type${this.plugin.settings.dismissedWarningKeys.length === 1 ? '' : 's'} hidden with “Don't show again”. Import blockers and safety confirmations cannot be hidden.`)
       .addButton((button) => button
@@ -208,33 +226,31 @@ export class EqhCalendarSettingTab extends PluginSettingTab {
           await this.plugin.saveSettings();
         }));
 
-    if (Platform.isMobile) {
-      new Setting(containerEl)
-        .setName('Mobile day width')
-        .setDesc('Width of each calendar day while scrolling horizontally on mobile.')
-        .addSlider((slider) => slider
-          .setLimits(120, 280, 10)
-          .setDynamicTooltip()
-          .setValue(this.plugin.settings.mobileDayColumnWidth)
-          .onChange(async (value) => {
-            this.plugin.settings.mobileDayColumnWidth = value;
-            await this.plugin.saveSettings();
-            await this.plugin.refreshViews();
-          }));
-    } else {
-      new Setting(containerEl)
-        .setName('Day column width')
-        .setDesc('Width of each day while scrolling horizontally on desktop.')
-        .addSlider((slider) => slider
-          .setLimits(120, 280, 10)
-          .setDynamicTooltip()
-          .setValue(this.plugin.settings.dayColumnWidth)
-          .onChange(async (value) => {
-            this.plugin.settings.dayColumnWidth = value;
-            await this.plugin.saveSettings();
-            await this.plugin.refreshViews();
-          }));
-    }
+    new Setting(containerEl)
+      .setName('Desktop day width')
+      .setDesc('Width of each calendar day while scrolling horizontally on desktop.')
+      .addSlider((slider) => slider
+        .setLimits(120, 280, 10)
+        .setDynamicTooltip()
+        .setValue(this.plugin.settings.dayColumnWidth)
+        .onChange(async (value) => {
+          this.plugin.settings.dayColumnWidth = value;
+          await this.plugin.saveSettings();
+          await this.plugin.refreshViews();
+        }));
+
+    new Setting(containerEl)
+      .setName('Mobile day width')
+      .setDesc('Width of each calendar day while scrolling horizontally on mobile.')
+      .addSlider((slider) => slider
+        .setLimits(120, 280, 10)
+        .setDynamicTooltip()
+        .setValue(this.plugin.settings.mobileDayColumnWidth)
+        .onChange(async (value) => {
+          this.plugin.settings.mobileDayColumnWidth = value;
+          await this.plugin.saveSettings();
+          await this.plugin.refreshViews();
+        }));
 
     new Setting(containerEl).setName('Session colors').setHeading();
     containerEl.createEl('p', {

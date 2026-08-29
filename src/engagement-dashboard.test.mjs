@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 import { readFile } from 'node:fs/promises';
 import initSqlJs from 'sql.js';
-import { queryEngagementDashboard } from './eqh-query.ts';
+import { queryEngagementDashboard } from './examined-human-query.ts';
 
 const require = createRequire(import.meta.url);
 const wasmBinary = await readFile(require.resolve('sql.js/dist/sql-wasm.wasm'));

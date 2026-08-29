@@ -355,6 +355,7 @@ export interface FinancialAccountRecord extends FinancialCurrencyRecord {
 
 export interface FinancialTransactionRecord {
   id: number;
+  accountId: number;
   date: string;
   amount: number;
   currency: string;
@@ -1326,6 +1327,7 @@ export function queryEngagementDashboard(
 
   const transactions = rows(db, `
     SELECT transaction_row.id,
+           transaction_row.account_id,
            transaction_row.date,
            transaction_row.amount,
            COALESCE(NULLIF(TRIM(account.currency), ''), 'Unspecified') AS currency,
@@ -1518,6 +1520,7 @@ export function queryFinancialDashboard(
     LIMIT 24
   `, rangeParams).map((row): FinancialTransactionRecord => ({
     id: Number(row.id),
+    accountId: Number(row.account_id),
     date: String(row.date),
     amount: Number(row.amount),
     currency: String(row.currency),
@@ -1893,7 +1896,7 @@ export function querySessions(
     };
 
     if (sessionType.toLowerCase() === 'chor') {
-      event.dataWarning = `Session ${id} uses the invalid type "chor". Correct it in EQH.db.`;
+      event.dataWarning = `Session ${id} uses the invalid type "chor". Correct it in EH.db.`;
       issues.push({ sessionId: id, message: event.dataWarning });
     }
     events.push(event);

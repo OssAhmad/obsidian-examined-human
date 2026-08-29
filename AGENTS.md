@@ -1,11 +1,11 @@
-# AGENTS.md — EH Dashboards
+# AGENTS.md — Examined Human
 
 Read `docs/ARCHITECTURE.md` before structural changes. It is the durable design record for data flow, invariants, limitations, and extension seams.
 
 ## Product contract
 
-- Desktop and mobile Obsidian plugin reading an EQH SQLite database through sql.js.
-- `EqhDatabase` access is permanently read-only. Approved mutations belong only in `NativeLoggerWriteService`, with backups, transaction staging, conflict checks, and explicit confirmation.
+- Desktop and mobile Obsidian plugin reading an Examined Human SQLite database through sql.js.
+- `ExaminedHumanDatabase` access is permanently read-only. Approved mutations belong only in `NativeLoggerWriteService`, with backups, transaction staging, conflict checks, and explicit confirmation.
 - Durable/finalized writes create backups; ephemeral Meals and planning-projection replacements do not. Backup retention is user-configurable: `0` keeps all, and a positive whole number keeps that many newest backups. Prune only exact EH-created backup names after verified durable writes; never remove unrelated files or turn a cleanup failure into a false database-write failure.
 - The database path must be relative to the vault root. Node filesystem/process modules are forbidden in runtime plugin code; every import workflow must remain mobile-safe.
 - A session title is the engagement's canonical name. Show session type only as secondary metadata on sufficiently tall, non-stacked cards and in accessible/details text.
@@ -28,8 +28,8 @@ Read `docs/ARCHITECTURE.md` before structural changes. It is the durable design 
 
 ## Architecture
 
-- `src/eqh-database.ts`: file access, sql.js initialization, read-only database lifetime.
-- `src/eqh-query.ts`: schema validation and SQL-to-domain mapping.
+- `src/examined-human-database.ts`: file access, sql.js initialization, read-only database lifetime.
+- `src/examined-human-query.ts`: schema validation and SQL-to-domain mapping.
 - `src/native-logger/`: pure parsing/import logic plus the isolated guarded writer.
 - `src/events.ts`: session domain model and formatting/color rules.
 - `src/TimelineView.ts`: calendar viewport and rendering.
@@ -48,4 +48,4 @@ npm run check
 npm run build
 ```
 
-Never commit `EQH.db`, SQLite journal files, `data.json`, or another user's private session data.
+Never commit `EH.db`, SQLite journal files, `data.json`, or another user's private session data.

@@ -1,15 +1,13 @@
 import { ItemView, moment, normalizePath, WorkspaceLeaf } from 'obsidian';
-import type EqhCalendarPlugin from './main.ts';
+import type ExaminedHumanPlugin from './main.ts';
 
 const FINGERPRINT_INTERVAL_MS = 10_000;
 
-export type DashboardRangeKey = '30d' | '90d' | '1y' | 'all';
+export type DashboardRangeKey = 'days' | 'all';
 
-export function dashboardRangeStart(range: DashboardRangeKey, endDate: string): string | null {
+export function dashboardRangeStart(range: DashboardRangeKey, endDate: string, days: number): string | null {
   const end = moment(endDate, 'YYYY-MM-DD', true);
-  if (range === '30d') return end.clone().subtract(29, 'days').format('YYYY-MM-DD');
-  if (range === '90d') return end.clone().subtract(89, 'days').format('YYYY-MM-DD');
-  if (range === '1y') return end.clone().subtract(1, 'year').add(1, 'day').format('YYYY-MM-DD');
+  if (range === 'days') return end.clone().subtract(Math.max(1, days) - 1, 'days').format('YYYY-MM-DD');
   return null;
 }
 
@@ -49,10 +47,10 @@ export function createDashboardMetric(
   detail: string,
   tone?: 'positive' | 'negative' | 'warning',
 ): HTMLElement {
-  const card = container.createDiv({ cls: `eqh-domain-metric${tone ? ` is-${tone}` : ''}` });
-  card.createDiv({ cls: 'eqh-domain-metric-label', text: label });
-  card.createDiv({ cls: 'eqh-domain-metric-value', text: value });
-  card.createDiv({ cls: 'eqh-domain-metric-detail', text: detail });
+  const card = container.createDiv({ cls: `examined-human-domain-metric${tone ? ` is-${tone}` : ''}` });
+  card.createDiv({ cls: 'examined-human-domain-metric-label', text: label });
+  card.createDiv({ cls: 'examined-human-domain-metric-value', text: value });
+  card.createDiv({ cls: 'examined-human-domain-metric-detail', text: detail });
   return card;
 }
 
@@ -62,10 +60,10 @@ export function createDashboardPanel(
   subtitle: string,
   wide = false,
 ): HTMLElement {
-  const panel = container.createEl('section', { cls: `eqh-domain-panel${wide ? ' is-wide' : ''}` });
-  const header = panel.createDiv({ cls: 'eqh-domain-panel-header' });
+  const panel = container.createEl('section', { cls: `examined-human-domain-panel${wide ? ' is-wide' : ''}` });
+  const header = panel.createDiv({ cls: 'examined-human-domain-panel-header' });
   header.createEl('h3', { text: title });
-  header.createDiv({ cls: 'eqh-domain-panel-subtitle', text: subtitle });
+  header.createDiv({ cls: 'examined-human-domain-panel-subtitle', text: subtitle });
   return panel;
 }
 
@@ -78,20 +76,20 @@ export interface DashboardBarRecord {
 
 export function renderDashboardBars(container: HTMLElement, records: DashboardBarRecord[]): void {
   if (records.length === 0) {
-    container.createDiv({ cls: 'eqh-domain-empty', text: 'No data was recorded in this period.' });
+    container.createDiv({ cls: 'examined-human-domain-empty', text: 'No data was recorded in this period.' });
     return;
   }
   const max = Math.max(...records.map((record) => Math.abs(record.value)), 1);
-  const list = container.createDiv({ cls: 'eqh-domain-bars' });
+  const list = container.createDiv({ cls: 'examined-human-domain-bars' });
   for (const record of records) {
-    const row = list.createDiv({ cls: 'eqh-domain-bar-row' });
-    const heading = row.createDiv({ cls: 'eqh-domain-bar-heading' });
+    const row = list.createDiv({ cls: 'examined-human-domain-bar-row' });
+    const heading = row.createDiv({ cls: 'examined-human-domain-bar-heading' });
     heading.createSpan({ text: record.label });
     heading.createEl('strong', { text: record.displayValue });
-    const track = row.createDiv({ cls: 'eqh-domain-bar-track' });
-    const fill = track.createDiv({ cls: 'eqh-domain-bar-fill' });
+    const track = row.createDiv({ cls: 'examined-human-domain-bar-track' });
+    const fill = track.createDiv({ cls: 'examined-human-domain-bar-fill' });
     fill.style.width = `${Math.max(2, (Math.abs(record.value) / max) * 100)}%`;
-    if (record.detail) row.createDiv({ cls: 'eqh-domain-bar-detail', text: record.detail });
+    if (record.detail) row.createDiv({ cls: 'examined-human-domain-bar-detail', text: record.detail });
   }
 }
 
@@ -104,35 +102,35 @@ export interface DashboardTrendRecord {
 
 export function renderDashboardTrend(container: HTMLElement, records: DashboardTrendRecord[]): void {
   if (records.length === 0) {
-    container.createDiv({ cls: 'eqh-domain-empty', text: 'No trend data was recorded in this period.' });
+    container.createDiv({ cls: 'examined-human-domain-empty', text: 'No trend data was recorded in this period.' });
     return;
   }
   const max = Math.max(...records.map((record) => record.value), 1);
-  const chart = container.createEl('ol', { cls: 'eqh-domain-trend' });
+  const chart = container.createEl('ol', { cls: 'examined-human-domain-trend' });
   for (const record of records) {
     const item = chart.createEl('li', {
-      cls: 'eqh-domain-trend-item',
+      cls: 'examined-human-domain-trend-item',
       attr: { 'aria-label': `${record.ariaLabel}: ${record.displayValue}`, title: `${record.ariaLabel}: ${record.displayValue}` },
     });
     item.createDiv({
-      cls: 'eqh-domain-trend-value',
+      cls: 'examined-human-domain-trend-value',
       text: record.displayValue,
-      attr: { style: `--eqh-domain-height:${Math.max(4, (record.value / max) * 100)}%` },
+      attr: { style: `--examined-human-domain-height:${Math.max(4, (record.value / max) * 100)}%` },
     });
-    item.createDiv({ cls: 'eqh-domain-trend-label', text: record.label });
+    item.createDiv({ cls: 'examined-human-domain-trend-label', text: record.label });
   }
 }
 
 export abstract class DashboardViewBase<T> extends ItemView {
   protected result: T | null = null;
-  protected selectedRange: DashboardRangeKey = '90d';
+  protected selectedRange: DashboardRangeKey = 'days';
   protected startDate: string | null = null;
   protected endDate = '';
   private renderGeneration = 0;
   private fingerprintTimer: number | null = null;
   private lastFingerprint: string | null = null;
 
-  constructor(leaf: WorkspaceLeaf, protected plugin: EqhCalendarPlugin) {
+  constructor(leaf: WorkspaceLeaf, protected plugin: ExaminedHumanPlugin) {
     super(leaf);
   }
 
@@ -141,7 +139,7 @@ export abstract class DashboardViewBase<T> extends ItemView {
   protected abstract renderDashboard(result: T): void;
 
   async onOpen(): Promise<void> {
-    this.contentEl.addClass('eqh-domain-view');
+    this.contentEl.addClass('examined-human-domain-view');
     await this.refresh();
     this.registerEvent(this.app.vault.on('modify', (file) => {
       try {
@@ -168,10 +166,10 @@ export abstract class DashboardViewBase<T> extends ItemView {
   async refresh(): Promise<void> {
     const generation = ++this.renderGeneration;
     this.endDate = moment().format('YYYY-MM-DD');
-    this.startDate = dashboardRangeStart(this.selectedRange, this.endDate);
+    this.startDate = dashboardRangeStart(this.selectedRange, this.endDate, this.plugin.settings.defaultDashboardDays);
     this.contentEl.empty();
-    this.contentEl.addClass('eqh-domain-view');
-    this.contentEl.createDiv({ cls: 'eqh-loading', text: `Loading ${this.dashboardTitle()}…` });
+    this.contentEl.addClass('examined-human-domain-view');
+    this.contentEl.createDiv({ cls: 'examined-human-loading', text: `Loading ${this.dashboardTitle()}…` });
     try {
       const result = await this.loadDashboard(this.startDate, this.endDate);
       if (generation !== this.renderGeneration) return;
@@ -184,7 +182,7 @@ export abstract class DashboardViewBase<T> extends ItemView {
       this.contentEl.empty();
       this.renderToolbar('Source-backed personal analytics');
       const message = error instanceof Error ? error.message : String(error);
-      const panel = this.contentEl.createDiv({ cls: 'eqh-error' });
+      const panel = this.contentEl.createDiv({ cls: 'examined-human-error' });
       panel.createEl('strong', { text: `${this.dashboardTitle()} could not load.` });
       panel.createDiv({ text: message });
       panel.createDiv({ text: `Configured database: ${this.plugin.settings.databasePath || '(not set)'}` });
@@ -192,19 +190,17 @@ export abstract class DashboardViewBase<T> extends ItemView {
   }
 
   protected renderToolbar(subtitle: string, buildExtraControls?: (controls: HTMLElement) => void): void {
-    const toolbar = this.contentEl.createDiv({ cls: 'eqh-toolbar eqh-domain-toolbar' });
-    const identity = toolbar.createDiv({ cls: 'eqh-toolbar-identity' });
-    identity.createEl('h2', { text: `EH Dashboards — ${this.dashboardTitle()}` });
-    identity.createDiv({ cls: 'eqh-toolbar-status', text: subtitle });
-    const controls = toolbar.createDiv({ cls: 'eqh-domain-toolbar-controls' });
+    const toolbar = this.contentEl.createDiv({ cls: 'examined-human-toolbar examined-human-domain-toolbar' });
+    const identity = toolbar.createDiv({ cls: 'examined-human-toolbar-identity' });
+    identity.createEl('h2', { text: `Examined Human — ${this.dashboardTitle()}` });
+    identity.createDiv({ cls: 'examined-human-toolbar-status', text: subtitle });
+    const controls = toolbar.createDiv({ cls: 'examined-human-domain-toolbar-controls' });
     const range = controls.createEl('select', {
       cls: 'dropdown',
       attr: { 'aria-label': `${this.dashboardTitle()} date range` },
     });
     const options: Array<[DashboardRangeKey, string]> = [
-      ['30d', 'Last 30 days'],
-      ['90d', 'Last 90 days'],
-      ['1y', 'Last year'],
+      ['days', `Last ${this.plugin.settings.defaultDashboardDays} days`],
       ['all', 'All time'],
     ];
     for (const [value, label] of options) {
@@ -215,8 +211,26 @@ export abstract class DashboardViewBase<T> extends ItemView {
       this.selectedRange = range.value as DashboardRangeKey;
       void this.refresh();
     });
+    if (this.selectedRange === 'days') {
+      const days = controls.createEl('input', {
+        type: 'number',
+        cls: 'examined-human-dashboard-days-input',
+        attr: { min: '1', step: '1', inputmode: 'numeric', 'aria-label': 'Number of dashboard days' },
+      });
+      days.value = String(this.plugin.settings.defaultDashboardDays);
+      days.addEventListener('change', () => {
+        const parsed = Number(days.value);
+        if (!Number.isSafeInteger(parsed) || parsed < 1) {
+          days.value = String(this.plugin.settings.defaultDashboardDays);
+          return;
+        }
+        this.plugin.settings.defaultDashboardDays = parsed;
+        void this.plugin.saveSettings();
+        void this.refresh();
+      });
+    }
     buildExtraControls?.(controls);
-    controls.createEl('button', { cls: 'eqh-toolbar-button', text: 'Refresh' })
+    controls.createEl('button', { cls: 'examined-human-toolbar-button', text: 'Refresh' })
       .addEventListener('click', () => { void this.plugin.refreshViews(); });
   }
 

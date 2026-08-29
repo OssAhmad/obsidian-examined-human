@@ -1,15 +1,15 @@
 import { Plugin } from 'obsidian';
-import { EqhDatabase } from './eqh-database.ts';
-import { DailyAssessmentView, EQH_DAILY_ASSESSMENT_VIEW_TYPE } from './DailyAssessmentView.ts';
-import { EngagementDashboardView, EQH_ENGAGEMENT_DASHBOARD_VIEW_TYPE } from './EngagementDashboardView.ts';
-import { ExerciseDashboardView, EQH_EXERCISE_DASHBOARD_VIEW_TYPE } from './ExerciseDashboardView.ts';
-import { FinancialDashboardView, EQH_FINANCIAL_DASHBOARD_VIEW_TYPE } from './FinancialDashboardView.ts';
+import { ExaminedHumanDatabase } from './examined-human-database.ts';
+import { DailyAssessmentView, EXAMINED_HUMAN_DAILY_ASSESSMENT_VIEW_TYPE } from './DailyAssessmentView.ts';
+import { EngagementDashboardView, EXAMINED_HUMAN_ENGAGEMENT_DASHBOARD_VIEW_TYPE } from './EngagementDashboardView.ts';
+import { ExerciseDashboardView, EXAMINED_HUMAN_EXERCISE_DASHBOARD_VIEW_TYPE } from './ExerciseDashboardView.ts';
+import { FinancialDashboardView, EXAMINED_HUMAN_FINANCIAL_DASHBOARD_VIEW_TYPE } from './FinancialDashboardView.ts';
 import { normalizeJournalFolder } from './journal-folder.ts';
 import { NativeLoggerWriteService } from './native-logger/write-service.ts';
-import { NutritionDashboardView, EQH_NUTRITION_DASHBOARD_VIEW_TYPE } from './NutritionDashboardView.ts';
-import { TimelineView, EQH_CALENDAR_VIEW_TYPE } from './TimelineView.ts';
-import { WeeklyAssessmentView, EQH_WEEKLY_ASSESSMENT_VIEW_TYPE } from './WeeklyAssessmentView.ts';
-import { DEFAULT_SETTINGS, EqhCalendarSettingTab, type EqhCalendarSettings } from './settings.ts';
+import { NutritionDashboardView, EXAMINED_HUMAN_NUTRITION_DASHBOARD_VIEW_TYPE } from './NutritionDashboardView.ts';
+import { TimelineView, EXAMINED_HUMAN_CALENDAR_VIEW_TYPE } from './TimelineView.ts';
+import { WeeklyAssessmentView, EXAMINED_HUMAN_WEEKLY_ASSESSMENT_VIEW_TYPE } from './WeeklyAssessmentView.ts';
+import { DEFAULT_SETTINGS, ExaminedHumanSettingTab, type ExaminedHumanSettings } from './settings.ts';
 import { sanitizeDismissedWarningKeys } from './warning-preferences.ts';
 
 const AUTHORITATIVE_DATABASE_RELOAD_INTERVAL_MS = 10 * 60 * 1000;
@@ -28,29 +28,29 @@ function storedJournalFolder(value: unknown): string {
   }
 }
 
-export default class EqhCalendarPlugin extends Plugin {
-  settings: EqhCalendarSettings = DEFAULT_SETTINGS;
-  database!: EqhDatabase;
+export default class ExaminedHumanPlugin extends Plugin {
+  settings: ExaminedHumanSettings = DEFAULT_SETTINGS;
+  database!: ExaminedHumanDatabase;
   nativeLogger!: NativeLoggerWriteService;
   private refreshPromise: Promise<void> | null = null;
 
   async onload(): Promise<void> {
     await this.loadSettings();
-    this.database = new EqhDatabase(this.app);
+    this.database = new ExaminedHumanDatabase(this.app);
     this.nativeLogger = new NativeLoggerWriteService(
       this.app,
       this.manifest.version,
       () => this.settings.backupRetentionLimit,
     );
 
-    this.registerView(EQH_CALENDAR_VIEW_TYPE, (leaf) => new TimelineView(leaf, this));
-    this.registerView(EQH_WEEKLY_ASSESSMENT_VIEW_TYPE, (leaf) => new WeeklyAssessmentView(leaf, this));
-    this.registerView(EQH_DAILY_ASSESSMENT_VIEW_TYPE, (leaf) => new DailyAssessmentView(leaf, this));
-    this.registerView(EQH_ENGAGEMENT_DASHBOARD_VIEW_TYPE, (leaf) => new EngagementDashboardView(leaf, this));
-    this.registerView(EQH_FINANCIAL_DASHBOARD_VIEW_TYPE, (leaf) => new FinancialDashboardView(leaf, this));
-    this.registerView(EQH_NUTRITION_DASHBOARD_VIEW_TYPE, (leaf) => new NutritionDashboardView(leaf, this));
-    this.registerView(EQH_EXERCISE_DASHBOARD_VIEW_TYPE, (leaf) => new ExerciseDashboardView(leaf, this));
-    this.addRibbonIcon('calendar-clock', 'Open EH Dashboards calendar', () => { void this.activateView(); });
+    this.registerView(EXAMINED_HUMAN_CALENDAR_VIEW_TYPE, (leaf) => new TimelineView(leaf, this));
+    this.registerView(EXAMINED_HUMAN_WEEKLY_ASSESSMENT_VIEW_TYPE, (leaf) => new WeeklyAssessmentView(leaf, this));
+    this.registerView(EXAMINED_HUMAN_DAILY_ASSESSMENT_VIEW_TYPE, (leaf) => new DailyAssessmentView(leaf, this));
+    this.registerView(EXAMINED_HUMAN_ENGAGEMENT_DASHBOARD_VIEW_TYPE, (leaf) => new EngagementDashboardView(leaf, this));
+    this.registerView(EXAMINED_HUMAN_FINANCIAL_DASHBOARD_VIEW_TYPE, (leaf) => new FinancialDashboardView(leaf, this));
+    this.registerView(EXAMINED_HUMAN_NUTRITION_DASHBOARD_VIEW_TYPE, (leaf) => new NutritionDashboardView(leaf, this));
+    this.registerView(EXAMINED_HUMAN_EXERCISE_DASHBOARD_VIEW_TYPE, (leaf) => new ExerciseDashboardView(leaf, this));
+    this.addRibbonIcon('calendar-clock', 'Open Examined Human calendar', () => { void this.activateView(); });
     this.addCommand({
       id: 'open-daily-assessment',
       name: 'Daily Assessment',
@@ -88,17 +88,17 @@ export default class EqhCalendarPlugin extends Plugin {
     });
     this.addCommand({
       id: 'refresh-calendar',
-      name: 'Reload EQH.db and refresh all dashboards',
+      name: 'Reload EH.db and refresh all dashboards',
       callback: () => { void this.refreshViews(); },
     });
-    this.addSettingTab(new EqhCalendarSettingTab(this.app, this));
+    this.addSettingTab(new ExaminedHumanSettingTab(this.app, this));
     this.registerInterval(window.setInterval(() => {
       if (!this.nativeLogger.isRunning) void this.refreshViews();
     }, AUTHORITATIVE_DATABASE_RELOAD_INTERVAL_MS));
   }
 
   async loadSettings(): Promise<void> {
-    const raw = await this.loadData() as (Partial<EqhCalendarSettings> & { pythonInterpreterPath?: unknown }) | null;
+    const raw = await this.loadData() as (Partial<ExaminedHumanSettings> & { pythonInterpreterPath?: unknown }) | null;
     const stored = raw ? { ...raw } : null;
     const hadLegacyPythonSetting = stored !== null && 'pythonInterpreterPath' in stored;
     if (stored) delete stored.pythonInterpreterPath;
@@ -121,6 +121,12 @@ export default class EqhCalendarPlugin extends Plugin {
         120,
         280,
       ),
+      defaultDashboardDays: boundedInteger(
+        stored?.defaultDashboardDays,
+        DEFAULT_SETTINGS.defaultDashboardDays,
+        1,
+        3650,
+      ),
       dismissedWarningKeys: sanitizeDismissedWarningKeys(stored?.dismissedWarningKeys),
     };
     if (hadLegacyPythonSetting) await this.saveData(this.settings);
@@ -132,54 +138,54 @@ export default class EqhCalendarPlugin extends Plugin {
 
   async activateView(): Promise<void> {
     const { workspace } = this.app;
-    let leaf = workspace.getLeavesOfType(EQH_CALENDAR_VIEW_TYPE)[0];
+    let leaf = workspace.getLeavesOfType(EXAMINED_HUMAN_CALENDAR_VIEW_TYPE)[0];
     if (!leaf) {
       leaf = workspace.getLeaf('tab');
-      await leaf.setViewState({ type: EQH_CALENDAR_VIEW_TYPE, active: true });
+      await leaf.setViewState({ type: EXAMINED_HUMAN_CALENDAR_VIEW_TYPE, active: true });
     }
     await workspace.revealLeaf(leaf);
   }
 
   async activateWeeklyAssessmentView(): Promise<void> {
     const { workspace } = this.app;
-    let leaf = workspace.getLeavesOfType(EQH_WEEKLY_ASSESSMENT_VIEW_TYPE)[0];
+    let leaf = workspace.getLeavesOfType(EXAMINED_HUMAN_WEEKLY_ASSESSMENT_VIEW_TYPE)[0];
     if (!leaf) {
       leaf = workspace.getLeaf('tab');
-      await leaf.setViewState({ type: EQH_WEEKLY_ASSESSMENT_VIEW_TYPE, active: true });
+      await leaf.setViewState({ type: EXAMINED_HUMAN_WEEKLY_ASSESSMENT_VIEW_TYPE, active: true });
     }
     await workspace.revealLeaf(leaf);
   }
 
   async activateDailyAssessmentView(): Promise<void> {
     const { workspace } = this.app;
-    let leaf = workspace.getLeavesOfType(EQH_DAILY_ASSESSMENT_VIEW_TYPE)[0];
+    let leaf = workspace.getLeavesOfType(EXAMINED_HUMAN_DAILY_ASSESSMENT_VIEW_TYPE)[0];
     if (!leaf) {
       leaf = workspace.getLeaf('tab');
-      await leaf.setViewState({ type: EQH_DAILY_ASSESSMENT_VIEW_TYPE, active: true });
+      await leaf.setViewState({ type: EXAMINED_HUMAN_DAILY_ASSESSMENT_VIEW_TYPE, active: true });
     }
     await workspace.revealLeaf(leaf);
   }
 
   async activateEngagementDashboardView(): Promise<void> {
     const { workspace } = this.app;
-    let leaf = workspace.getLeavesOfType(EQH_ENGAGEMENT_DASHBOARD_VIEW_TYPE)[0];
+    let leaf = workspace.getLeavesOfType(EXAMINED_HUMAN_ENGAGEMENT_DASHBOARD_VIEW_TYPE)[0];
     if (!leaf) {
       leaf = workspace.getLeaf('tab');
-      await leaf.setViewState({ type: EQH_ENGAGEMENT_DASHBOARD_VIEW_TYPE, active: true });
+      await leaf.setViewState({ type: EXAMINED_HUMAN_ENGAGEMENT_DASHBOARD_VIEW_TYPE, active: true });
     }
     await workspace.revealLeaf(leaf);
   }
 
   async activateFinancialDashboardView(): Promise<void> {
-    await this.activateDashboardView(EQH_FINANCIAL_DASHBOARD_VIEW_TYPE);
+    await this.activateDashboardView(EXAMINED_HUMAN_FINANCIAL_DASHBOARD_VIEW_TYPE);
   }
 
   async activateNutritionDashboardView(): Promise<void> {
-    await this.activateDashboardView(EQH_NUTRITION_DASHBOARD_VIEW_TYPE);
+    await this.activateDashboardView(EXAMINED_HUMAN_NUTRITION_DASHBOARD_VIEW_TYPE);
   }
 
   async activateExerciseDashboardView(): Promise<void> {
-    await this.activateDashboardView(EQH_EXERCISE_DASHBOARD_VIEW_TYPE);
+    await this.activateDashboardView(EXAMINED_HUMAN_EXERCISE_DASHBOARD_VIEW_TYPE);
   }
 
   private async activateDashboardView(viewType: string): Promise<void> {
@@ -204,35 +210,35 @@ export default class EqhCalendarPlugin extends Plugin {
   }
 
   private async performAuthoritativeRefresh(): Promise<void> {
-    // Recreate the source boundary before every global/manual refresh. EqhDatabase
+    // Recreate the source boundary before every global/manual refresh. ExaminedHumanDatabase
     // never retains an open SQLite database, but this also discards any future
     // per-instance state and makes the physical vault file authoritative.
-    this.database = new EqhDatabase(this.app);
-    const calendarRefreshes = this.app.workspace.getLeavesOfType(EQH_CALENDAR_VIEW_TYPE)
+    this.database = new ExaminedHumanDatabase(this.app);
+    const calendarRefreshes = this.app.workspace.getLeavesOfType(EXAMINED_HUMAN_CALENDAR_VIEW_TYPE)
       .map(async (leaf) => {
         if (leaf.view instanceof TimelineView) await leaf.view.refresh();
       });
-    const weeklyRefreshes = this.app.workspace.getLeavesOfType(EQH_WEEKLY_ASSESSMENT_VIEW_TYPE)
+    const weeklyRefreshes = this.app.workspace.getLeavesOfType(EXAMINED_HUMAN_WEEKLY_ASSESSMENT_VIEW_TYPE)
       .map(async (leaf) => {
         if (leaf.view instanceof WeeklyAssessmentView) await leaf.view.refresh();
       });
-    const dailyRefreshes = this.app.workspace.getLeavesOfType(EQH_DAILY_ASSESSMENT_VIEW_TYPE)
+    const dailyRefreshes = this.app.workspace.getLeavesOfType(EXAMINED_HUMAN_DAILY_ASSESSMENT_VIEW_TYPE)
       .map(async (leaf) => {
         if (leaf.view instanceof DailyAssessmentView) await leaf.view.refresh();
       });
-    const engagementRefreshes = this.app.workspace.getLeavesOfType(EQH_ENGAGEMENT_DASHBOARD_VIEW_TYPE)
+    const engagementRefreshes = this.app.workspace.getLeavesOfType(EXAMINED_HUMAN_ENGAGEMENT_DASHBOARD_VIEW_TYPE)
       .map(async (leaf) => {
         if (leaf.view instanceof EngagementDashboardView) await leaf.view.refresh();
       });
-    const financialRefreshes = this.app.workspace.getLeavesOfType(EQH_FINANCIAL_DASHBOARD_VIEW_TYPE)
+    const financialRefreshes = this.app.workspace.getLeavesOfType(EXAMINED_HUMAN_FINANCIAL_DASHBOARD_VIEW_TYPE)
       .map(async (leaf) => {
         if (leaf.view instanceof FinancialDashboardView) await leaf.view.refresh();
       });
-    const nutritionRefreshes = this.app.workspace.getLeavesOfType(EQH_NUTRITION_DASHBOARD_VIEW_TYPE)
+    const nutritionRefreshes = this.app.workspace.getLeavesOfType(EXAMINED_HUMAN_NUTRITION_DASHBOARD_VIEW_TYPE)
       .map(async (leaf) => {
         if (leaf.view instanceof NutritionDashboardView) await leaf.view.refresh();
       });
-    const exerciseRefreshes = this.app.workspace.getLeavesOfType(EQH_EXERCISE_DASHBOARD_VIEW_TYPE)
+    const exerciseRefreshes = this.app.workspace.getLeavesOfType(EXAMINED_HUMAN_EXERCISE_DASHBOARD_VIEW_TYPE)
       .map(async (leaf) => {
         if (leaf.view instanceof ExerciseDashboardView) await leaf.view.refresh();
       });

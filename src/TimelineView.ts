@@ -1,14 +1,14 @@
 import { ItemView, moment, normalizePath, Notice, Platform, WorkspaceLeaf } from 'obsidian';
 import { renderDismissibleWarning } from './dismissible-warning.ts';
-import type EqhCalendarPlugin from './main.ts';
+import type ExaminedHumanPlugin from './main.ts';
 import type { CalendarDayState, CalendarEvent } from './events.ts';
-import type { SessionQueryResult } from './eqh-query.ts';
+import type { SessionQueryResult } from './examined-human-query.ts';
 import { layoutOverlappingEvents } from './overlap.ts';
 import { createSessionElement } from './session-element.ts';
 import { layoutVisualStack } from './visual-stack.ts';
 import { DASHBOARD_WARNING_KEYS } from './warning-preferences.ts';
 
-export const EQH_CALENDAR_VIEW_TYPE = 'eqh-calendar';
+export const EXAMINED_HUMAN_CALENDAR_VIEW_TYPE = 'examined-human';
 
 const INITIAL_DAYS_EACH_SIDE = 45;
 const WINDOW_SHIFT_DAYS = 28;
@@ -42,16 +42,16 @@ export class TimelineView extends ItemView {
   private lastFingerprint: string | null = null;
   private warningNoticeShown = false;
 
-  constructor(leaf: WorkspaceLeaf, private plugin: EqhCalendarPlugin) {
+  constructor(leaf: WorkspaceLeaf, private plugin: ExaminedHumanPlugin) {
     super(leaf);
   }
 
   getViewType(): string {
-    return EQH_CALENDAR_VIEW_TYPE;
+    return EXAMINED_HUMAN_CALENDAR_VIEW_TYPE;
   }
 
   getDisplayText(): string {
-    return 'EH Dashboards — Calendar';
+    return 'Examined Human — Calendar';
   }
 
   getIcon(): string {
@@ -59,7 +59,7 @@ export class TimelineView extends ItemView {
   }
 
   async onOpen(): Promise<void> {
-    this.contentEl.addClass('eqh-calendar-view');
+    this.contentEl.addClass('examined-human-view');
     await this.renderCalendar({
       viewport: {
         centerDate: moment().format('YYYY-MM-DD'),
@@ -119,10 +119,10 @@ export class TimelineView extends ItemView {
     const generation = ++this.renderGeneration;
     const viewport = options.viewport ?? this.captureViewport();
     this.contentEl.empty();
-    this.contentEl.addClass('eqh-calendar-view');
+    this.contentEl.addClass('examined-human-view');
     this.renderHeader();
 
-    const loading = this.contentEl.createDiv({ cls: 'eqh-loading', text: 'Loading EQH sessions…' });
+    const loading = this.contentEl.createDiv({ cls: 'examined-human-loading', text: 'Loading Examined Human sessions…' });
     let result: SessionQueryResult;
     try {
       result = await this.plugin.database.sessionsBetween(
@@ -168,21 +168,21 @@ export class TimelineView extends ItemView {
   }
 
   private renderHeader(): void {
-    const header = this.contentEl.createDiv({ cls: 'eqh-toolbar' });
-    const identity = header.createDiv({ cls: 'eqh-toolbar-identity' });
-    identity.createEl('h2', { text: 'EH Dashboards — Calendar' });
-    this.statusEl = identity.createDiv({ cls: 'eqh-status', text: 'Loading…' });
+    const header = this.contentEl.createDiv({ cls: 'examined-human-toolbar' });
+    const identity = header.createDiv({ cls: 'examined-human-toolbar-identity' });
+    identity.createEl('h2', { text: 'Examined Human — Calendar' });
+    this.statusEl = identity.createDiv({ cls: 'examined-human-status', text: 'Loading…' });
 
-    this.warningEl = header.createDiv({ cls: 'eqh-toolbar-warning-host eqh-hidden' });
+    this.warningEl = header.createDiv({ cls: 'examined-human-toolbar-warning-host examined-human-hidden' });
 
-    const actions = header.createDiv({ cls: 'eqh-toolbar-actions' });
-    actions.createEl('button', { text: 'Today', cls: 'eqh-toolbar-button' })
+    const actions = header.createDiv({ cls: 'examined-human-toolbar-actions' });
+    actions.createEl('button', { text: 'Today', cls: 'examined-human-toolbar-button' })
       .addEventListener('click', () => { void this.goToToday(); });
-    actions.createEl('button', { text: 'Refresh', cls: 'eqh-toolbar-button', attr: { 'aria-label': 'Refresh database' } })
+    actions.createEl('button', { text: 'Refresh', cls: 'examined-human-toolbar-button', attr: { 'aria-label': 'Refresh database' } })
       .addEventListener('click', () => { void this.plugin.refreshViews(); });
-    actions.createEl('button', { text: '−', cls: 'eqh-toolbar-button eqh-zoom-button', attr: { 'aria-label': 'Zoom out' } })
+    actions.createEl('button', { text: '−', cls: 'examined-human-toolbar-button examined-human-zoom-button', attr: { 'aria-label': 'Zoom out' } })
       .addEventListener('click', () => { void this.changeZoom(-1); });
-    actions.createEl('button', { text: '+', cls: 'eqh-toolbar-button eqh-zoom-button', attr: { 'aria-label': 'Zoom in' } })
+    actions.createEl('button', { text: '+', cls: 'examined-human-toolbar-button examined-human-zoom-button', attr: { 'aria-label': 'Zoom in' } })
       .addEventListener('click', () => { void this.changeZoom(1); });
   }
 
@@ -190,22 +190,22 @@ export class TimelineView extends ItemView {
     if (!this.warningEl || messages.length === 0) return;
     const chorMessages = messages.filter((message) => message.includes('"chor"'));
     const label = chorMessages.length > 0 && chorMessages.length === messages.length
-      ? `${chorMessages.length} “chor” session${chorMessages.length === 1 ? '' : 's'} — fix the type in EQH.db`
+      ? `${chorMessages.length} “chor” session${chorMessages.length === 1 ? '' : 's'} — fix the type in EH.db`
       : `${messages.length} calendar warning${messages.length === 1 ? '' : 's'}`;
     const warning = renderDismissibleWarning(
       this.warningEl,
       this.plugin,
       DASHBOARD_WARNING_KEYS.calendarDataQuality,
       label,
-      'eqh-toolbar-warning',
+      'examined-human-toolbar-warning',
     );
     if (!warning) return;
-    this.warningEl.removeClass('eqh-hidden');
+    this.warningEl.removeClass('examined-human-hidden');
     warning.setAttribute('title', messages.join('\n'));
 
     if (chorMessages.length > 0 && !this.warningNoticeShown) {
       this.warningNoticeShown = true;
-      new Notice(`EH Dashboards found ${chorMessages.length} session${chorMessages.length === 1 ? '' : 's'} with type "chor". Correct the data in EQH.db.`, 10000);
+      new Notice(`Examined Human found ${chorMessages.length} session${chorMessages.length === 1 ? '' : 's'} with type "chor". Correct the data in EH.db.`, 10000);
     }
   }
 
@@ -217,15 +217,15 @@ export class TimelineView extends ItemView {
     for (let day = this.rangeStart.clone(); day.isSameOrBefore(this.rangeEnd, 'day'); day.add(1, 'day'))
       days.push(day.clone());
 
-    const scroll = this.contentEl.createDiv({ cls: 'eqh-scroll' });
+    const scroll = this.contentEl.createDiv({ cls: 'examined-human-scroll' });
     this.scrollEl = scroll;
-    const grid = scroll.createDiv({ cls: 'eqh-grid' });
-    grid.style.setProperty('--eqh-day-width', `${this.dayWidth}px`);
-    grid.style.setProperty('--eqh-px-per-minute', `${this.pxPerMinute}px`);
+    const grid = scroll.createDiv({ cls: 'examined-human-grid' });
+    grid.style.setProperty('--examined-human-day-width', `${this.dayWidth}px`);
+    grid.style.setProperty('--examined-human-px-per-minute', `${this.pxPerMinute}px`);
     grid.style.gridTemplateColumns = `${GUTTER_WIDTH}px repeat(${days.length}, ${this.dayWidth}px)`;
     grid.style.gridTemplateRows = `${HEADER_HEIGHT}px ${1440 * this.pxPerMinute}px`;
 
-    const corner = grid.createDiv({ cls: 'eqh-grid-corner' });
+    const corner = grid.createDiv({ cls: 'examined-human-grid-corner' });
     corner.setText('Time');
 
     const today = moment().format('YYYY-MM-DD');
@@ -236,12 +236,12 @@ export class TimelineView extends ItemView {
       const dayState = dayStates[date];
       const dayHeader = grid.createDiv({
         cls: [
-          'eqh-day-header',
-          `eqh-day-header--${relation}`,
-          dayState?.overdue ? 'eqh-day-header--awaiting' : '',
+          'examined-human-day-header',
+          `examined-human-day-header--${relation}`,
+          dayState?.overdue ? 'examined-human-day-header--awaiting' : '',
         ].filter(Boolean).join(' '),
       });
-      dayHeader.style.setProperty('--eqh-grid-column', String(index + 2));
+      dayHeader.style.setProperty('--examined-human-grid-column', String(index + 2));
       if (dayState) {
         dayHeader.setAttribute(
           'title',
@@ -251,13 +251,13 @@ export class TimelineView extends ItemView {
               : 'This date is sourced from a planned journal note.'),
         );
       }
-      dayHeader.createDiv({ cls: 'eqh-day-weekday', text: day.format('ddd') });
-      dayHeader.createDiv({ cls: 'eqh-day-date', text: day.format('MMM D') });
+      dayHeader.createDiv({ cls: 'examined-human-day-weekday', text: day.format('ddd') });
+      dayHeader.createDiv({ cls: 'examined-human-day-date', text: day.format('MMM D') });
     }
 
-    const hourGutter = grid.createDiv({ cls: 'eqh-hour-gutter' });
+    const hourGutter = grid.createDiv({ cls: 'examined-human-hour-gutter' });
     for (let hour = 0; hour < 24; hour++) {
-      const label = hourGutter.createDiv({ cls: 'eqh-hour-label', text: `${String(hour).padStart(2, '0')}:00` });
+      const label = hourGutter.createDiv({ cls: 'examined-human-hour-label', text: `${String(hour).padStart(2, '0')}:00` });
       label.style.top = `${hour * 60 * this.pxPerMinute}px`;
     }
 
@@ -267,12 +267,12 @@ export class TimelineView extends ItemView {
       const relation = date === today ? 'today' : date < today ? 'past' : 'future';
       const column = grid.createDiv({
         cls: [
-          'eqh-day-column',
-          `eqh-day-column--${relation}`,
-          dayStates[date]?.overdue ? 'eqh-day-column--awaiting' : '',
+          'examined-human-day-column',
+          `examined-human-day-column--${relation}`,
+          dayStates[date]?.overdue ? 'examined-human-day-column--awaiting' : '',
         ].filter(Boolean).join(' '),
       });
-      column.style.setProperty('--eqh-grid-column', String(index + 2));
+      column.style.setProperty('--examined-human-grid-column', String(index + 2));
       column.dataset.date = date;
       column.style.backgroundSize = `100% ${60 * this.pxPerMinute}px, 100% ${30 * this.pxPerMinute}px`;
 
@@ -298,7 +298,7 @@ export class TimelineView extends ItemView {
 
       if (relation === 'today') {
         const now = moment();
-        const nowLine = column.createDiv({ cls: 'eqh-now-line' });
+        const nowLine = column.createDiv({ cls: 'examined-human-now-line' });
         nowLine.style.top = `${(now.hours() * 60 + now.minutes()) * this.pxPerMinute}px`;
       }
     }
@@ -307,11 +307,11 @@ export class TimelineView extends ItemView {
   }
 
   private renderError(error: unknown): void {
-    const panel = this.contentEl.createDiv({ cls: 'eqh-error-panel' });
-    panel.createEl('h3', { text: 'Could not open EQH database' });
+    const panel = this.contentEl.createDiv({ cls: 'examined-human-error-panel' });
+    panel.createEl('h3', { text: 'Could not open Examined Human database' });
     panel.createDiv({ text: error instanceof Error ? error.message : String(error) });
     panel.createEl('code', { text: this.plugin.settings.databasePath || '(no path configured)' });
-    panel.createEl('p', { text: 'Set the vault-relative database path in Settings → Community plugins → EH Dashboards, then use Test connection.' });
+    panel.createEl('p', { text: 'Set the vault-relative database path in Settings → Community plugins → Examined Human, then use Test connection.' });
   }
 
   private captureViewport(): ViewportState | undefined {

@@ -29,20 +29,20 @@ class WeeklyActionConfirmationModal extends Modal {
   }
 
   onOpen(): void {
-    this.modalEl.addClass('eqh-daily-confirm-modal');
+    this.modalEl.addClass('examined-human-daily-confirm-modal');
     this.contentEl.createEl('h2', { text: this.options.title });
     this.contentEl.createEl('p', { text: this.options.explanation });
     const details = this.contentEl.createEl('details', {
-      cls: 'eqh-daily-dry-run-details',
+      cls: 'examined-human-daily-dry-run-details',
       attr: { open: 'true' },
     });
     details.createEl('summary', { text: 'Dry-run output' });
     const output = details.createEl('textarea', {
-      cls: 'eqh-daily-output',
+      cls: 'examined-human-daily-output',
       attr: { readonly: 'true', rows: '12' },
     });
     output.value = this.options.dryRunOutput;
-    const warning = this.contentEl.createEl('p', { cls: 'eqh-daily-confirm-warning' });
+    const warning = this.contentEl.createEl('p', { cls: 'examined-human-daily-confirm-warning' });
     warning.createEl('strong', { text: 'Nothing has been changed yet. ' });
     warning.appendText(this.options.warning);
 

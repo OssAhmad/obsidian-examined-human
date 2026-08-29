@@ -57,7 +57,7 @@ const ESTIMATED_SLOTS_PER_DAY = 17;
 
 function formSections(text: string): { sections: Map<string, string>; issues: string[] } {
   const issues: string[] = [];
-  const positions = ['#### EH Form', '#### EQH Form']
+  const positions = ['#### EH Form']
     .map((heading) => text.indexOf(heading))
     .filter((position) => position >= 0);
   if (positions.length === 0) return { sections: new Map(), issues: ['No EH Form heading was found.'] };

@@ -1,5 +1,5 @@
 import { ItemView, moment, normalizePath, Notice, TFile, WorkspaceLeaf } from 'obsidian';
-import type EqhCalendarPlugin from './main.ts';
+import type ExaminedHumanPlugin from './main.ts';
 import { buildDailyNoteList, type DailyNoteListItem } from './daily-note-index.ts';
 import { confirmDailyImport } from './DailyImportConfirmationModal.ts';
 import { confirmNativeMealImport } from './NativeMealImportConfirmationModal.ts';
@@ -13,7 +13,7 @@ import type {
   DailyAssessmentQueryResult,
   DailyMealRecord,
   DailyMetricsRecord,
-} from './eqh-query.ts';
+} from './examined-human-query.ts';
 import type {
   DashboardPreviewExercise,
   DashboardPreviewTransaction,
@@ -25,7 +25,7 @@ import { backupMutationOutput } from './native-logger/write-service.ts';
 import { createSessionElement } from './session-element.ts';
 import { layoutVisualStack } from './visual-stack.ts';
 
-export const EQH_DAILY_ASSESSMENT_VIEW_TYPE = 'eqh-daily-assessment';
+export const EXAMINED_HUMAN_DAILY_ASSESSMENT_VIEW_TYPE = 'examined-human-daily-assessment';
 
 const FINGERPRINT_INTERVAL_MS = 10_000;
 const DAY_PX_PER_MINUTE = 0.8;
@@ -67,16 +67,16 @@ export class DailyAssessmentView extends ItemView {
   private lastFingerprint: string | null = null;
   private actionButton: HTMLButtonElement | null = null;
 
-  constructor(leaf: WorkspaceLeaf, private plugin: EqhCalendarPlugin) {
+  constructor(leaf: WorkspaceLeaf, private plugin: ExaminedHumanPlugin) {
     super(leaf);
   }
 
   getViewType(): string {
-    return EQH_DAILY_ASSESSMENT_VIEW_TYPE;
+    return EXAMINED_HUMAN_DAILY_ASSESSMENT_VIEW_TYPE;
   }
 
   getDisplayText(): string {
-    return 'EH Dashboards — Daily Assessment';
+    return 'Examined Human — Daily Assessment';
   }
 
   getIcon(): string {
@@ -84,7 +84,7 @@ export class DailyAssessmentView extends ItemView {
   }
 
   async onOpen(): Promise<void> {
-    this.contentEl.addClass('eqh-daily-view');
+    this.contentEl.addClass('examined-human-daily-view');
     await this.refresh();
     this.registerEvent(this.app.vault.on('modify', (file) => {
       try {
@@ -113,8 +113,8 @@ export class DailyAssessmentView extends ItemView {
   async refresh(): Promise<void> {
     const generation = ++this.renderGeneration;
     this.contentEl.empty();
-    this.contentEl.addClass('eqh-daily-view');
-    this.contentEl.createDiv({ cls: 'eqh-loading', text: 'Loading Daily Assessment…' });
+    this.contentEl.addClass('examined-human-daily-view');
+    this.contentEl.createDiv({ cls: 'examined-human-loading', text: 'Loading Daily Assessment…' });
     try {
       const today = moment().format('YYYY-MM-DD');
       const index = await this.plugin.database.dailyNoteIndex(this.plugin.settings.databasePath);
@@ -168,15 +168,15 @@ export class DailyAssessmentView extends ItemView {
 
   private renderDashboard(): void {
     this.contentEl.empty();
-    this.contentEl.addClass('eqh-daily-view');
+    this.contentEl.addClass('examined-human-daily-view');
     this.renderHeader();
     if (!this.selectedItem || !this.assessment) {
-      this.contentEl.createDiv({ cls: 'eqh-daily-empty', text: 'No EH Daily Notes were found.' });
+      this.contentEl.createDiv({ cls: 'examined-human-daily-empty', text: 'No EH Daily Notes were found.' });
       return;
     }
-    const body = this.contentEl.createDiv({ cls: 'eqh-daily-layout' });
+    const body = this.contentEl.createDiv({ cls: 'examined-human-daily-layout' });
     this.renderSidebar(body);
-    const main = body.createEl('main', { cls: 'eqh-daily-main' });
+    const main = body.createEl('main', { cls: 'examined-human-daily-main' });
     const events = this.displayEvents();
     this.renderValidation(main);
     this.renderDayTimeline(main, events);
@@ -187,17 +187,17 @@ export class DailyAssessmentView extends ItemView {
   }
 
   private renderHeader(): void {
-    const header = this.contentEl.createDiv({ cls: 'eqh-toolbar eqh-daily-toolbar' });
-    const identity = header.createDiv({ cls: 'eqh-toolbar-identity' });
-    identity.createEl('h2', { text: 'EH Dashboards — Daily Assessment' });
+    const header = this.contentEl.createDiv({ cls: 'examined-human-toolbar examined-human-daily-toolbar' });
+    const identity = header.createDiv({ cls: 'examined-human-toolbar-identity' });
+    identity.createEl('h2', { text: 'Examined Human — Daily Assessment' });
     identity.createDiv({
-      cls: 'eqh-toolbar-status',
+      cls: 'examined-human-toolbar-status',
       text: this.selectedItem
         ? `${moment(this.selectedItem.date, 'YYYY-MM-DD').format('ddd, MMM D, YYYY')} · ${this.statusLabel(this.selectedItem)}`
         : 'Review journal data and safely import historical notes',
     });
-    const actions = header.createDiv({ cls: 'eqh-toolbar-actions' });
-    this.actionButton = actions.createEl('button', { cls: 'eqh-toolbar-button mod-cta' });
+    const actions = header.createDiv({ cls: 'examined-human-toolbar-actions' });
+    this.actionButton = actions.createEl('button', { cls: 'examined-human-toolbar-button mod-cta' });
     if (!this.selectedItem) {
       this.actionButton.setText('Import');
       this.actionButton.disabled = true;
@@ -208,26 +208,26 @@ export class DailyAssessmentView extends ItemView {
       this.actionButton.setText(this.selectedItem.status === 'current-future' ? 'Sync future' : 'Import');
       this.actionButton.addEventListener('click', () => { void this.handleImport(); });
     }
-    actions.createEl('button', { text: 'Refresh', cls: 'eqh-toolbar-button' })
+    actions.createEl('button', { text: 'Refresh', cls: 'examined-human-toolbar-button' })
       .addEventListener('click', () => { void this.plugin.refreshViews(); });
   }
 
   private renderSidebar(container: HTMLElement): void {
     const sidebar = container.createEl('aside', {
-      cls: 'eqh-daily-sidebar',
+      cls: 'examined-human-daily-sidebar',
       attr: { 'aria-label': 'Daily Notes, newest first' },
     });
     for (const item of this.items) {
       const button = sidebar.createEl('button', {
         cls: [
-          'eqh-daily-date-button',
+          'examined-human-daily-date-button',
           `is-${item.temporalState}`,
           item.date === this.selectedDate ? 'is-selected' : '',
         ].join(' '),
         attr: { 'aria-label': `${item.date}, ${this.statusLabel(item)}` },
       });
-      button.createSpan({ cls: 'eqh-daily-date-primary', text: moment(item.date, 'YYYY-MM-DD').format('MMM D, YYYY') });
-      button.createSpan({ cls: 'eqh-daily-date-secondary', text: moment(item.date, 'YYYY-MM-DD').format('dddd') });
+      button.createSpan({ cls: 'examined-human-daily-date-primary', text: moment(item.date, 'YYYY-MM-DD').format('MMM D, YYYY') });
+      button.createSpan({ cls: 'examined-human-daily-date-secondary', text: moment(item.date, 'YYYY-MM-DD').format('dddd') });
       button.addEventListener('click', () => {
         if (item.date === this.selectedDate) return;
         this.selectedDate = item.date;
@@ -240,14 +240,14 @@ export class DailyAssessmentView extends ItemView {
   private renderValidation(container: HTMLElement): void {
     const item = this.selectedItem;
     if (!item) return;
-    const section = container.createEl('section', { cls: 'eqh-daily-validation' });
-    const heading = section.createDiv({ cls: 'eqh-daily-section-heading' });
+    const section = container.createEl('section', { cls: 'examined-human-daily-validation' });
+    const heading = section.createDiv({ cls: 'examined-human-daily-section-heading' });
     heading.createEl('h3', { text: 'Import readiness' });
-    const badge = heading.createSpan({ cls: 'eqh-daily-status-badge' });
+    const badge = heading.createSpan({ cls: 'examined-human-daily-status-badge' });
     if (item.status === 'imported') {
       badge.addClass('is-ready');
       badge.setText('Imported');
-      section.createDiv({ text: 'This date is finalized. Import controls are disabled.', cls: 'eqh-daily-validation-note' });
+      section.createDiv({ text: 'This date is finalized. Import controls are disabled.', cls: 'examined-human-daily-validation-note' });
     } else if (this.inspection) {
       badge.addClass(this.inspection.ready ? 'is-ready' : 'is-blocked');
       badge.setText(this.inspection.ready ? 'Ready for confirmation' : 'Needs attention');
@@ -264,16 +264,16 @@ export class DailyAssessmentView extends ItemView {
   }
 
   private renderNativeMeals(container: HTMLElement, item: DailyNoteListItem): void {
-    const block = container.createDiv({ cls: 'eqh-native-meals' });
-    const heading = block.createDiv({ cls: 'eqh-daily-section-heading' });
+    const block = container.createDiv({ cls: 'examined-human-native-meals' });
+    const heading = block.createDiv({ cls: 'examined-human-daily-section-heading' });
     heading.createEl('h4', { text: 'Native Meals' });
     const component = this.assessment?.mealImport ?? null;
-    const state = heading.createSpan({ cls: 'eqh-daily-status-badge' });
+    const state = heading.createSpan({ cls: 'examined-human-daily-status-badge' });
     if (item.status === 'imported' || component?.lifecycleState === 'finalized') {
       state.addClass('is-ready');
       state.setText('Finalized');
       block.createDiv({
-        cls: 'eqh-daily-validation-note',
+        cls: 'examined-human-daily-validation-note',
         text: 'Historical Meals are immutable once finalized by a component or full Daily Note import.',
       });
       return;
@@ -283,17 +283,17 @@ export class DailyAssessmentView extends ItemView {
     if (!inspection) {
       state.addClass('is-blocked');
       state.setText('Unavailable');
-      block.createDiv({ cls: 'eqh-daily-validation-note', text: 'The selected Daily Note could not be read.' });
+      block.createDiv({ cls: 'examined-human-daily-validation-note', text: 'The selected Daily Note could not be read.' });
       return;
     }
 
     state.addClass(inspection.ready ? 'is-ready' : 'is-blocked');
     state.setText(component ? 'Ephemeral · replaceable' : inspection.ready ? 'Ready' : 'Needs attention');
     block.createDiv({
-      cls: 'eqh-daily-section-subtitle',
+      cls: 'examined-human-daily-section-subtitle',
       text: 'Parsed and validated inside Obsidian on desktop and mobile. Snacks count toward daily calories but never directly as leisure.',
     });
-    const grid = block.createDiv({ cls: 'eqh-daily-completeness-grid' });
+    const grid = block.createDiv({ cls: 'examined-human-daily-completeness-grid' });
     const values = [
       ['Foods', inspection.foodRowCount],
       ['Direct leisure', `${inspection.directLeisureMeals}/3`],
@@ -305,7 +305,7 @@ export class DailyAssessmentView extends ItemView {
         : inspection.nutrition.evaluatedDieted === 1 ? 'Yes' : 'No'],
     ];
     for (const [label, value] of values) {
-      const card = grid.createDiv({ cls: 'eqh-daily-mini-stat' });
+      const card = grid.createDiv({ cls: 'examined-human-daily-mini-stat' });
       card.createSpan({ text: String(label) });
       card.createEl('strong', { text: String(value) });
     }
@@ -315,7 +315,7 @@ export class DailyAssessmentView extends ItemView {
     if (inspection.errors.length > 0) {
       this.renderMessageList(block, 'Meals blockers', inspection.errors, 'is-error');
     }
-    const actions = block.createDiv({ cls: 'eqh-native-meals-actions' });
+    const actions = block.createDiv({ cls: 'examined-human-native-meals-actions' });
     const button = actions.createEl('button', {
       cls: 'mod-cta',
       text: component ? 'Replace Meals' : 'Import Meals',
@@ -324,18 +324,18 @@ export class DailyAssessmentView extends ItemView {
     button.addEventListener('click', () => { void this.handleNativeMealImport(); });
     if (component) {
       actions.createSpan({
-        cls: 'eqh-daily-validation-note',
+        cls: 'examined-human-daily-validation-note',
         text: `Last written by v${component.pluginVersion} · ${component.rowCount} food row${component.rowCount === 1 ? '' : 's'}`,
       });
       if (item.status === 'needs-import' && component.lifecycleState === 'ephemeral') {
         actions.createSpan({
-          cls: 'eqh-daily-validation-note',
+          cls: 'examined-human-daily-validation-note',
           text: 'This replacement finalizes the completed historical Meals component.',
         });
       }
     } else if (item.status === 'needs-import') {
       actions.createSpan({
-        cls: 'eqh-daily-validation-note',
+        cls: 'examined-human-daily-validation-note',
         text: 'First import finalizes this historical Meals component.',
       });
     }
@@ -344,7 +344,7 @@ export class DailyAssessmentView extends ItemView {
   private renderCompleteness(container: HTMLElement, inspection: NativeDailyInspection): void {
     const completeness = inspection.completeness;
     if (!completeness) return;
-    const grid = container.createDiv({ cls: 'eqh-daily-completeness-grid' });
+    const grid = container.createDiv({ cls: 'examined-human-daily-completeness-grid' });
     const counts = [
       ['Sessions', completeness.session_count],
       ['Transactions', completeness.transaction_count],
@@ -353,13 +353,13 @@ export class DailyAssessmentView extends ItemView {
       ['Milestones', completeness.milestone_count],
     ];
     for (const [label, value] of counts) {
-      const card = grid.createDiv({ cls: 'eqh-daily-mini-stat' });
+      const card = grid.createDiv({ cls: 'examined-human-daily-mini-stat' });
       card.createSpan({ text: String(label) });
       card.createEl('strong', { text: String(value) });
     }
     const missing = completeness.missing_daily_metrics;
     const metricState = container.createDiv({
-      cls: `eqh-daily-completeness-callout ${missing.length > 0 ? 'is-incomplete' : 'is-complete'}`,
+      cls: `examined-human-daily-completeness-callout ${missing.length > 0 ? 'is-incomplete' : 'is-complete'}`,
     });
     metricState.createEl('strong', {
       text: missing.length > 0
@@ -370,41 +370,41 @@ export class DailyAssessmentView extends ItemView {
   }
 
   private renderMessageList(container: HTMLElement, label: string, messages: string[], className: string): void {
-    const callout = container.createDiv({ cls: `eqh-daily-validation-callout ${className}` });
+    const callout = container.createDiv({ cls: `examined-human-daily-validation-callout ${className}` });
     callout.createEl('strong', { text: label });
     const list = callout.createEl('ul');
     for (const message of messages) list.createEl('li', { text: message });
   }
 
   private renderCopyableOutput(container: HTMLElement, label: string, output: string): void {
-    const block = container.createDiv({ cls: 'eqh-daily-output-block' });
-    const header = block.createDiv({ cls: 'eqh-daily-output-header' });
+    const block = container.createDiv({ cls: 'examined-human-daily-output-block' });
+    const header = block.createDiv({ cls: 'examined-human-daily-output-header' });
     header.createEl('strong', { text: label });
-    header.createEl('button', { text: 'Copy', cls: 'eqh-toolbar-button' }).addEventListener('click', () => {
+    header.createEl('button', { text: 'Copy', cls: 'examined-human-toolbar-button' }).addEventListener('click', () => {
       void navigator.clipboard.writeText(output).then(() => new Notice('Copied logger output.'));
     });
-    const textarea = block.createEl('textarea', { cls: 'eqh-daily-output', attr: { readonly: 'true', rows: '7' } });
+    const textarea = block.createEl('textarea', { cls: 'examined-human-daily-output', attr: { readonly: 'true', rows: '7' } });
     textarea.value = output;
   }
 
   private renderDayTimeline(container: HTMLElement, events: CalendarEvent[]): void {
-    const section = container.createEl('section', { cls: 'eqh-daily-panel' });
-    const heading = section.createDiv({ cls: 'eqh-daily-section-heading' });
+    const section = container.createEl('section', { cls: 'examined-human-daily-panel' });
+    const heading = section.createDiv({ cls: 'examined-human-daily-section-heading' });
     heading.createEl('h3', { text: 'Day timeline' });
-    heading.createSpan({ text: `${events.length} session${events.length === 1 ? '' : 's'}`, cls: 'eqh-daily-section-meta' });
+    heading.createSpan({ text: `${events.length} session${events.length === 1 ? '' : 's'}`, cls: 'examined-human-daily-section-meta' });
     if (events.length === 0) {
-      section.createDiv({ cls: 'eqh-daily-empty-inline', text: 'No sessions are available for this date.' });
+      section.createDiv({ cls: 'examined-human-daily-empty-inline', text: 'No sessions are available for this date.' });
       return;
     }
-    const scroll = section.createDiv({ cls: 'eqh-daily-timeline-scroll' });
-    const grid = scroll.createDiv({ cls: 'eqh-daily-timeline-grid' });
+    const scroll = section.createDiv({ cls: 'examined-human-daily-timeline-scroll' });
+    const grid = scroll.createDiv({ cls: 'examined-human-daily-timeline-grid' });
     grid.style.height = `${1440 * DAY_PX_PER_MINUTE}px`;
-    grid.style.setProperty('--eqh-px-per-minute', `${DAY_PX_PER_MINUTE}px`);
-    const gutter = grid.createDiv({ cls: 'eqh-daily-time-gutter' });
-    const column = grid.createDiv({ cls: 'eqh-day-column eqh-daily-session-column' });
+    grid.style.setProperty('--examined-human-px-per-minute', `${DAY_PX_PER_MINUTE}px`);
+    const gutter = grid.createDiv({ cls: 'examined-human-daily-time-gutter' });
+    const column = grid.createDiv({ cls: 'examined-human-day-column examined-human-daily-session-column' });
     column.style.backgroundSize = `100% ${60 * DAY_PX_PER_MINUTE}px, 100% ${30 * DAY_PX_PER_MINUTE}px`;
     for (let hour = 0; hour < 24; hour++) {
-      const label = gutter.createDiv({ cls: 'eqh-hour-label', text: `${String(hour).padStart(2, '0')}:00` });
+      const label = gutter.createDiv({ cls: 'examined-human-hour-label', text: `${String(hour).padStart(2, '0')}:00` });
       label.style.top = `${hour * 60 * DAY_PX_PER_MINUTE}px`;
     }
     const visualPositions = layoutVisualStack(events, DAY_PX_PER_MINUTE);
@@ -433,31 +433,31 @@ export class DailyAssessmentView extends ItemView {
     const totals = new Map<string, number>();
     for (const event of events) totals.set(event.engagementName, (totals.get(event.engagementName) ?? 0) + event.durationMinutes);
     const rows = [...totals.entries()].sort((left, right) => right[1] - left[1]);
-    const section = container.createEl('section', { cls: 'eqh-daily-panel' });
+    const section = container.createEl('section', { cls: 'examined-human-daily-panel' });
     section.createEl('h3', { text: 'Time by engagement' });
-    section.createDiv({ cls: 'eqh-daily-section-subtitle', text: 'Logged or inspected session minutes for the selected date' });
+    section.createDiv({ cls: 'examined-human-daily-section-subtitle', text: 'Logged or inspected session minutes for the selected date' });
     if (rows.length === 0) {
-      section.createDiv({ cls: 'eqh-daily-empty-inline', text: 'No engagement time is available.' });
+      section.createDiv({ cls: 'examined-human-daily-empty-inline', text: 'No engagement time is available.' });
       return;
     }
     const maximum = Math.max(...rows.map(([, minutes]) => minutes));
-    const chart = section.createDiv({ cls: 'eqh-daily-engagement-chart' });
+    const chart = section.createDiv({ cls: 'examined-human-daily-engagement-chart' });
     for (const [engagement, minutes] of rows) {
-      const row = chart.createDiv({ cls: 'eqh-daily-engagement-row' });
-      const labels = row.createDiv({ cls: 'eqh-daily-engagement-labels' });
+      const row = chart.createDiv({ cls: 'examined-human-daily-engagement-row' });
+      const labels = row.createDiv({ cls: 'examined-human-daily-engagement-labels' });
       labels.createSpan({ text: engagement });
       labels.createEl('strong', { text: formatDuration(minutes) });
-      const track = row.createDiv({ cls: 'eqh-daily-engagement-track' });
-      const bar = track.createDiv({ cls: 'eqh-daily-engagement-bar' });
+      const track = row.createDiv({ cls: 'examined-human-daily-engagement-track' });
+      const bar = track.createDiv({ cls: 'examined-human-daily-engagement-bar' });
       bar.style.width = `${minutes / maximum * 100}%`;
     }
   }
 
   private renderMetrics(container: HTMLElement): void {
     const metrics = this.displayMetrics();
-    const section = container.createEl('section', { cls: 'eqh-daily-panel' });
+    const section = container.createEl('section', { cls: 'examined-human-daily-panel' });
     section.createEl('h3', { text: 'Daily metrics' });
-    const grid = section.createDiv({ cls: 'eqh-daily-metrics-grid' });
+    const grid = section.createDiv({ cls: 'examined-human-daily-metrics-grid' });
     const definitions: Array<[string, keyof DailyMetricsRecord, string]> = [
       ['Mood', 'mood', ''],
       ['Energy', 'energy', ''],
@@ -471,17 +471,17 @@ export class DailyAssessmentView extends ItemView {
     ];
     for (const [label, key, suffix] of definitions) {
       const value = metrics?.[key] ?? null;
-      const card = grid.createDiv({ cls: `eqh-daily-metric-card ${value == null ? 'is-empty' : ''}` });
-      card.createDiv({ cls: 'eqh-weekly-eyebrow', text: label });
+      const card = grid.createDiv({ cls: `examined-human-daily-metric-card ${value == null ? 'is-empty' : ''}` });
+      card.createDiv({ cls: 'examined-human-weekly-eyebrow', text: label });
       const display = (key === 'fasted' || key === 'dieted') && value != null
         ? Number(value) === 1 ? 'Yes' : 'No'
         : value == null ? '—' : `${value}${suffix}`;
-      card.createDiv({ cls: 'eqh-daily-metric-value', text: display });
+      card.createDiv({ cls: 'examined-human-daily-metric-value', text: display });
     }
     const meals = this.displayMeals();
     if (meals.length > 0) {
       section.createEl('h4', { text: 'Foods' });
-      const list = section.createEl('ul', { cls: 'eqh-daily-food-list' });
+      const list = section.createEl('ul', { cls: 'examined-human-daily-food-list' });
       for (const meal of meals) {
         const details = [
           meal.calories == null ? null : `${meal.calories} kcal`,
@@ -494,16 +494,16 @@ export class DailyAssessmentView extends ItemView {
 
   private renderTransactions(container: HTMLElement): void {
     const transactions = this.displayTransactions();
-    const section = container.createEl('section', { cls: 'eqh-daily-panel' });
-    const heading = section.createDiv({ cls: 'eqh-daily-section-heading' });
+    const section = container.createEl('section', { cls: 'examined-human-daily-panel' });
+    const heading = section.createDiv({ cls: 'examined-human-daily-section-heading' });
     heading.createEl('h3', { text: 'Transactions' });
-    heading.createSpan({ text: String(transactions.length), cls: 'eqh-daily-section-meta' });
+    heading.createSpan({ text: String(transactions.length), cls: 'examined-human-daily-section-meta' });
     if (transactions.length === 0) {
-      section.createDiv({ cls: 'eqh-daily-empty-inline', text: 'No transactions recorded.' });
+      section.createDiv({ cls: 'examined-human-daily-empty-inline', text: 'No transactions recorded.' });
       return;
     }
-    const wrap = section.createDiv({ cls: 'eqh-exercise-table-wrap' });
-    const table = wrap.createEl('table', { cls: 'eqh-exercise-table eqh-daily-transaction-table' });
+    const wrap = section.createDiv({ cls: 'examined-human-exercise-table-wrap' });
+    const table = wrap.createEl('table', { cls: 'examined-human-exercise-table examined-human-daily-transaction-table' });
     const header = table.createEl('thead').createEl('tr');
     for (const label of ['Account', 'Amount', 'Engagement', 'Description']) header.createEl('th', { text: label });
     const body = table.createEl('tbody');
@@ -518,21 +518,21 @@ export class DailyAssessmentView extends ItemView {
 
   private renderExercises(container: HTMLElement): void {
     const exercises = this.displayExercises();
-    const section = container.createEl('section', { cls: 'eqh-daily-panel' });
-    const heading = section.createDiv({ cls: 'eqh-daily-section-heading' });
+    const section = container.createEl('section', { cls: 'examined-human-daily-panel' });
+    const heading = section.createDiv({ cls: 'examined-human-daily-section-heading' });
     heading.createEl('h3', { text: 'Exercise details' });
-    heading.createSpan({ text: String(exercises.length), cls: 'eqh-daily-section-meta' });
+    heading.createSpan({ text: String(exercises.length), cls: 'examined-human-daily-section-meta' });
     if (exercises.length === 0) {
-      section.createDiv({ cls: 'eqh-daily-empty-inline', text: 'No exercise details recorded.' });
+      section.createDiv({ cls: 'examined-human-daily-empty-inline', text: 'No exercise details recorded.' });
       return;
     }
-    const grid = section.createDiv({ cls: 'eqh-daily-exercise-grid' });
+    const grid = section.createDiv({ cls: 'examined-human-daily-exercise-grid' });
     for (const exercise of exercises) {
-      const card = grid.createDiv({ cls: 'eqh-daily-exercise-card' });
+      const card = grid.createDiv({ cls: 'examined-human-daily-exercise-card' });
       card.createEl('h4', { text: exercise.name });
-      if (exercise.category) card.createDiv({ cls: 'eqh-exercise-category', text: exercise.category });
+      if (exercise.category) card.createDiv({ cls: 'examined-human-exercise-category', text: exercise.category });
       if (exercise.sets.length > 0) {
-        const table = card.createEl('table', { cls: 'eqh-exercise-table' });
+        const table = card.createEl('table', { cls: 'examined-human-exercise-table' });
         const head = table.createEl('thead').createEl('tr');
         for (const label of ['Set', 'Weight', 'Reps', 'Distance', 'Duration']) head.createEl('th', { text: label });
         const body = table.createEl('tbody');
@@ -545,7 +545,7 @@ export class DailyAssessmentView extends ItemView {
           row.createEl('td', { text: set.durationMinutes == null ? '—' : formatDuration(set.durationMinutes) });
         }
       }
-      if (exercise.notes) card.createDiv({ cls: 'eqh-session-notes', text: exercise.notes });
+      if (exercise.notes) card.createDiv({ cls: 'examined-human-session-notes', text: exercise.notes });
     }
   }
 
@@ -839,7 +839,7 @@ export class DailyAssessmentView extends ItemView {
   }
 
   private renderError(error: unknown): void {
-    const panel = this.contentEl.createDiv({ cls: 'eqh-error-panel' });
+    const panel = this.contentEl.createDiv({ cls: 'examined-human-error-panel' });
     panel.createEl('h3', { text: 'Could not open Daily Assessment' });
     panel.createDiv({ text: error instanceof Error ? error.message : String(error) });
   }

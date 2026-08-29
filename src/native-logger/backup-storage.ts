@@ -13,7 +13,7 @@ function escapeRegExp(value: string): string {
 export function backupDirectoryForDatabase(databasePath: string): string {
   const slash = databasePath.lastIndexOf('/');
   const directory = slash >= 0 ? databasePath.slice(0, slash) : '';
-  return [directory, '.eqh-backups'].filter(Boolean).join('/');
+  return [directory, '.examined-human-backups'].filter(Boolean).join('/');
 }
 
 export function pluginBackupRetentionPlan(

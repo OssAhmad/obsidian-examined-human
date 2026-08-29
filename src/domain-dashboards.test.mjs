@@ -7,7 +7,7 @@ import {
   queryExerciseDashboard,
   queryFinancialDashboard,
   queryNutritionDashboard,
-} from './eqh-query.ts';
+} from './examined-human-query.ts';
 
 const require = createRequire(import.meta.url);
 const wasmBinary = await readFile(require.resolve('sql.js/dist/sql-wasm.wasm'));
