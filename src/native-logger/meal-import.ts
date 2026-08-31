@@ -32,7 +32,10 @@ export interface MealImportResult {
 }
 
 const REQUIRED_COLUMNS: Record<string, string[]> = {
-  daily_meals: ['id', 'day', 'food', 'calories', 'protein_g', 'meal_event_id', 'item_ordinal'],
+  daily_meals: [
+    'id', 'day', 'food', 'food_id', 'amount_g', 'calories', 'protein_g', 'carbs_g', 'fat_g',
+    'salt_g', 'fiber_g', 'cholesterol_mg', 'meal_event_id', 'item_ordinal',
+  ],
   daily_meal_assessments: [
     'day', 'daily_calorie_limit_kcal', 'minimum_protein_g', 'daily_calories_kcal',
     'daily_metrics_calories_kcal', 'meal_items_calories_kcal', 'daily_calorie_source',
@@ -46,6 +49,11 @@ const REQUIRED_COLUMNS: Record<string, string[]> = {
     'note_date', 'component', 'lifecycle_state', 'source_file_path', 'source_checksum',
     'plugin_version', 'row_count', 'imported_at', 'updated_at',
   ],
+  foods: [
+    'id', 'name', 'calories_kcal_per_100g', 'protein_g_per_100g', 'carbs_g_per_100g',
+    'fat_g_per_100g', 'salt_g_per_100g', 'fiber_g_per_100g', 'cholesterol_mg_per_100g',
+  ],
+  food_aliases: ['id', 'food_id', 'alias'],
 };
 
 function rows(db: Database, sql: string, params: SqlValue[] = []): Record<string, SqlValue>[] {
@@ -71,12 +79,12 @@ function requireIsoDate(value: string, label: string): void {
 
 export function assertMealImportSchema(db: Database): void {
   const version = Number(rows(db, 'PRAGMA user_version')[0]?.user_version ?? 0);
-  if (version !== 5) {
-    throw new Error(`Native Meals import requires Examined Human schema v5; this database reports v${version}.`);
+  if (version !== 1) {
+    throw new Error(`Native Meals import requires official Data Schema v1; this database reports v${version}.`);
   }
   for (const [table, required] of Object.entries(REQUIRED_COLUMNS)) {
     if (!hasColumns(db, table, required)) {
-      throw new Error(`Examined Human schema v5 is incomplete: ${table} is missing required columns.`);
+      throw new Error(`Official Data Schema v1 is incomplete: ${table} is missing required columns.`);
     }
   }
 }
@@ -132,7 +140,8 @@ export function mealComponentMatchesInspection(
       || String(event.classification_source) !== meal.classificationSource
       || !sameNullableNumber(event.calorie_limit_kcal, meal.calorieLimitKcal)) return false;
     const items = rows(db, `
-      SELECT item_ordinal, food, calories, protein_g
+      SELECT item_ordinal, food, food_id, amount_g, calories, protein_g,
+             carbs_g, fat_g, salt_g, fiber_g, cholesterol_mg
       FROM daily_meals
       WHERE meal_event_id = ?
       ORDER BY item_ordinal, id
@@ -143,8 +152,15 @@ export function mealComponentMatchesInspection(
       const expected = meal.items[itemIndex];
       if (Number(actual.item_ordinal) !== expected.ordinal
         || String(actual.food) !== expected.food
+        || Number(actual.food_id) !== expected.foodId
+        || !sameNullableNumber(actual.amount_g, expected.amountG)
         || !sameNullableNumber(actual.calories, expected.caloriesKcal)
-        || !sameNullableNumber(actual.protein_g, expected.proteinG)) return false;
+        || !sameNullableNumber(actual.protein_g, expected.proteinG)
+        || !sameNullableNumber(actual.carbs_g, expected.carbsG)
+        || !sameNullableNumber(actual.fat_g, expected.fatG)
+        || !sameNullableNumber(actual.salt_g, expected.saltG)
+        || !sameNullableNumber(actual.fiber_g, expected.fiberG)
+        || !sameNullableNumber(actual.cholesterol_mg, expected.cholesterolMg)) return false;
     }
   }
 
@@ -214,13 +230,21 @@ export function writeMealInspection(db: Database, input: MealImportInput): MealI
     for (const item of meal.items) {
       db.run(`
         INSERT INTO daily_meals (
-          day, food, calories, protein_g, meal_event_id, item_ordinal
-        ) VALUES (?, ?, ?, ?, ?, ?)
+          day, food, food_id, amount_g, calories, protein_g, carbs_g, fat_g,
+          salt_g, fiber_g, cholesterol_mg, meal_event_id, item_ordinal
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `, [
         input.noteDate,
         item.food,
+        item.foodId,
+        item.amountG,
         item.caloriesKcal,
         item.proteinG,
+        item.carbsG,
+        item.fatG,
+        item.saltG,
+        item.fiberG,
+        item.cholesterolMg,
         mealEventId,
         item.ordinal,
       ]);

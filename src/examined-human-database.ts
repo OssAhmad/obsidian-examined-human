@@ -4,11 +4,13 @@ import { normalizeVaultDatabasePath } from './database-path.ts';
 import { hasUncheckpointedWal, UNCHECKPOINTED_WAL_MESSAGE } from './database-source.ts';
 import type {
   DailyAssessmentQueryResult,
+  CommandCatalog,
   DailyNoteIndexQueryResult,
   DatabaseInspection,
   EngagementDashboardQueryResult,
   ExerciseDashboardQueryResult,
   FinancialDashboardQueryResult,
+  FoodLibraryRecord,
   NutritionDashboardQueryResult,
   SessionQueryResult,
   WeeklyAssessmentQueryResult,
@@ -16,11 +18,13 @@ import type {
 } from './examined-human-query.ts';
 import {
   inspectDatabase,
+  queryCommandCatalog,
   queryDailyAssessment,
   queryDailyNoteIndex,
   queryEngagementDashboard,
   queryExerciseDashboard,
   queryFinancialDashboard,
+  queryFoodLibrary,
   queryNutritionDashboard,
   querySessions,
   queryWeeklyAssessment,
@@ -98,6 +102,14 @@ export class ExaminedHumanDatabase {
     endDate: string,
   ): Promise<NutritionDashboardQueryResult> {
     return this.withDatabase(databasePath, (db) => queryNutritionDashboard(db, startDate, endDate));
+  }
+
+  async foodLibrary(databasePath: string): Promise<FoodLibraryRecord[]> {
+    return this.withDatabase(databasePath, queryFoodLibrary);
+  }
+
+  async commandCatalog(databasePath: string): Promise<CommandCatalog> {
+    return this.withDatabase(databasePath, queryCommandCatalog);
   }
 
   async exerciseDashboard(

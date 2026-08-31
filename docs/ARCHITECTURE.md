@@ -18,17 +18,17 @@ Treat these as part of the plugin contract unless a deliberate product decision 
 10. Close-session visual packing may move a displayed start or end by at most ten minutes. It never changes stored data, tooltips, or modal details.
 11. Exercise and milestone details are optional. Missing extension tables or columns must not prevent ordinary sessions from loading.
 12. A date present in `imported_notes` uses canonical sessions. Otherwise, an active planning projection may supply mutable sessions for that date.
-13. The plugin scans note filenames, EH Form presence, and weekly `week start` frontmatter for navigation, then natively parses every schema-v5 Daily and Weekly import component.
+13. The plugin scans note filenames, EH Form presence, and weekly `week start` frontmatter for navigation, then natively parses every official Data Schema v1 Daily and Weekly import component.
 14. Runtime logger code uses only Obsidian APIs, Web Crypto, and SQL.js. Python and Node process/filesystem APIs are not plugin dependencies, so the complete workflow is mobile-compatible.
 15. Canonical Daily Notes use `YYYY-MM-DD.md` filenames inside the recursively scanned, vault-relative Journal folder configured in Settings. The default folder remains `Oss Ahmad Journal`; legacy filename read compatibility is retained.
-16. Native writes are serialized and confirmation-gated. They must verify schema v5, snapshot the source checksum, detect stale database bytes, use one transaction, run `quick_check` and `foreign_key_check`, and verify the persisted bytes. Durable/finalized writes create a pre-write backup; replaceable ephemeral Meals and planning projections deliberately do not. Optional retention cleanup runs only after a verified durable write, keeps the current backup, and targets only exact EH-created backup names.
+16. Native writes are serialized and confirmation-gated. They must verify official Data Schema v1, snapshot the source checksum, detect stale database bytes, use one transaction, run `quick_check` and `foreign_key_check`, and verify the persisted bytes. Durable/finalized writes create a pre-write backup; replaceable ephemeral Meals and planning projections deliberately do not. Optional retention cleanup runs only after a verified durable write, keeps the current backup, and targets only exact EH-created backup names.
 17. Historical Meals components are immutable once finalized. Current/future Meals are `ephemeral` and replaceable; if the date becomes historical while the component is still ephemeral, one confirmed component or canonical full-note import may replace and finalize it from the completed note.
 18. Snacks never directly increase the leisure-meal count. They do contribute to structured-food calories; the effective daily total is the higher of Daily Metrics calories and all structured food rows.
 19. The third canonical transaction field is `engagement`, not a free-form category. It must resolve uniquely through engagement names or aliases. The native importer stores the engagement ID in the legacy `transactions.category` column; unresolved or empty values block import, while legacy free-text database rows remain readable.
-20. Every native milestone has exactly one owning canonical session. The required owner interval must match one same-engagement Daily Note session; new schema-v5 databases enforce `engagement_milestones.session_id NOT NULL` with restricted owner deletion.
+20. Every native milestone has exactly one owning canonical session. The required owner interval must match one same-engagement Daily Note session; official Data Schema v1 enforces `engagement_milestones.session_id NOT NULL` with restricted owner deletion.
 21. Engagement Dashboard analysis uses canonical sessions only. Its date range constrains sessions and engagement-linked transactions, while milestones remain lifetime facts. Financial amounts are grouped by recorded account currency and unlike currencies are never combined.
 22. Financial Dashboard includes every transaction in currency-separated flow totals, but only numeric engagement references participate in engagement analysis. A period net is recorded flow, never an inferred account balance.
-23. Nutrition Dashboard prefers schema-v5 assessment snapshots, uses legacy Daily Metrics only as a labeled fallback, and computes the 10% leisure-meal rate/debt only from assessed meal days.
+23. Nutrition Dashboard prefers Schema v1 assessment snapshots, uses legacy Daily Metrics only as a labeled fallback, and computes the 10% leisure-meal rate/debt only from assessed meal days.
 24. Exercise Dashboard counts canonical sessions typed `exercise` plus canonical sessions carrying structured exercise rows. Session totals and set-detail coverage remain separate so incomplete detail never erases valid workout time.
 25. Engagement search covers canonical names and every `engagement_aliases.alias`. Linked-money totals and the complete selected-period transaction ledger use the same strict numeric engagement ownership and currency-separation rules.
 26. Non-blocking dashboard data-quality warnings may be closed for the current render or hidden persistently by stable warning key. Settings must restore hidden warnings. Import blockers, validation errors, and mutation confirmations are never hideable.
@@ -88,6 +88,14 @@ Daily Assessment command
                  +--> current/future planning projection replacement
                  +--> separate Meals component lifecycle controls
 
+Command Center command
+        |
+        +--> ExaminedHumanDatabase --> read-only Food, Engagement, Exercise, and Account library queries
+        |
+        +--> typed command form --> choose unimported current/future Daily Note
+                 |
+                 +--> staged Admin Event lines --> normal Daily import validation and guarded writer
+
 Engagement Dashboard command
         |
         +--> canonical-name/alias search + engagement navigator + date range
@@ -125,6 +133,9 @@ The source database is read into memory for each inspection or range query. sql.
 - `src/WeeklyAssessmentView.ts` — unified weekly-note navigation, direction and total cards, commitment goals, target/actual bars, and native confirmation-gated actions.
 - `src/weekly-note-index.ts` — weekly Markdown discovery, imported-plan reconciliation, newest-first ordering, and overdue/current/future classification.
 - `src/DailyAssessmentView.ts` — daily-note navigation, assessment panels, full native preview/import, planning sync, and Meals component controls.
+- `src/CommandCenterView.ts` — canonical Food, Engagement, Exercise, and Account audit/maintenance surface plus raw Batch staging; it only stages commands into unimported Daily Notes and never writes directly to SQLite.
+- `src/CommandForms.ts` and `src/command-staging.ts` — typed create/update/alias forms and reusable target-note/confirmation staging path.
+- `src/unresolved-references.ts` — pure grouping of parser blockers into contextual Daily Assessment corrections.
 - `src/EngagementDashboardView.ts` — engagement navigation and filters, lifecycle summary, activity and session-type charts, milestones, currency-separated financial summaries, and recent sessions.
 - `src/DashboardViewBase.ts` — shared range, fingerprint refresh, toolbar, formatting, metric-card, bar, and trend primitives for analytical domain dashboards.
 - `src/dismissible-warning.ts` and `src/warning-preferences.ts` — shared non-blocking warning UI, stable dismissal keys, persistent preference sanitization, and Settings recovery contract.
@@ -134,7 +145,7 @@ The source database is read into memory for each inspection or range query. sql.
 - `src/ExerciseDashboardView.ts` — workout time/frequency, structured detail coverage, exercise performance, muscle exposure, and recent workouts.
 - `src/daily-note-index.ts` — standard Daily Note discovery, imported/pending reconciliation, newest-first ordering, and overdue/current/future classification.
 - `src/native-logger/meals.ts` — pure new-schema Meals and supporting Daily Metrics parser/evaluator.
-- `src/native-logger/meal-import.ts` — pure schema-v5 capability checks, lifecycle policy, and normalized Meals SQL writes.
+- `src/native-logger/meal-import.ts` — official Schema v1 capability checks, lifecycle policy, and normalized Meals SQL writes.
 - `src/native-logger/daily-note.ts` — strict full Daily Note parser, validators, admin command application, canonical import, and milestone reconciliation.
 - `src/native-logger/planning.ts` — tolerant current/future parser and replaceable `note_sources`/`planned_sessions` projection.
 - `src/native-logger/weekly.ts` — strict weekly parser/import and weekly-to-Daily-Note write preparation.
@@ -155,8 +166,8 @@ The source database is read into memory for each inspection or range query. sql.
 
 - `esbuild.config.mjs` — bundles the plugin as CommonJS and embeds the SQL.js WASM binary and schema-creation SQL into `main.js`.
 - `src/assets.d.ts` — TypeScript declarations for imported WASM bytes and SQL text.
-- `migrations/000_create_schema_v5.sql` — complete empty schema-v5 creation script with public taxonomy seeds and no user data.
-- `migrations/005_meal_events.sql` — auditable v4-to-v5 migration contract.
+- `migrations/000_create_schema_v1.sql` — complete empty official Schema v1 creation script with public taxonomy seeds and no user data.
+- `migrations/001_upgrade_v5_to_schema_v1.sql` — the one-time 0.9.3 upgrade from the retired v5 database.
 - `src/*.test.mjs` — Node tests for mapping, time formatting, `chor`, and overlap behavior.
 - `scripts/validate-database.mjs` — validates a real database without printing engagement names or notes.
 - `scripts/check-release.mjs` — checks version agreement and required release assets.
@@ -201,19 +212,15 @@ The current query is an inner join from `sessions.engagement_id` to `engagements
 
 Exercise metadata is an optional extension of this base contract. When all documented columns are available in `exercises`, `session_exercises`, and `exercise_sets`, the range query attaches ordered exercise definitions and their sets to exercise events. Weight, reps, distance, duration, and set notes remain nullable because different exercise categories record different measurements. If the optional schema is absent or incomplete, the calendar still loads and the exercise modal reports that details are unavailable.
 
-Milestone metadata is an optional schema-version-2 display extension. When `engagement_milestones.session_id` and the documented measurement columns are available, the query attaches every linked milestone and its measurements to the canonical session. The card footer adds a singular/plural milestone count, while the modal shows names, dates, values, and notes. Native input now requires `engagement | milestone | metric | value | owner session interval`, and resolution must find exactly one same-engagement session. New schema-v5 databases enforce a non-null owner with restricted deletion. Legacy unlinked milestones and databases without the optional column remain readable and do not affect ordinary session rendering, but native import and reconciliation will not create another ownerless milestone. Planned milestone projections are deliberately deferred.
+Milestone metadata is an optional display extension. When `engagement_milestones.session_id` and the documented measurement columns are available, the query attaches every linked milestone and its measurements to the canonical session. The card footer adds a singular/plural milestone count, while the modal shows names, dates, values, and notes. Native input requires `engagement | milestone | metric | value | owner session interval`, and resolution must find exactly one same-engagement session. Official Data Schema v1 enforces a non-null owner with restricted deletion. Legacy unlinked milestones and databases without the optional column remain readable and do not affect ordinary session rendering, but native import and reconciliation will not create another ownerless milestone. Planned milestone projections are deliberately deferred.
 
 Planning is another optional extension. If `note_sources` and `planned_sessions` contain all version-1 columns, the query determines source precedence per date. An `imported_notes.note_date` selects canonical sessions. Without that marker, an active note projection selects planned sessions and suppresses stale canonical rows for that date. Databases without the planning tables retain the previous canonical-only behavior.
 
-Schema version 4 normalizes canonical session and engagement classifications. `sessions.session_type_id` joins `session_types.id`, while `engagements.type_id` joins `engagement_types.id`; the query layer exposes the resulting canonical codes to the existing event model. Planned sessions retain `session_type_raw` for provenance and optionally resolve through `resolved_session_type_id`.
-
-The same version adds `weekly_plans`, `weekly_plan_sessions`, and `weekly_commitments`. `queryWeeklyPlanIndex` exposes imported-week identity for reconciliation with scanned `YYYY-WNN.md` files. `queryWeeklyPlan` exposes one normalized imported plan. `queryWeeklyAssessment` joins each weekly commitment to canonical sessions for the same engagement within the seven-day window and sums `duration_minutes` across every session type. It intentionally does not count `weekly_plan_sessions`, because scheduled rows are not evidence of completed work. These assessment SQL boundaries remain read-only; native writes cross the guarded writer only after preview and confirmation.
-
-Schema version 5 adds normalized `meal_events`, food-item links on `daily_meals`, daily nutrition/leisure assessment snapshots, component provenance, and summary views. The native parser accepts only the new four-heading Meals grammar. The importer writes four meal events even when headings are missing (missing headings produce warnings and empty non-leisure opportunities), preserves unrelated legacy `daily_meals` rows whose `meal_event_id` is null, and deletes/replaces only linked native rows for current/future dates. `note_import_components` records lifecycle, source path/checksum, plugin version, row count, and timestamps.
+Official Data Schema v1 includes canonical session and engagement taxonomies, `weekly_plans`, `weekly_plan_sessions`, and `weekly_commitments`; `sessions.session_type_id` joins `session_types.id`, while `engagements.type_id` joins `engagement_types.id`. It also includes normalized `meal_events`, daily nutrition/leisure assessment snapshots, component provenance, and summary views. The Food Dictionary stores canonical foods with required per-100 g calories, protein, carbs, fat, and salt plus optional fiber/cholesterol; compact `food_aliases` resolve alternative note spellings. The native parser accepts only `food | amount_g` meal rows (with an optional `g` suffix), resolves a canonical food, and records its ID, gram amount, and immutable nutrient snapshots. The importer writes four meal events even when headings are missing (missing headings produce warnings and empty non-leisure opportunities), preserves legacy `daily_meals` rows whose `food_id` is null, and deletes/replaces only linked native rows for current/future dates. `note_import_components` records lifecycle, source path/checksum, plugin version, row count, and timestamps.
 
 When a Meals-only import precedes the canonical full-note import, the whole-note checksum may legitimately change because Sessions, Transactions, or another unrelated section was edited. If the stored component is already finalized, the historical importer therefore compares the persisted meal events, foods, thresholds, and assessment snapshot with the newly parsed Meals inspection: an exact semantic match is adopted under the full-note provenance, while a changed finalized component remains rejected. An ephemeral component is not silently promoted at midnight; the first confirmed historical Meals or full-note import may replace it with the completed note and finalize it.
 
-The historical `transactions.category` column remains `TEXT` for schema-v5 compatibility, but the Daily Note grammar names its third transaction field `engagement`: `amount | account | engagement | description`. The native importer resolves that field through canonical engagement names and `engagement_aliases`, rejects empty or unresolved values, and writes the numeric engagement ID. The read model joins numeric stored values back to `engagements.name`; unmatched legacy free text is displayed unchanged.
+The historical `transactions.category` column remains `TEXT` for compatibility, but the Daily Note grammar names its third transaction field `engagement`: `amount | account | engagement | description`. The native importer resolves that field through canonical engagement names and `engagement_aliases`, rejects empty or unresolved values, and writes the numeric engagement ID. The read model joins numeric stored values back to `engagements.name`; unmatched legacy free text is displayed unchanged.
 
 `queryEngagementDashboard` treats that numeric transaction reference as the only valid cross-domain financial ownership link. Legacy free-text categories are counted as unresolved and excluded from engagement totals and detail. Selected-period inflow, outflow, and net values are grouped by `accounts.currency`; no exchange-rate assumption or cross-currency total is introduced. The same query returns every linked transaction for the selected engagement and period, newest first, so the UI can place the ledger beneath the totals. Engagement summaries also expose ordered aliases for search. Session totals and trends honor the selected period and include only canonical `sessions`, while milestone totals and details intentionally describe the engagement's full lifetime.
 
@@ -330,7 +337,7 @@ Before publishing, also run `npm run build` and manually test the generated `mai
 
 ## Build details
 
-SQL.js ships SQLite as WebAssembly. The esbuild `.wasm` and `.sql` loaders embed the runtime and empty schema-v5 creation SQL in `main.js`, so installation requires only the normal three Obsidian plugin files. No separate runtime asset or network request is required. The resulting JavaScript file is expected to be substantially larger than a typical Obsidian plugin.
+SQL.js ships SQLite as WebAssembly. The esbuild `.wasm` and `.sql` loaders embed the runtime, empty Schema v1 creation SQL, and the one-time 0.9.3 upgrade SQL in `main.js`, so installation requires only the normal three Obsidian plugin files. No separate runtime asset or network request is required. The resulting JavaScript file is expected to be substantially larger than a typical Obsidian plugin.
 
 Obsidian/Electron APIs are externalized from the bundle. Node imports are confined to development tooling. The build uses an absolute entry path because restricted Windows development environments can otherwise make esbuild resolve the entry as a package path.
 
@@ -342,7 +349,7 @@ This is not a current blocker, but future work must avoid unbounded revision his
 
 ## Known limitations
 
-- Schema migrations from older databases are not performed by the plugin; native import requires schema v5
+- Version 0.9.3 alone provides an explicit confirmed conversion from the retired v5 database to official Data Schema v1. Later releases require Schema v1 and intentionally omit that conversion.
 - The dashboard presents validation feedback in Obsidian instead of writing managed feedback blocks into Markdown notes
 - Python chart/report generation remains outside the plugin runtime; the four native analytical dashboards replace static images for current engagement, finance, nutrition, and exercise testing
 - Planning projections refresh when the user confirms a Daily or Weekly dashboard sync; arbitrary note edits are not silently written to EH.db
@@ -353,7 +360,7 @@ This is not a current blocker, but future work must avoid unbounded revision his
 - No warning when `duration_minutes` disagrees with start/end geometry
 - The calendar has no recurrence, all-day events, filters, search, or export
 - Engagement-linked finance excludes legacy free-text transaction categories; currency conversion and budgets are not yet modeled
-- Financial flow does not infer opening balances or internal transfers; Nutrition leisure history is limited to schema-v5 assessed days
+- Financial flow does not infer opening balances or internal transfers; Nutrition leisure history is limited to Schema v1 assessed days
 - The grid rerenders the bounded window instead of virtualizing individual columns
 - Dense short-session clusters can still use the old visually overlapping fallback when compact packing would exceed the ten-minute fidelity limit
 

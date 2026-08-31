@@ -2020,6 +2020,13 @@
   margin-top: 5px;
 }
 
+.examined-human-engagement-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 14px;
+}
+
 .examined-human-engagement-dates {
   display: flex;
   flex-wrap: wrap;
@@ -2461,5 +2468,192 @@
   .examined-human-toolbar-warning .examined-human-dismissible-warning-message {
     overflow: visible;
     white-space: normal;
+  }
+}
+
+.examined-human-unresolved-references {
+  margin: 14px 0;
+  padding: 14px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-m);
+  background: color-mix(in srgb, var(--background-secondary) 72%, transparent);
+}
+
+.examined-human-unresolved-list,
+.examined-human-command-food-list {
+  display: grid;
+  gap: 8px;
+}
+
+.examined-human-unresolved-item,
+.examined-human-command-alias-add {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  justify-content: space-between;
+}
+
+.examined-human-unresolved-item > div:first-child {
+  min-width: 0;
+}
+
+.examined-human-unresolved-meta,
+.examined-human-command-food-meta {
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+}
+
+.examined-human-command-modal .setting-item {
+  padding: 8px 0;
+}
+
+.examined-human-command-mode,
+.examined-human-command-tabs,
+.examined-human-command-aliases {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 12px 0;
+}
+
+.examined-human-command-mode button.is-selected,
+.examined-human-command-tabs button.is-selected {
+  color: var(--text-on-accent);
+  background: var(--interactive-accent);
+}
+
+.examined-human-command-tab-placeholder {
+  padding: 6px 10px;
+  color: var(--text-muted);
+  font-size: var(--font-ui-small);
+}
+
+.examined-human-command-layout {
+  display: grid;
+  grid-template-columns: minmax(210px, 0.8fr) minmax(0, 2fr);
+  gap: 16px;
+}
+
+.examined-human-command-sidebar {
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-m);
+  background: var(--background-secondary);
+}
+
+.examined-human-command-sidebar > input {
+  width: 100%;
+  margin-bottom: 10px;
+}
+
+.examined-human-command-food-item {
+  display: grid;
+  height: auto;
+  min-height: 0;
+  gap: 3px;
+  width: 100%;
+  padding: 9px 10px;
+  overflow: visible;
+  align-content: start;
+  justify-items: start;
+  white-space: normal;
+  text-align: left;
+}
+
+.examined-human-command-food-item.is-selected {
+  border-color: var(--interactive-accent);
+  background: var(--background-primary-alt);
+}
+
+.examined-human-command-item-name,
+.examined-human-command-item-meta {
+  display: block;
+  max-width: 100%;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  text-align: left;
+}
+
+.examined-human-command-item-name {
+  line-height: 1.3;
+}
+
+.examined-human-command-item-meta {
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+  line-height: 1.35;
+}
+
+.examined-human-command-main {
+  min-width: 0;
+}
+
+.examined-human-command-food-title,
+.examined-human-command-food-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.examined-human-command-food-title {
+  align-items: flex-start;
+}
+
+.examined-human-command-food-title h3 {
+  margin: 0;
+  flex: 1 1 260px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  line-height: 1.3;
+}
+
+.examined-human-command-food-actions {
+  margin-left: auto;
+}
+
+.examined-human-food-calculator > input {
+  width: min(160px, 100%);
+  margin: 0 0 10px;
+}
+
+.examined-human-command-alias {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 6px 4px 8px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-s);
+  background: var(--background-secondary);
+}
+
+.examined-human-command-alias button {
+  padding: 2px 5px;
+  font-size: var(--font-ui-smaller);
+}
+
+.examined-human-command-alias-add {
+  justify-content: flex-start;
+  margin-top: 10px;
+}
+
+.examined-human-command-alias-add input {
+  min-width: 160px;
+}
+
+@media (max-width: 700px) {
+  .examined-human-command-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .examined-human-command-food-actions {
+    width: 100%;
+    margin-left: 0;
+  }
+
+  .examined-human-unresolved-item {
+    align-items: flex-start;
+    flex-direction: column;
   }
 }

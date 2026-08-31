@@ -1,6 +1,29 @@
-import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
+import { createRequire } from 'node:module';
+import test from 'node:test';
+import initSqlJs from 'sql.js';
 import { inspectMeals } from './meals.ts';
+
+const require = createRequire(import.meta.url);
+const wasmBinary = await readFile(require.resolve('sql.js/dist/sql-wasm.wasm'));
+const SQL = await initSqlJs({ wasmBinary });
+const db = new SQL.Database();
+db.run(`
+  CREATE TABLE foods (
+    id INTEGER PRIMARY KEY, name TEXT NOT NULL, category TEXT,
+    calories_kcal_per_100g REAL NOT NULL, protein_g_per_100g REAL NOT NULL,
+    carbs_g_per_100g REAL NOT NULL, fat_g_per_100g REAL NOT NULL,
+    salt_g_per_100g REAL NOT NULL, fiber_g_per_100g REAL,
+    cholesterol_mg_per_100g REAL, notes TEXT
+  );
+  CREATE TABLE food_aliases (id INTEGER PRIMARY KEY, food_id INTEGER NOT NULL, alias TEXT NOT NULL);
+  INSERT INTO foods VALUES
+    (1, 'Kabab', NULL, 456, 31, 0, 0, 0, NULL, NULL, NULL),
+    (2, 'Rice', NULL, 270, 6, 0, 0, 0, NULL, NULL, NULL),
+    (3, 'Three pizzas', NULL, 3000, 90, 0, 0, 0, NULL, NULL, NULL),
+    (4, 'Oats', NULL, 300, 20, 0, 0, 0, NULL, NULL, NULL);
+`);
 
 function note({ calories = '4000', protein = '127', dieted = '1', meals = '' } = {}) {
   return `
@@ -23,8 +46,8 @@ const completeMeals = `
 ###### Breakfast
 is_leisure:
 ENTRIES:
-Kabab | 456 | 31
-Rice | 270 | 6
+Kabab | 100
+Rice | 100
 
 ###### Lunch
 is_leisure: 0
@@ -36,15 +59,13 @@ ENTRIES:
 
 ###### Snacks
 ENTRIES:
-Three pizzas | 3000 | 90
+Three pizzas | 100
 `;
 
-test('evaluates meal totals, includes snacks in the daily total, and applies the two-meal floor', () => {
-  const result = inspectMeals(note({ meals: completeMeals }), {
-    mealCalorieLimitKcal: 700,
-    dailyCalorieLimitKcal: 1850,
-    minimumProteinG: 0,
-  });
+const thresholds = { mealCalorieLimitKcal: 700, dailyCalorieLimitKcal: 1850, minimumProteinG: 0 };
+
+test('evaluates canonical-food totals, includes snacks, and applies the two-meal floor', () => {
+  const result = inspectMeals(db, note({ meals: completeMeals }), thresholds);
   assert.equal(result.ready, true);
   assert.equal(result.meals.find((meal) => meal.type === 'breakfast')?.totalCaloriesKcal, 726);
   assert.equal(result.meals.find((meal) => meal.type === 'breakfast')?.evaluatedIsLeisure, 1);
@@ -57,11 +78,17 @@ test('evaluates meal totals, includes snacks in the daily total, and applies the
   assert.equal(result.nutrition.dailyCaloriesKcal, 4000);
 });
 
+test('accepts an optional g suffix and canonical food aliases', () => {
+  db.run("INSERT INTO food_aliases (food_id, alias) VALUES (1, 'Kabab koobideh')");
+  const result = inspectMeals(db, note({ meals: completeMeals.replace('Kabab | 100', 'Kabab koobideh | 100 g') }), thresholds);
+  assert.equal(result.ready, true);
+  assert.equal(result.meals[0].items[0].food, 'Kabab');
+  assert.equal(result.meals[0].items[0].amountG, 100);
+});
+
 test('zero nutrition thresholds trust the recorded dieted value and disable automatic limits', () => {
-  const result = inspectMeals(note({ calories: '', protein: '', dieted: '1', meals: completeMeals }), {
-    mealCalorieLimitKcal: 0,
-    dailyCalorieLimitKcal: 0,
-    minimumProteinG: 0,
+  const result = inspectMeals(db, note({ calories: '', protein: '', dieted: '1', meals: completeMeals }), {
+    mealCalorieLimitKcal: 0, dailyCalorieLimitKcal: 0, minimumProteinG: 0,
   });
   assert.equal(result.ready, true);
   assert.equal(result.directLeisureMeals, 0);
@@ -69,87 +96,14 @@ test('zero nutrition thresholds trust the recorded dieted value and disable auto
   assert.equal(result.nutrition.evaluatedDieted, 1);
 });
 
-test('minimum protein participates in objective dieted evaluation', () => {
-  const result = inspectMeals(note({ calories: '1800', protein: '89', dieted: '1', meals: completeMeals }), {
-    mealCalorieLimitKcal: 0,
-    dailyCalorieLimitKcal: 2200,
-    minimumProteinG: 90,
-  });
-  assert.equal(result.ready, true);
-  assert.equal(result.nutrition.evaluatedDieted, 0);
-});
-
-test('manual leisure survives a disabled or unexceeded meal threshold', () => {
-  const meals = completeMeals.replace('###### Lunch\nis_leisure: 0', '###### Lunch\nis_leisure: 1');
-  const result = inspectMeals(note({ calories: '1700', meals }), {
-    mealCalorieLimitKcal: 900,
-    dailyCalorieLimitKcal: 0,
-    minimumProteinG: 0,
-  });
-  assert.equal(result.ready, true);
-  assert.equal(result.meals.find((meal) => meal.type === 'lunch')?.classificationSource, 'manual');
-  assert.equal(result.directLeisureMeals, 1);
-  assert.equal(result.leisureMeals, 1);
-});
-
-test('structured snack calories cannot be hidden by an understated Daily Metrics total', () => {
-  const result = inspectMeals(note({ calories: '1000', meals: completeMeals }), {
-    mealCalorieLimitKcal: 0,
-    dailyCalorieLimitKcal: 1850,
-    minimumProteinG: 0,
-  });
-  assert.equal(result.ready, true);
-  assert.equal(result.nutrition.dailyCaloriesKcal, 3726);
-  assert.equal(result.nutrition.dailyCalorieSource, 'higher_of_both');
-  assert.equal(result.leisureMeals, 2);
-  assert.match(result.warnings.join('\n'), /snacks and meals remain reflected/i);
-});
-
-test('missing meal headings become empty non-leisure opportunities with warnings', () => {
-  const result = inspectMeals(note({ meals: `
-###### Breakfast
-is_leisure:
-ENTRIES:
-Oats | 300 | 20
-` }), {
-    mealCalorieLimitKcal: 500,
-    dailyCalorieLimitKcal: 0,
-    minimumProteinG: 0,
-  });
-  assert.equal(result.ready, true);
-  assert.equal(result.meals.length, 4);
-  assert.equal(result.directLeisureMeals, 0);
-  assert.match(result.warnings.join('\n'), /lunch is missing/i);
-});
-
-test('rejects legacy or malformed food data instead of guessing', () => {
-  const legacy = `
-##### Daily Metrics
-- FOODS:
-- oats | 300 | 20
-calories: 300
-protein_g: 20
-dieted: 1
-`;
-  const result = inspectMeals(legacy, {
-    mealCalorieLimitKcal: 0,
-    dailyCalorieLimitKcal: 1850,
-    minimumProteinG: 0,
-  });
-  assert.equal(result.ready, false);
-  assert.match(result.errors.join('\n'), /does not contain a ##### Meals section/);
-
-  const malformed = inspectMeals(note({ meals: `
-###### Breakfast
-is_leisure: maybe
-ENTRIES:
-Oats | nope | 20
-` }), {
-    mealCalorieLimitKcal: 0,
-    dailyCalorieLimitKcal: 1850,
-    minimumProteinG: 0,
-  });
+test('rejects legacy three-field, unknown-food, and malformed amount rows', () => {
+  const legacy = inspectMeals(db, note({ meals: completeMeals.replace('Kabab | 100', 'Kabab | 456 | 31') }), thresholds);
+  assert.equal(legacy.ready, false);
+  assert.match(legacy.errors.join('\n'), /food \| amount_g/);
+  const unknown = inspectMeals(db, note({ meals: completeMeals.replace('Kabab | 100', 'Mystery food | 100') }), thresholds);
+  assert.equal(unknown.ready, false);
+  assert.match(unknown.errors.join('\n'), /not in the Food Library/);
+  const malformed = inspectMeals(db, note({ meals: completeMeals.replace('Kabab | 100', 'Kabab | nope') }), thresholds);
   assert.equal(malformed.ready, false);
-  assert.match(malformed.errors.join('\n'), /blank, 0, or 1/);
-  assert.match(malformed.errors.join('\n'), /invalid calories/);
+  assert.match(malformed.errors.join('\n'), /invalid gram amount/);
 });

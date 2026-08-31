@@ -1,6 +1,6 @@
 import type { Database } from 'sql.js';
 import {
-  assertSchemaV5,
+  assertSchemaV1,
   queryRows,
   requireIsoDate,
   resolveEntity,
@@ -234,7 +234,7 @@ export function syncPlanningNotes(
   notes: NativePlanningNote[],
   cutoffDate: string,
 ): PlanningSyncResult {
-  assertSchemaV5(db);
+  assertSchemaV1(db);
   requireIsoDate(cutoffDate, 'Planning cutoff');
   const eligible = notes.filter((note) => note.noteDate >= cutoffDate);
   const duplicateDates = eligible.filter((note, index) => eligible.findIndex((other) => other.noteDate === note.noteDate) !== index);

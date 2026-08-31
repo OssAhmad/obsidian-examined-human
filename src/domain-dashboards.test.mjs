@@ -5,13 +5,15 @@ import { readFile } from 'node:fs/promises';
 import initSqlJs from 'sql.js';
 import {
   queryExerciseDashboard,
+  queryCommandCatalog,
   queryFinancialDashboard,
+  queryFoodLibrary,
   queryNutritionDashboard,
 } from './examined-human-query.ts';
 
 const require = createRequire(import.meta.url);
 const wasmBinary = await readFile(require.resolve('sql.js/dist/sql-wasm.wasm'));
-const schema = await readFile(new URL('../migrations/000_create_schema_v5.sql', import.meta.url), 'utf8');
+const schema = await readFile(new URL('../migrations/000_create_schema_v1.sql', import.meta.url), 'utf8');
 const SQL = await initSqlJs({ wasmBinary });
 
 function fixture() {
@@ -112,6 +114,34 @@ test('nutrition dashboard preserves legacy adherence while limiting leisure debt
     });
     assert.equal(result.mealTypes.find((meal) => meal.mealType === 'snacks')?.leisureMeals, 0);
     assert.equal(result.topFoods[0].food, 'Rice');
+  } finally {
+    db.close();
+  }
+});
+
+test('Food Library exposes canonical values, aliases, usage, and command choices without mutating data', () => {
+  const db = fixture();
+  try {
+    db.run(`
+      INSERT INTO foods (
+        id, name, category, calories_kcal_per_100g, protein_g_per_100g,
+        carbs_g_per_100g, fat_g_per_100g, salt_g_per_100g, fiber_g_per_100g,
+        cholesterol_mg_per_100g, notes
+      ) VALUES (1, 'Egg', 'protein', 143, 13, 1.1, 9.5, 0.12, NULL, 372, 'Boiled values');
+      INSERT INTO food_aliases (food_id, alias) VALUES (1, 'Eggs'), (1, 'boiled egg');
+      UPDATE daily_meals SET food_id = 1 WHERE food = 'Eggs';
+    `);
+    const foods = queryFoodLibrary(db);
+    assert.equal(foods.length, 1);
+    assert.equal(foods[0].name, 'Egg');
+    assert.deepEqual(foods[0].aliases, ['boiled egg', 'Eggs']);
+    assert.equal(foods[0].timesLogged, 1);
+    assert.equal(foods[0].cholesterolMgPer100g, 372);
+    const catalog = queryCommandCatalog(db);
+    assert.equal(catalog.foods[0].name, 'Egg');
+    assert.equal(catalog.engagements[0].name, 'Health Project');
+    assert.equal(catalog.exercises[0].name, 'Squat');
+    assert.equal(catalog.accounts[0].name, 'Cash');
   } finally {
     db.close();
   }

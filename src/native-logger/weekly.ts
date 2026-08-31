@@ -1,7 +1,7 @@
 import type { Database } from 'sql.js';
 import {
   addIsoDays,
-  assertSchemaV5,
+  assertSchemaV1,
   lastInsertId,
   queryRows,
   requireIsoDate,
@@ -235,7 +235,7 @@ function parseGrid(db: Database, text: string, weekStart: string): WeeklySession
 }
 
 export function parseWeeklyPlan(db: Database, input: NativeWeeklyNoteInput): ParsedWeeklyPlan {
-  assertSchemaV5(db);
+  assertSchemaV1(db);
   const weekStart = parseWeekStart(input.sourceText);
   if (weekStart !== input.weekStartDate) {
     throw new Error(`Weekly note index says ${input.weekStartDate}, but YAML says ${weekStart}.`);
@@ -380,7 +380,7 @@ export function prepareWeeklyDailyNoteWrites(
   todayDate: string,
   notes: DailyNoteWriteInput[],
 ): WeeklyNoteWritePreview {
-  assertSchemaV5(db);
+  assertSchemaV1(db);
   requireIsoDate(todayDate, 'Today');
   const plan = resolveWeeklyPlan(db, selector);
   const finalDate = addIsoDays(plan.weekStart, 6);

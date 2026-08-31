@@ -3,7 +3,7 @@ import type { Database, SqlValue } from 'sql.js';
 import { normalizeVaultDatabasePath } from '../database-path.ts';
 import { hasUncheckpointedWal, UNCHECKPOINTED_WAL_MESSAGE } from '../database-source.ts';
 import { getSqlJs } from '../sql-runtime.ts';
-import createSchemaV5Sql from '../../migrations/000_create_schema_v5.sql';
+import createSchemaV1Sql from '../../migrations/000_create_schema_v1.sql';
 import { arrayBufferFrom, sha256Bytes, sha256Text } from './checksum.ts';
 import {
   type MealImportInput,
@@ -11,6 +11,7 @@ import {
   assertMealImportSchema,
   writeMealInspection,
 } from './meal-import.ts';
+import { inspectMeals, type MealInspection, type NutritionThresholds } from './meals.ts';
 import {
   inspectDailyNote,
   reconcileImportedMilestones,
@@ -44,6 +45,15 @@ import {
   shouldCreateDatabaseBackup,
   type DatabaseMutationDurability,
 } from './mutation-policy.ts';
+import {
+  prepareAdminEventStage,
+  type AdminEventStagePreview,
+} from './admin-event-stage.ts';
+import {
+  previewSchemaV1Upgrade,
+  upgradeV5ToOfficialSchemaV1,
+  type SchemaV1UpgradePreview,
+} from './schema-upgrade.ts';
 
 export interface BackupMutationMetadata {
   backupPath: string | null;
@@ -72,10 +82,20 @@ export interface NativeMealImportResult extends MealImportResult, BackupMutation
   sourceChecksum: string;
 }
 
+export interface NativeMealInspectionRequest {
+  databasePath: string;
+  sourceText: string;
+  nutritionThresholds: NutritionThresholds;
+}
+
 export interface CreatedDatabaseResult {
   databasePath: string;
   byteLength: number;
-  schemaVersion: 5;
+  schemaVersion: 1;
+}
+
+export interface SchemaV1UpgradeResult extends SchemaV1UpgradePreview, BackupMutationMetadata {
+  databasePath: string;
 }
 
 export interface NativeDailyRequest extends Omit<NativeDailyNoteInput, 'sourceChecksum' | 'pluginVersion'> {
@@ -109,6 +129,15 @@ export interface WeeklyDailyNoteWriteRequest {
   selector: string;
   todayDate: string;
   notes: Array<Omit<DailyNoteWriteInput, 'sourceChecksum'>>;
+}
+
+export interface AdminEventStageRequest {
+  noteDate: string;
+  fileName: string;
+  filePath: string;
+  sourceText: string;
+  command?: string;
+  commands?: string[];
 }
 
 function rows(db: Database, sql: string, params: SqlValue[] = []): Record<string, SqlValue>[] {
@@ -166,7 +195,7 @@ export class NativeLoggerWriteService {
       const db = new SQL.Database();
       let bytes: Uint8Array;
       try {
-        db.run(createSchemaV5Sql);
+        db.run(createSchemaV1Sql);
         db.run('PRAGMA foreign_keys = ON');
         assertMealImportSchema(db);
         verifyIntegrity(db);
@@ -184,7 +213,28 @@ export class NativeLoggerWriteService {
           `The new database failed verification and was removed. ${error instanceof Error ? error.message : String(error)}`,
         );
       }
-      return { databasePath, byteLength: bytes.byteLength, schemaVersion: 5 };
+      return { databasePath, byteLength: bytes.byteLength, schemaVersion: 1 };
+    });
+  }
+
+  inspectSchemaV1Upgrade(databasePathSetting: string): Promise<SchemaV1UpgradePreview> {
+    return this.inspectDatabase(databasePathSetting, previewSchemaV1Upgrade);
+  }
+
+  upgradeToOfficialSchemaV1(databasePathSetting: string): Promise<SchemaV1UpgradeResult> {
+    return this.enqueue(async () => {
+      const mutation = await this.mutateDatabase(
+        databasePathSetting,
+        'schema-v1-upgrade',
+        upgradeV5ToOfficialSchemaV1,
+      );
+      return {
+        ...mutation.value,
+        databasePath: mutation.databasePath,
+        backupPath: mutation.backupPath,
+        backupsPruned: mutation.backupsPruned,
+        backupRetentionWarning: mutation.backupRetentionWarning,
+      };
     });
   }
 
@@ -256,6 +306,13 @@ export class NativeLoggerWriteService {
         db.close();
       }
     });
+  }
+
+  inspectMeals(request: NativeMealInspectionRequest): Promise<MealInspection> {
+    return this.inspectDatabase(
+      request.databasePath,
+      (db) => inspectMeals(db, request.sourceText, request.nutritionThresholds),
+    );
   }
 
   async inspectDaily(request: NativeDailyRequest): Promise<NativeDailyInspection> {
@@ -390,6 +447,25 @@ export class NativeLoggerWriteService {
           `Weekly-plan note write failed; modified notes were restored. ${error instanceof Error ? error.message : String(error)}`,
         );
       }
+      return preview;
+    });
+  }
+
+  async previewAdminEventStage(request: AdminEventStageRequest): Promise<AdminEventStagePreview> {
+    return prepareAdminEventStage({
+      ...request,
+      sourceChecksum: await sha256Text(request.sourceText),
+    });
+  }
+
+  stageAdminEvent(preview: AdminEventStagePreview): Promise<AdminEventStagePreview> {
+    return this.enqueue(async () => {
+      const file = this.requireFile(preview.filePath, 'Daily Note');
+      const current = await this.app.vault.read(file);
+      if (await sha256Text(current) !== preview.sourceChecksum) {
+        throw new Error(`${preview.fileName} changed during preview. Refresh and retry; no note was written.`);
+      }
+      await this.app.vault.modify(file, preview.updatedText);
       return preview;
     });
   }

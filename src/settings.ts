@@ -1,6 +1,7 @@
 import { App, Notice, PluginSettingTab, Setting } from 'obsidian';
 import { DEFAULT_SESSION_COLORS, SESSION_TYPES } from './events.ts';
 import { DEFAULT_JOURNAL_FOLDER, normalizeJournalFolder } from './journal-folder.ts';
+import { confirmWeeklyAction } from './WeeklyActionConfirmationModal.ts';
 import type ExaminedHumanPlugin from './main.ts';
 
 export interface ExaminedHumanSettings {
@@ -44,7 +45,7 @@ export class ExaminedHumanSettingTab extends PluginSettingTab {
 
     new Setting(containerEl).setName('Database').setHeading();
     containerEl.createEl('p', {
-      text: 'Dashboard queries remain read-only. Native schema-v5 creation and confirmed component imports use a separate guarded writer with backups and integrity checks.',
+      text: 'Dashboard queries remain read-only. Official Data Schema v1 creation and confirmed imports use a separate guarded writer with backups and integrity checks.',
       cls: 'setting-item-description',
     });
 
@@ -73,15 +74,43 @@ export class ExaminedHumanSettingTab extends PluginSettingTab {
           }
         }))
       .addButton((button) => button
-        .setButtonText('Create v5 database')
+        .setButtonText('Create Schema v1 database')
         .onClick(async () => {
           button.setDisabled(true);
           try {
             const result = await this.plugin.nativeLogger.createDatabase(this.plugin.settings.databasePath);
-            new Notice(`Created an empty Examined Human schema v${result.schemaVersion} database at ${result.databasePath}.`, 9000);
+            new Notice(`Created an empty Examined Human Data Schema v${result.schemaVersion} database at ${result.databasePath}.`, 9000);
             await this.plugin.refreshViews();
           } catch (error) {
             new Notice(`Examined Human database creation failed: ${error instanceof Error ? error.message : String(error)}`, 10000);
+          } finally {
+            button.setDisabled(false);
+          }
+        }));
+
+    new Setting(containerEl)
+      .setName('Upgrade legacy database to Schema v1')
+      .setDesc('One-time 0.9.3 upgrade for the Food Dictionary. It preserves existing meal rows, adds canonical foods and food aliases, resets retired migration metadata to official Data Schema v1, and creates a verified backup.')
+      .addButton((button) => button
+        .setButtonText('Preview upgrade')
+        .onClick(async () => {
+          button.setDisabled(true);
+          try {
+            const preview = await this.plugin.nativeLogger.inspectSchemaV1Upgrade(this.plugin.settings.databasePath);
+            const confirmed = await confirmWeeklyAction(this.app, {
+              title: 'Upgrade to official Data Schema v1',
+              explanation: 'This one-time upgrade adds the Food Dictionary. It keeps existing meal rows unchanged, but replaces the retired schema migration history with one official Schema v1 record.',
+              confirmLabel: 'Upgrade database',
+              dryRunOutput: `Current SQLite schema marker: v${preview.currentSchemaVersion}\nTarget official schema marker: v${preview.targetSchemaVersion}\nRetired migration records to replace: ${preview.migrationEntryCount}\nNew tables: foods, food_aliases\nNew daily_meals links: food_id, amount_g, nutrient snapshots`,
+              warning: 'A backup, transaction, integrity checks, and post-write verification will run before the upgraded database becomes the source of truth.',
+            });
+            if (!confirmed) return;
+            const result = await this.plugin.nativeLogger.upgradeToOfficialSchemaV1(this.plugin.settings.databasePath);
+            new Notice(`Upgraded ${result.databasePath} to official Data Schema v1. ${result.backupPath ? `Backup: ${result.backupPath}` : ''}`, 12_000);
+            await this.plugin.refreshViews();
+            this.display();
+          } catch (error) {
+            new Notice(`Database upgrade was not performed: ${error instanceof Error ? error.message : String(error)}`, 12_000);
           } finally {
             button.setDisabled(false);
           }
@@ -184,6 +213,13 @@ export class ExaminedHumanSettingTab extends PluginSettingTab {
       text: 'Daily validation and import, current/future projections, weekly-plan import, and weekly Daily Note writing run inside Obsidian on desktop and mobile. Python is not required.',
       cls: 'setting-item-description',
     });
+
+    new Setting(containerEl)
+      .setName('Command Center')
+      .setDesc('Audit the Food Library and stage corrections into unimported Daily Notes. Contextual validation fixes use the current unimported note automatically; Command Center changes let you choose a current or future note.')
+      .addButton((button) => button
+        .setButtonText('Open Command Center')
+        .onClick(() => { void this.plugin.activateCommandCenterView(); }));
 
     new Setting(containerEl)
       .setName('Default dashboard period')

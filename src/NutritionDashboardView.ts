@@ -81,7 +81,7 @@ export class NutritionDashboardView extends DashboardViewBase<NutritionDashboard
       metrics,
       'Leisure debt',
       debt.assessedDays > 0 ? `${formatDashboardNumber(debt.debtMeals, 1)} meals` : '—',
-      debt.assessedDays > 0 ? `${debt.balanceDays} fully dieted days to reach 10%` : 'No schema-v5 meal assessments yet',
+      debt.assessedDays > 0 ? `${debt.balanceDays} fully dieted days to reach 10%` : 'No Schema v1 meal assessments yet',
       debt.debtMeals > 0 ? 'negative' : debt.assessedDays > 0 ? 'positive' : undefined,
     );
 
@@ -90,7 +90,7 @@ export class NutritionDashboardView extends DashboardViewBase<NutritionDashboard
         this.contentEl,
         this.plugin,
         DASHBOARD_WARNING_KEYS.nutritionIncompleteMealEvidence,
-        `Leisure debt uses ${debt.assessedDays} schema-v5 assessed meal days; ${result.recordedDays - debt.assessedDays} nutrition days do not contain meal-level leisure evidence. Diet adherence still uses their recorded dieted value.`,
+        `Leisure debt uses ${debt.assessedDays} Schema v1 assessed meal days; ${result.recordedDays - debt.assessedDays} nutrition days do not contain meal-level leisure evidence. Diet adherence still uses their recorded dieted value.`,
         'examined-human-domain-warning',
       );
     }
@@ -126,7 +126,7 @@ export class NutritionDashboardView extends DashboardViewBase<NutritionDashboard
   }
 
   private renderMealMix(container: HTMLElement, result: NutritionDashboardQueryResult): void {
-    const panel = createDashboardPanel(container, 'Meal-type calories', 'Structured schema-v5 food rows; snacks affect daily calories but not leisure count');
+    const panel = createDashboardPanel(container, 'Meal-type calories', 'Structured Schema v1 food rows; snacks affect daily calories but not leisure count');
     renderDashboardBars(panel, result.mealTypes.map((meal) => ({
       label: humanizeDashboardCode(meal.mealType),
       value: meal.calories,
@@ -147,7 +147,7 @@ export class NutritionDashboardView extends DashboardViewBase<NutritionDashboard
 
   private renderRecentDays(container: HTMLElement, result: NutritionDashboardQueryResult): void {
     const records = [...result.daily].reverse().slice(0, 20);
-    const panel = createDashboardPanel(container, 'Recent nutrition days', 'Effective values prefer schema-v5 assessment snapshots', true);
+    const panel = createDashboardPanel(container, 'Recent nutrition days', 'Effective values prefer Schema v1 assessment snapshots', true);
     if (records.length === 0) {
       panel.createDiv({ cls: 'examined-human-domain-empty', text: 'No nutrition days were recorded in this period.' });
       return;

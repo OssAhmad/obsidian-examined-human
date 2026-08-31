@@ -20,7 +20,7 @@ function database() {
   const db = new SQL.Database();
   db.run(`
     PRAGMA foreign_keys = ON;
-    PRAGMA user_version = 5;
+    PRAGMA user_version = 1;
     CREATE TABLE imported_notes (note_date TEXT NOT NULL);
     CREATE TABLE meal_events (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -38,7 +38,14 @@ function database() {
       calories REAL,
       protein_g REAL,
       meal_event_id INTEGER REFERENCES meal_events(id) ON DELETE CASCADE,
-      item_ordinal INTEGER
+      item_ordinal INTEGER,
+      food_id INTEGER,
+      amount_g REAL,
+      carbs_g REAL,
+      fat_g REAL,
+      salt_g REAL,
+      fiber_g REAL,
+      cholesterol_mg REAL
     );
     CREATE TABLE daily_meal_assessments (
       day TEXT PRIMARY KEY,
@@ -65,11 +72,26 @@ function database() {
       updated_at TEXT NOT NULL,
       PRIMARY KEY(note_date, component)
     );
+    CREATE TABLE foods (
+      id INTEGER PRIMARY KEY, name TEXT NOT NULL, category TEXT,
+      calories_kcal_per_100g REAL NOT NULL, protein_g_per_100g REAL NOT NULL,
+      carbs_g_per_100g REAL NOT NULL, fat_g_per_100g REAL NOT NULL,
+      salt_g_per_100g REAL NOT NULL, fiber_g_per_100g REAL,
+      cholesterol_mg_per_100g REAL, notes TEXT
+    );
+    CREATE TABLE food_aliases (id INTEGER PRIMARY KEY, food_id INTEGER NOT NULL, alias TEXT NOT NULL);
+    INSERT INTO foods VALUES
+      (1, 'Eggs', NULL, 300, 28, 0, 0, 0, NULL, NULL, NULL),
+      (2, 'Rice', NULL, 600, 20, 0, 0, 0, NULL, NULL, NULL),
+      (3, 'Chicken', NULL, 500, 47, 0, 0, 0, NULL, NULL, NULL),
+      (4, 'Chocolate', NULL, 500, 0, 0, 0, 0, NULL, NULL, NULL),
+      (5, 'Yogurt', NULL, 200, 28, 0, 0, 0, NULL, NULL, NULL),
+      (6, 'Oats', NULL, 250, 12, 0, 0, 0, NULL, NULL, NULL);
   `);
   return db;
 }
 
-function note(calories = 1900, breakfast = 'Eggs | 300 | 28') {
+function note(calories = 1900, breakfast = 'Eggs | 100') {
   return `
 ##### Daily Metrics
 calories: ${calories}
@@ -85,37 +107,37 @@ ${breakfast}
 ###### Lunch
 is_leisure: 0
 ENTRIES:
-Rice | 600 | 20
+Rice | 100
 
 ###### Dinner
 is_leisure: 0
 ENTRIES:
-Chicken | 500 | 47
+Chicken | 100
 
 ###### Snacks
 is_leisure: 1
 ENTRIES:
-Chocolate | 500 | 0
+Chocolate | 100
 
 ##### Sessions
 `;
 }
 
-function input(date, today, content, checksum = 'abc123') {
+function input(db, date, today, content, checksum = 'abc123') {
   return {
     noteDate: date,
     todayDate: today,
     sourceFilePath: `Oss Ahmad Journal/${date}.md`,
     sourceChecksum: checksum,
     pluginVersion: '0.8.0',
-    inspection: inspectMeals(content, thresholds),
+    inspection: inspectMeals(db, content, thresholds),
   };
 }
 
 test('historical Meals import is finalized, auditable, and immutable', () => {
   const db = database();
   try {
-    const result = writeMealInspection(db, input('2026-08-19', '2026-08-21', note()));
+    const result = writeMealInspection(db, input(db, '2026-08-19', '2026-08-21', note()));
     assert.deepEqual(result, {
       lifecycleState: 'finalized',
       replaced: false,
@@ -129,7 +151,7 @@ test('historical Meals import is finalized, auditable, and immutable', () => {
     assert.equal(db.exec('SELECT evaluated_dieted FROM daily_meal_assessments')[0].values[0][0], 0);
     assert.equal(queryMealComponentState(db, '2026-08-19')?.lifecycleState, 'finalized');
     assert.throws(
-      () => writeMealInspection(db, input('2026-08-19', '2026-08-21', note(1700), 'changed')),
+      () => writeMealInspection(db, input(db, '2026-08-19', '2026-08-21', note(1700), 'changed')),
       /already imported/,
     );
   } finally {
@@ -141,16 +163,16 @@ test('current and future Meals imports replace only linked native rows', () => {
   const db = database();
   try {
     db.run("INSERT INTO daily_meals (day, food) VALUES ('2026-08-21', 'legacy row')");
-    const first = writeMealInspection(db, input('2026-08-21', '2026-08-21', note()));
+    const first = writeMealInspection(db, input(db, '2026-08-21', '2026-08-21', note()));
     assert.equal(first.lifecycleState, 'ephemeral');
     const second = writeMealInspection(
       db,
-      input('2026-08-21', '2026-08-21', note(1700, 'Yogurt | 200 | 28'), 'replacement'),
+      input(db, '2026-08-21', '2026-08-21', note(1700, 'Yogurt | 100'), 'replacement'),
     );
     assert.equal(second.replaced, true);
     const third = writeMealInspection(
       db,
-      input('2026-08-21', '2026-08-21', note(1800, 'Oats | 250 | 12'), 'replacement-again'),
+      input(db, '2026-08-21', '2026-08-21', note(1800, 'Oats | 100'), 'replacement-again'),
     );
     assert.equal(third.replaced, true);
     assert.equal(third.lifecycleState, 'ephemeral');
@@ -165,12 +187,12 @@ test('current and future Meals imports replace only linked native rows', () => {
 test('an ephemeral Meals component can be replaced and finalized after its date becomes historical', () => {
   const db = database();
   try {
-    const first = writeMealInspection(db, input('2026-08-21', '2026-08-21', note()));
+    const first = writeMealInspection(db, input(db, '2026-08-21', '2026-08-21', note()));
     assert.equal(first.lifecycleState, 'ephemeral');
 
     const finalized = writeMealInspection(
       db,
-      input('2026-08-21', '2026-08-22', note(1700, 'Yogurt | 200 | 28'), 'finalized-replacement'),
+      input(db, '2026-08-21', '2026-08-22', note(1700, 'Yogurt | 100'), 'finalized-replacement'),
     );
     assert.equal(finalized.lifecycleState, 'finalized');
     assert.equal(finalized.replaced, true);
@@ -180,7 +202,7 @@ test('an ephemeral Meals component can be replaced and finalized after its date 
       'Yogurt',
     );
     assert.throws(
-      () => writeMealInspection(db, input('2026-08-21', '2026-08-22', note(), 'too-late')),
+      () => writeMealInspection(db, input(db, '2026-08-21', '2026-08-22', note(), 'too-late')),
       /already imported/,
     );
   } finally {
@@ -193,7 +215,7 @@ test('a full canonical Daily Note import blocks component import', () => {
   try {
     db.run("INSERT INTO imported_notes VALUES ('2026-08-20')");
     assert.throws(
-      () => writeMealInspection(db, input('2026-08-20', '2026-08-21', note())),
+      () => writeMealInspection(db, input(db, '2026-08-20', '2026-08-21', note())),
       /already finalized by the full Daily Note importer/,
     );
   } finally {

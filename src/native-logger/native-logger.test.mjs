@@ -15,7 +15,7 @@ import {
 
 const require = createRequire(import.meta.url);
 const wasmBinary = await readFile(require.resolve('sql.js/dist/sql-wasm.wasm'));
-const schema = await readFile(new URL('../../migrations/000_create_schema_v5.sql', import.meta.url), 'utf8');
+const schema = await readFile(new URL('../../migrations/000_create_schema_v1.sql', import.meta.url), 'utf8');
 const SQL = await initSqlJs({ wasmBinary });
 
 function database() {
@@ -31,6 +31,14 @@ function database() {
     SELECT id, 'Alpha spending' FROM engagements WHERE name = 'Project Alpha';
     INSERT INTO accounts (name, type) VALUES ('Cash', 'cash');
     INSERT INTO exercises (name, category) VALUES ('Run', 'endurance');
+    INSERT INTO foods (
+      name, calories_kcal_per_100g, protein_g_per_100g, carbs_g_per_100g,
+      fat_g_per_100g, salt_g_per_100g, fiber_g_per_100g, cholesterol_mg_per_100g
+    ) VALUES
+      ('Eggs', 300, 25, 0, 20, 1, 0, 0),
+      ('Rice', 600, 15, 100, 3, 1, 2, 0),
+      ('Chicken', 550, 60, 0, 20, 1, 0, 90),
+      ('Chocolate', 550, 0, 60, 30, 1, 4, 0);
   `);
   return db;
 }
@@ -64,22 +72,22 @@ ENTRIES:
 ###### Breakfast
 is_leisure: 0
 ENTRIES:
-Eggs | 300 | 25
+Eggs | 100
 
 ###### Lunch
 is_leisure: 0
 ENTRIES:
-Rice | 600 | 15
+Rice | 100
 
 ###### Dinner
 is_leisure: 0
 ENTRIES:
-Chicken | 550 | 60
+Chicken | 100
 
 ###### Snacks
 is_leisure: 0
 ENTRIES:
-Chocolate | 550 | 0
+Chocolate | 100
 
 ##### Transactions
 ENTRIES:
@@ -138,6 +146,83 @@ test('native historical validation and import cover every Daily Note component',
   db.close();
 });
 
+test('focused Admin Events safely maintain aliases, engagements, exercises, and accounts', () => {
+  const db = database();
+  const sourceText = dailyNote()
+    .replace('12.5 | Cash | Alpha spending | lunch', '12.5 | Pocket cash | Project Alpha | lunch')
+    .replace('ACCOUNT_ALIAS | Cash | Wallet', [
+    'ENGAGEMENT_CREATE | Project Beta | course | active |',
+    'ENGAGEMENT_ALIAS_ADD | Project Alpha | Alpha alt',
+    'ENGAGEMENT_ALIAS_MOVE | Alpha spending | Project Beta',
+    'ENGAGEMENT_ALIAS_REMOVE | Project Beta | Alpha spending',
+    'ENGAGEMENT_SET_STATUS | Project Alpha | paused',
+    'ENGAGEMENT_REOPEN | Project Alpha',
+    'ENGAGEMENT_SET_DATES | Project Alpha | 2026-08-01 | 2026-09-01',
+    'ENGAGEMENT_SET_NOTES | Project Alpha | Focused notes',
+    'EXERCISE_ALIAS_ADD | Run | Jog',
+    'EXERCISE_ALIAS_REMOVE | Run | Jog',
+    'EXERCISE_CREATE | Kettlebell swing | strength',
+    'EXERCISE_UPDATE | Kettlebell swing | Kettlebell Swing | power | [KB swing]',
+    'ACCOUNT_CREATE | Euro card | cash | EUR | Visa',
+    'ACCOUNT_SET_CURRENCY | Cash | USD',
+    'ACCOUNT_RENAME | Cash | Pocket cash',
+    'ACCOUNT_ALIAS_ADD | Pocket cash | Wallet',
+    'ACCOUNT_ALIAS_REMOVE | Pocket cash | Wallet',
+    'FOOD_CREATE | Greek yogurt | dairy | 100 | 10 | 4 | 2 | 0.1 |  | 15 | creamy | [yogurt, greek]',
+    'FOOD_UPDATE | Greek yogurt | dairy | 110 | 11 | 5 | 2 | 0.1 | 1 | 16 | updated',
+    'FOOD_ALIAS_REMOVE | Greek yogurt | [greek]',
+    'FOOD_RENAME | Greek yogurt | Yogurt Greek',
+    'FOOD_CREATE | Temporary food | misc | 1 | 1 | 1 | 1 | 1 |  |  |  |',
+    'FOOD_DELETE | Temporary food',
+    ].join('\n'));
+  const input = {
+    noteDate: '2026-08-20',
+    todayDate: '2026-08-21',
+    fileName: '2026-08-20.md',
+    filePath: 'Oss Ahmad Journal/2026/daily/2026-08-20.md',
+    sourceText,
+    sourceChecksum: 'focused-admin-events',
+    pluginVersion: '0.9.2',
+    nutritionThresholds: thresholds,
+  };
+  const inspectionDb = new SQL.Database(db.export());
+  const inspection = inspectDailyNote(inspectionDb, input);
+  assert.equal(inspection.ready, true, inspection.errors.join('\n'));
+  inspectionDb.close();
+  writeHistoricalDailyNote(db, input);
+  const engagement = db.exec(`
+    SELECT e.start_date, e.target_date, e.notes, s.code
+    FROM engagements e JOIN engagement_statuses s ON s.id = e.status_id
+    WHERE e.name = 'Project Alpha'
+  `)[0].values[0];
+  assert.deepEqual(engagement, ['2026-08-01', '2026-09-01', 'Focused notes', 'active']);
+  assert.equal(db.exec("SELECT COUNT(*) FROM engagement_aliases WHERE alias = 'Alpha spending'")[0].values[0][0], 0);
+  assert.equal(db.exec("SELECT COUNT(*) FROM engagement_aliases WHERE alias = 'Alpha alt'")[0].values[0][0], 1);
+  assert.equal(db.exec("SELECT COUNT(*) FROM exercise_aliases WHERE alias = 'Jog'")[0].values[0][0], 0);
+  assert.deepEqual(
+    db.exec("SELECT name, category FROM exercises WHERE name = 'Kettlebell Swing'")[0].values[0],
+    ['Kettlebell Swing', 'power'],
+  );
+  assert.equal(db.exec("SELECT COUNT(*) FROM exercise_aliases WHERE alias = 'KB swing'")[0].values[0][0], 1);
+  assert.deepEqual(
+    db.exec("SELECT name, type, currency, address FROM accounts WHERE name = 'Euro card'")[0].values[0],
+    ['Euro card', 'cash', 'EUR', 'Visa'],
+  );
+  assert.deepEqual(
+    db.exec("SELECT name, currency FROM accounts WHERE id = 1")[0].values[0],
+    ['Pocket cash', 'USD'],
+  );
+  assert.equal(db.exec("SELECT COUNT(*) FROM account_aliases WHERE alias = 'Wallet'")[0].values[0][0], 0);
+  assert.deepEqual(
+    db.exec("SELECT name, calories_kcal_per_100g, fiber_g_per_100g, cholesterol_mg_per_100g FROM foods WHERE name = 'Yogurt Greek'")[0].values[0],
+    ['Yogurt Greek', 110, 1, 16],
+  );
+  assert.equal(db.exec("SELECT COUNT(*) FROM food_aliases WHERE alias = 'yogurt'")[0].values[0][0], 1);
+  assert.equal(db.exec("SELECT COUNT(*) FROM food_aliases WHERE alias = 'greek'")[0].values[0][0], 0);
+  assert.equal(db.exec("SELECT COUNT(*) FROM foods WHERE name = 'Temporary food'")[0].values[0][0], 0);
+  db.close();
+});
+
 test('full historical import adopts an identical earlier Meals component despite a changed whole-note checksum', () => {
   const db = database();
   const sourceText = dailyNote();
@@ -147,7 +232,7 @@ test('full historical import adopts an identical earlier Meals component despite
     sourceFilePath: 'Oss Ahmad Journal/2026/daily/2026-08-20.md',
     sourceChecksum: 'meals-only-checksum',
     pluginVersion: '0.9.0',
-    inspection: inspectMeals(sourceText, thresholds),
+    inspection: inspectMeals(db, sourceText, thresholds),
   });
   const result = writeHistoricalDailyNote(db, {
     noteDate: '2026-08-20',
@@ -176,9 +261,9 @@ test('full historical import replaces and finalizes a changed ephemeral Meals co
     sourceFilePath: 'Oss Ahmad Journal/2026/daily/2026-08-20.md',
     sourceChecksum: 'ephemeral-meals-checksum',
     pluginVersion: '0.9.0',
-    inspection: inspectMeals(dailyNote(), thresholds),
+    inspection: inspectMeals(db, dailyNote(), thresholds),
   });
-  const changed = dailyNote().replace('Eggs | 300 | 25', 'Eggs | 325 | 25');
+  const changed = dailyNote().replace('Eggs | 100', 'Eggs | 110');
   const result = writeHistoricalDailyNote(db, {
     noteDate: '2026-08-20',
     todayDate: '2026-08-21',
@@ -190,7 +275,7 @@ test('full historical import replaces and finalizes a changed ephemeral Meals co
     nutritionThresholds: thresholds,
   });
   assert.equal(result.sessionCount, 2);
-  assert.equal(db.exec("SELECT calories FROM daily_meals WHERE food='Eggs'")[0].values[0][0], 325);
+  assert.equal(db.exec("SELECT calories FROM daily_meals WHERE food='Eggs'")[0].values[0][0], 330);
   const component = queryMealComponentState(db, '2026-08-20');
   assert.equal(component?.lifecycleState, 'finalized');
   assert.equal(component?.sourceChecksum, 'full-note-checksum-with-final-meals');
@@ -205,9 +290,9 @@ test('full historical import still rejects a changed finalized Meals component',
     sourceFilePath: 'Oss Ahmad Journal/2026/daily/2026-08-20.md',
     sourceChecksum: 'meals-only-checksum',
     pluginVersion: '0.9.0',
-    inspection: inspectMeals(dailyNote(), thresholds),
+    inspection: inspectMeals(db, dailyNote(), thresholds),
   });
-  const changed = dailyNote().replace('Eggs | 300 | 25', 'Eggs | 301 | 25');
+  const changed = dailyNote().replace('Eggs | 100', 'Eggs | 101');
   assert.throws(() => writeHistoricalDailyNote(db, {
     noteDate: '2026-08-20',
     todayDate: '2026-08-21',

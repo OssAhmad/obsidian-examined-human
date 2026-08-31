@@ -1,6 +1,7 @@
 import { Plugin } from 'obsidian';
 import { ExaminedHumanDatabase } from './examined-human-database.ts';
 import { DailyAssessmentView, EXAMINED_HUMAN_DAILY_ASSESSMENT_VIEW_TYPE } from './DailyAssessmentView.ts';
+import { CommandCenterView, EXAMINED_HUMAN_COMMAND_CENTER_VIEW_TYPE } from './CommandCenterView.ts';
 import { EngagementDashboardView, EXAMINED_HUMAN_ENGAGEMENT_DASHBOARD_VIEW_TYPE } from './EngagementDashboardView.ts';
 import { ExerciseDashboardView, EXAMINED_HUMAN_EXERCISE_DASHBOARD_VIEW_TYPE } from './ExerciseDashboardView.ts';
 import { FinancialDashboardView, EXAMINED_HUMAN_FINANCIAL_DASHBOARD_VIEW_TYPE } from './FinancialDashboardView.ts';
@@ -13,6 +14,8 @@ import { DEFAULT_SETTINGS, ExaminedHumanSettingTab, type ExaminedHumanSettings }
 import { sanitizeDismissedWarningKeys } from './warning-preferences.ts';
 
 const AUTHORITATIVE_DATABASE_RELOAD_INTERVAL_MS = 10 * 60 * 1000;
+const COMMAND_DASHBOARD_COMMAND_ID = 'open-command-dashboard';
+const COMMAND_DASHBOARD_COMMAND_NAME = 'Open Command Dashboard';
 
 function boundedInteger(value: unknown, fallback: number, minimum: number, maximum: number): number {
   const parsed = Number(value);
@@ -46,6 +49,7 @@ export default class ExaminedHumanPlugin extends Plugin {
     this.registerView(EXAMINED_HUMAN_CALENDAR_VIEW_TYPE, (leaf) => new TimelineView(leaf, this));
     this.registerView(EXAMINED_HUMAN_WEEKLY_ASSESSMENT_VIEW_TYPE, (leaf) => new WeeklyAssessmentView(leaf, this));
     this.registerView(EXAMINED_HUMAN_DAILY_ASSESSMENT_VIEW_TYPE, (leaf) => new DailyAssessmentView(leaf, this));
+    this.registerView(EXAMINED_HUMAN_COMMAND_CENTER_VIEW_TYPE, (leaf) => new CommandCenterView(leaf, this));
     this.registerView(EXAMINED_HUMAN_ENGAGEMENT_DASHBOARD_VIEW_TYPE, (leaf) => new EngagementDashboardView(leaf, this));
     this.registerView(EXAMINED_HUMAN_FINANCIAL_DASHBOARD_VIEW_TYPE, (leaf) => new FinancialDashboardView(leaf, this));
     this.registerView(EXAMINED_HUMAN_NUTRITION_DASHBOARD_VIEW_TYPE, (leaf) => new NutritionDashboardView(leaf, this));
@@ -55,6 +59,11 @@ export default class ExaminedHumanPlugin extends Plugin {
       id: 'open-daily-assessment',
       name: 'Daily Assessment',
       callback: () => { void this.activateDailyAssessmentView(); },
+    });
+    this.addCommand({
+      id: COMMAND_DASHBOARD_COMMAND_ID,
+      name: COMMAND_DASHBOARD_COMMAND_NAME,
+      callback: () => { void this.activateCommandCenterView(); },
     });
     this.addCommand({
       id: 'open-weekly-assessment',
@@ -166,6 +175,16 @@ export default class ExaminedHumanPlugin extends Plugin {
     await workspace.revealLeaf(leaf);
   }
 
+  async activateCommandCenterView(): Promise<void> {
+    const { workspace } = this.app;
+    let leaf = workspace.getLeavesOfType(EXAMINED_HUMAN_COMMAND_CENTER_VIEW_TYPE)[0];
+    if (!leaf) {
+      leaf = workspace.getLeaf('tab');
+      await leaf.setViewState({ type: EXAMINED_HUMAN_COMMAND_CENTER_VIEW_TYPE, active: true });
+    }
+    await workspace.revealLeaf(leaf);
+  }
+
   async activateEngagementDashboardView(): Promise<void> {
     const { workspace } = this.app;
     let leaf = workspace.getLeavesOfType(EXAMINED_HUMAN_ENGAGEMENT_DASHBOARD_VIEW_TYPE)[0];
@@ -226,6 +245,10 @@ export default class ExaminedHumanPlugin extends Plugin {
       .map(async (leaf) => {
         if (leaf.view instanceof DailyAssessmentView) await leaf.view.refresh();
       });
+    const commandCenterRefreshes = this.app.workspace.getLeavesOfType(EXAMINED_HUMAN_COMMAND_CENTER_VIEW_TYPE)
+      .map(async (leaf) => {
+        if (leaf.view instanceof CommandCenterView) await leaf.view.refresh();
+      });
     const engagementRefreshes = this.app.workspace.getLeavesOfType(EXAMINED_HUMAN_ENGAGEMENT_DASHBOARD_VIEW_TYPE)
       .map(async (leaf) => {
         if (leaf.view instanceof EngagementDashboardView) await leaf.view.refresh();
@@ -246,6 +269,7 @@ export default class ExaminedHumanPlugin extends Plugin {
       ...calendarRefreshes,
       ...weeklyRefreshes,
       ...dailyRefreshes,
+      ...commandCenterRefreshes,
       ...engagementRefreshes,
       ...financialRefreshes,
       ...nutritionRefreshes,

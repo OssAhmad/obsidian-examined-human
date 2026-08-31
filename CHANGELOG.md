@@ -2,6 +2,31 @@
 
 ## [Unreleased]
 
+## [0.9.3] - 2026-08-31
+
+### Added
+
+- Added the official Examined Human Data Schema v1 Food Dictionary: canonical foods, compact list-based food aliases, required calories/protein/carbs/fat/salt profiles, and optional fiber/cholesterol profiles
+- Added strict canonical Daily Note meal rows: `food | amount_g`, with an optional `g` suffix and calculated immutable food/nutrition snapshots
+- Added complete Food Admin Events for creation, full updates, rename, delete, and list-based alias add/remove/move actions
+- Added the explicit confirmation-gated one-time legacy database conversion to Schema v1, with a durable backup, transaction, integrity checks, and persisted-byte verification
+- Added the Command Center Food Library with canonical-food search, alias audit, staged create/update/rename/delete/alias actions, usage visibility, and a per-gram nutrition calculator
+- Added Daily Assessment’s grouped unresolved-reference panel for contextual Food, Engagement, Exercise, and Account corrections staged into the active unimported Daily Note
+- Expanded the Command Dashboard with Engagement, Exercise, Account, and Batch tabs; lifecycle, canonical metadata, aliases, and bulk Admin Event lines are all staged through Daily Notes
+- Added `EXERCISE_UPDATE` and `EXERCISE_RENAME` Admin Events for canonical exercise maintenance
+
+### Changed
+
+- Replaced retired database naming and migration history with official Data Schema v1; new databases start at SQLite user version 1 with one Schema v1 migration record
+- Rejected legacy hand-entered `food | calories | protein` note rows instead of accepting unlinked nutrition data
+- Removed the Engagement Dashboard’s direct completion shortcut; engagement lifecycle commands now live in the Command Dashboard
+
+### Fixed
+
+- Guaranteed a line break after every plugin-staged Admin Event so a following `#### END` marker cannot become part of the command line
+
+## [0.9.2] - 2026-08-30
+
 ### Added
 
 - Added a vault-relative Journal folder setting for recursive Daily Note discovery and weekly-plan materialization; the canonical supported filename format remains `YYYY-MM-DD.md`

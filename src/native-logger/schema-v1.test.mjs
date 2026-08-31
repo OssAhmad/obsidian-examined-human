@@ -8,12 +8,12 @@ import { assertMealImportSchema } from './meal-import.ts';
 const require = createRequire(import.meta.url);
 const wasmBinary = await readFile(require.resolve('sql.js/dist/sql-wasm.wasm'));
 const createSchemaSql = await readFile(
-  new URL('../../migrations/000_create_schema_v5.sql', import.meta.url),
+  new URL('../../migrations/000_create_schema_v1.sql', import.meta.url),
   'utf8',
 );
 const SQL = await initSqlJs({ wasmBinary });
 
-test('native database creation SQL builds a complete empty schema v5', () => {
+test('native database creation SQL builds official Data Schema v1', () => {
   const db = new SQL.Database();
   try {
     db.run(createSchemaSql);
@@ -21,8 +21,8 @@ test('native database creation SQL builds a complete empty schema v5', () => {
     assertMealImportSchema(db);
     assert.equal(db.exec('PRAGMA quick_check')[0].values[0][0], 'ok');
     assert.equal(db.exec('PRAGMA foreign_key_check').length, 0);
-    assert.equal(db.exec('PRAGMA user_version')[0].values[0][0], 5);
-    assert.equal(db.exec('SELECT COUNT(*) FROM schema_migrations')[0].values[0][0], 5);
+    assert.equal(db.exec('PRAGMA user_version')[0].values[0][0], 1);
+    assert.equal(db.exec('SELECT COUNT(*) FROM schema_migrations')[0].values[0][0], 1);
     assert.equal(db.exec('SELECT COUNT(*) FROM session_types')[0].values[0][0], 13);
     assert.equal(db.exec('SELECT COUNT(*) FROM sessions')[0].values[0][0], 0);
     const milestoneColumns = db.exec("PRAGMA table_info('engagement_milestones')")[0];
@@ -31,6 +31,11 @@ test('native database creation SQL builds a complete empty schema v5', () => {
     const milestoneForeignKeys = db.exec("PRAGMA foreign_key_list('engagement_milestones')")[0];
     const sessionForeignKey = milestoneForeignKeys.values.find((row) => row[3] === 'session_id');
     assert.equal(sessionForeignKey[6], 'RESTRICT');
+    assert.equal(db.exec('SELECT COUNT(*) FROM foods')[0].values[0][0], 0);
+    assert.equal(db.exec('SELECT COUNT(*) FROM food_aliases')[0].values[0][0], 0);
+    const mealForeignKeys = db.exec("PRAGMA foreign_key_list('daily_meals')")[0];
+    const foodForeignKey = mealForeignKeys.values.find((row) => row[3] === 'food_id');
+    assert.equal(foodForeignKey[6], 'SET NULL');
   } finally {
     db.close();
   }

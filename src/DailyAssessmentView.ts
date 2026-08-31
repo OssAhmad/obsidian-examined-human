@@ -20,9 +20,11 @@ import type {
   NativeDailyInspection,
 } from './native-logger/daily-note.ts';
 import { layoutOverlappingEvents } from './overlap.ts';
-import { inspectMeals, type MealInspection } from './native-logger/meals.ts';
+import type { MealInspection } from './native-logger/meals.ts';
 import { backupMutationOutput } from './native-logger/write-service.ts';
+import { openReferenceRepair } from './CommandForms.ts';
 import { createSessionElement } from './session-element.ts';
+import { unresolvedReferencesFromErrors } from './unresolved-references.ts';
 import { layoutVisualStack } from './visual-stack.ts';
 
 export const EXAMINED_HUMAN_DAILY_ASSESSMENT_VIEW_TYPE = 'examined-human-daily-assessment';
@@ -141,7 +143,11 @@ export class DailyAssessmentView extends ItemView {
             dailyCalorieLimitKcal: this.plugin.settings.dailyCalorieLimitKcal,
             minimumProteinG: this.plugin.settings.minimumProteinG,
           };
-          this.mealInspection = inspectMeals(sourceText, thresholds);
+          this.mealInspection = await this.plugin.nativeLogger.inspectMeals({
+            databasePath: this.plugin.settings.databasePath,
+            sourceText,
+            nutritionThresholds: thresholds,
+          });
           try {
             this.inspection = await this.plugin.nativeLogger.inspectDaily({
               databasePath: this.plugin.settings.databasePath,
@@ -252,6 +258,7 @@ export class DailyAssessmentView extends ItemView {
       badge.addClass(this.inspection.ready ? 'is-ready' : 'is-blocked');
       badge.setText(this.inspection.ready ? 'Ready for confirmation' : 'Needs attention');
       this.renderCompleteness(section, this.inspection);
+      this.renderUnresolvedReferences(section);
       if (this.inspection.warnings.length > 0) {
         this.renderMessageList(section, 'Warnings', this.inspection.warnings, 'is-warning');
       }
@@ -261,6 +268,60 @@ export class DailyAssessmentView extends ItemView {
     }
     this.renderNativeMeals(section, item);
     if (this.loggerOutput) this.renderCopyableOutput(section, 'Logger output', this.loggerOutput);
+  }
+
+  private renderUnresolvedReferences(container: HTMLElement): void {
+    const item = this.selectedItem;
+    if (!item || item.status === 'imported') return;
+    const references = unresolvedReferencesFromErrors([
+      ...(this.inspection?.errors ?? []),
+      ...(this.mealInspection?.errors ?? []),
+    ]);
+    if (references.length === 0) return;
+    const panel = container.createDiv({ cls: 'examined-human-unresolved-references' });
+    const heading = panel.createDiv({ cls: 'examined-human-daily-section-heading' });
+    heading.createEl('h4', { text: 'Unresolved references' });
+    heading.createSpan({
+      cls: 'examined-human-daily-section-meta',
+      text: `${references.length} to review`,
+    });
+    panel.createDiv({
+      cls: 'examined-human-daily-section-subtitle',
+      text: 'Resolve only the names you are ready to decide. A correction is staged in this Daily Note, then validation runs again.',
+    });
+    const list = panel.createDiv({ cls: 'examined-human-unresolved-list' });
+    for (const reference of references) {
+      const row = list.createDiv({ cls: 'examined-human-unresolved-item' });
+      const text = row.createDiv();
+      text.createEl('strong', { text: reference.rawName });
+      text.createDiv({
+        cls: 'examined-human-unresolved-meta',
+        text: `${reference.kind} · ${reference.contexts.join(', ')}`,
+      });
+      const fix = row.createEl('button', { text: 'Resolve…' });
+      fix.addEventListener('click', () => { void this.openReferenceRepair(reference, fix); });
+    }
+  }
+
+  private async openReferenceRepair(
+    reference: ReturnType<typeof unresolvedReferencesFromErrors>[number],
+    button: HTMLButtonElement,
+  ): Promise<void> {
+    try {
+      button.disabled = true;
+      const catalog = await this.plugin.database.commandCatalog(this.plugin.settings.databasePath);
+      openReferenceRepair(this.app, {
+        plugin: this.plugin,
+        reference,
+        catalog,
+        preferredTarget: this.selectedItem?.status === 'imported' ? null : this.selectedItem,
+        onStaged: async () => this.refresh(),
+      });
+    } catch (error) {
+      new Notice(error instanceof Error ? error.message : String(error), 10_000);
+    } finally {
+      button.disabled = false;
+    }
   }
 
   private renderNativeMeals(container: HTMLElement, item: DailyNoteListItem): void {
@@ -666,10 +727,14 @@ export class DailyAssessmentView extends ItemView {
 
     try {
       const sourceText = await this.app.vault.read(noteFile);
-      const inspection = inspectMeals(sourceText, {
-        mealCalorieLimitKcal: this.plugin.settings.mealCalorieLimitKcal,
-        dailyCalorieLimitKcal: this.plugin.settings.dailyCalorieLimitKcal,
-        minimumProteinG: this.plugin.settings.minimumProteinG,
+      const inspection = await this.plugin.nativeLogger.inspectMeals({
+        databasePath: this.plugin.settings.databasePath,
+        sourceText,
+        nutritionThresholds: {
+          mealCalorieLimitKcal: this.plugin.settings.mealCalorieLimitKcal,
+          dailyCalorieLimitKcal: this.plugin.settings.dailyCalorieLimitKcal,
+          minimumProteinG: this.plugin.settings.minimumProteinG,
+        },
       });
       this.mealInspection = inspection;
       if (!inspection.ready) {

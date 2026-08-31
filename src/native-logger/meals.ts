@@ -12,9 +12,16 @@ export interface NutritionThresholds {
 
 export interface ParsedMealItem {
   ordinal: number;
+  foodId: number;
   food: string;
+  amountG: number;
   caloriesKcal: number;
   proteinG: number;
+  carbsG: number;
+  fatG: number;
+  saltG: number;
+  fiberG: number | null;
+  cholesterolMg: number | null;
 }
 
 export interface EvaluatedMeal {
@@ -99,7 +106,14 @@ function parseOptionalFlag(raw: string | null, label: string, errors: string[]):
   return null;
 }
 
-function parseMealItems(segment: string, type: MealType, errors: string[]): ParsedMealItem[] {
+function parseAmountG(raw: string): number | null {
+  const match = /^(\d+(?:\.\d+)?)\s*(?:g)?$/i.exec(raw.trim());
+  if (!match) return null;
+  const value = Number(match[1]);
+  return Number.isFinite(value) && value > 0 ? value : null;
+}
+
+function parseMealItems(db: Database, segment: string, type: MealType, errors: string[]): ParsedMealItem[] {
   const lines = segment.split(/\r?\n/);
   const entriesIndex = lines.findIndex((line) => /^ENTRIES:[ \t]*$/i.test(line.trim()));
   if (entriesIndex < 0) {
@@ -112,36 +126,44 @@ function parseMealItems(segment: string, type: MealType, errors: string[]): Pars
     const line = originalLine.trim().replace(/^[-*]\s+/, '');
     if (!line) continue;
     const fields = line.split('|').map((field) => field.trim());
-    if (fields.length !== 3) {
-      errors.push(`${type} row "${line}" must use food | calories_kcal | protein_g.`);
+    if (fields.length !== 2) {
+      errors.push(`${type} row "${line}" must use food | amount_g.`);
       continue;
     }
-    const [food, caloriesRaw, proteinRaw] = fields;
-    if (!food) {
+    const [foodRaw, amountRaw] = fields;
+    if (!foodRaw) {
       errors.push(`${type} contains a food row with an empty food name.`);
       continue;
     }
-    const calories = Number(caloriesRaw);
-    const protein = Number(proteinRaw);
-    if (!Number.isFinite(calories) || calories < 0) {
-      errors.push(`${type} food "${food}" has invalid calories: ${caloriesRaw || '(blank)'}.`);
+    const amountG = parseAmountG(amountRaw);
+    if (amountG == null) {
+      errors.push(`${type} food "${foodRaw}" has invalid gram amount: ${amountRaw || '(blank)'}.`);
       continue;
     }
-    if (!Number.isFinite(protein) || protein < 0) {
-      errors.push(`${type} food "${food}" has invalid protein: ${proteinRaw || '(blank)'}.`);
+    const food = resolveFood(db, foodRaw);
+    if (!food) {
+      errors.push(`${type} food "${foodRaw}" is not in the Food Library. Add a canonical food or food alias before importing.`);
       continue;
     }
+    const multiplier = amountG / 100;
     items.push({
       ordinal: items.length + 1,
-      food,
-      caloriesKcal: calories,
-      proteinG: protein,
+      foodId: food.id,
+      food: food.name,
+      amountG,
+      caloriesKcal: food.caloriesKcalPer100g * multiplier,
+      proteinG: food.proteinGPer100g * multiplier,
+      carbsG: food.carbsGPer100g * multiplier,
+      fatG: food.fatGPer100g * multiplier,
+      saltG: food.saltGPer100g * multiplier,
+      fiberG: food.fiberGPer100g == null ? null : food.fiberGPer100g * multiplier,
+      cholesterolMg: food.cholesterolMgPer100g == null ? null : food.cholesterolMgPer100g * multiplier,
     });
   }
   return items;
 }
 
-function parseMealSections(body: string, errors: string[], warnings: string[]): ParsedMealSection[] {
+function parseMealSections(db: Database, body: string, errors: string[], warnings: string[]): ParsedMealSection[] {
   const heading = /^######\s+(Breakfast|Lunch|Dinner|Snacks)\s*$/gim;
   const matches = [...body.matchAll(heading)];
   const parsed = new Map<MealType, ParsedMealSection>();
@@ -165,7 +187,7 @@ function parseMealSections(body: string, errors: string[], warnings: string[]): 
       type,
       presentInNote: true,
       recordedIsLeisure: type === 'snacks' ? 0 : parsedFlag ?? 0,
-      items: parseMealItems(segment, type, errors),
+      items: parseMealItems(db, segment, type, errors),
     });
   }
 
@@ -227,7 +249,7 @@ function evaluateDieted(
   return caloriesPass && proteinPass ? 1 : 0;
 }
 
-export function inspectMeals(content: string, thresholds: NutritionThresholds): MealInspection {
+export function inspectMeals(db: Database, content: string, thresholds: NutritionThresholds): MealInspection {
   const errors: string[] = [];
   const warnings: string[] = [];
   for (const [label, value] of Object.entries(thresholds)) {
@@ -241,7 +263,7 @@ export function inspectMeals(content: string, thresholds: NutritionThresholds): 
 
   const parsedSections = mealsBody == null
     ? MEAL_TYPES.map((type) => ({ type, presentInNote: false, recordedIsLeisure: 0 as const, items: [] }))
-    : parseMealSections(mealsBody, errors, warnings);
+    : parseMealSections(db, mealsBody, errors, warnings);
   const dailyMetricsCaloriesKcal = parseOptionalNumber(
     metricValue(dailyMetricsBody, 'calories'),
     'Daily Metrics calories',
@@ -311,3 +333,5 @@ export function inspectMeals(content: string, thresholds: NutritionThresholds): 
     foodRowCount,
   };
 }
+import type { Database } from 'sql.js';
+import { resolveFood } from './database-utils.ts';

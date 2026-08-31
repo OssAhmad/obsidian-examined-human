@@ -1,4 +1,4 @@
--- Empty Examined Human schema v5 for native Obsidian database creation.
+-- Empty official Examined Human Data Schema v1.
 -- This file contains structure and canonical taxonomy seeds only; it contains no user data.
 
 PRAGMA foreign_keys = OFF;
@@ -317,7 +317,36 @@ CREATE TABLE daily_meals (
     calories INTEGER,
     protein_g REAL,
     meal_event_id INTEGER REFERENCES meal_events(id) ON DELETE CASCADE,
-    item_ordinal INTEGER CHECK (item_ordinal IS NULL OR item_ordinal > 0)
+    item_ordinal INTEGER CHECK (item_ordinal IS NULL OR item_ordinal > 0),
+    food_id INTEGER REFERENCES foods(id) ON DELETE SET NULL,
+    amount_g REAL CHECK (amount_g IS NULL OR amount_g > 0),
+    carbs_g REAL CHECK (carbs_g IS NULL OR carbs_g >= 0),
+    fat_g REAL CHECK (fat_g IS NULL OR fat_g >= 0),
+    salt_g REAL CHECK (salt_g IS NULL OR salt_g >= 0),
+    fiber_g REAL CHECK (fiber_g IS NULL OR fiber_g >= 0),
+    cholesterol_mg REAL CHECK (cholesterol_mg IS NULL OR cholesterol_mg >= 0)
+);
+
+CREATE TABLE foods (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL COLLATE NOCASE UNIQUE CHECK (trim(name) <> ''),
+    category TEXT,
+    calories_kcal_per_100g REAL NOT NULL CHECK (calories_kcal_per_100g >= 0),
+    protein_g_per_100g REAL NOT NULL CHECK (protein_g_per_100g >= 0),
+    carbs_g_per_100g REAL NOT NULL CHECK (carbs_g_per_100g >= 0),
+    fat_g_per_100g REAL NOT NULL CHECK (fat_g_per_100g >= 0),
+    salt_g_per_100g REAL NOT NULL CHECK (salt_g_per_100g >= 0),
+    fiber_g_per_100g REAL CHECK (fiber_g_per_100g IS NULL OR fiber_g_per_100g >= 0),
+    cholesterol_mg_per_100g REAL CHECK (cholesterol_mg_per_100g IS NULL OR cholesterol_mg_per_100g >= 0),
+    notes TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE food_aliases (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    food_id INTEGER NOT NULL REFERENCES foods(id) ON DELETE CASCADE,
+    alias TEXT NOT NULL COLLATE NOCASE UNIQUE CHECK (trim(alias) <> '')
 );
 
 CREATE TABLE daily_meal_assessments (
@@ -377,6 +406,8 @@ CREATE INDEX idx_meal_events_day ON meal_events(day);
 CREATE INDEX idx_meal_events_type ON meal_events(meal_type);
 CREATE INDEX idx_daily_meals_day ON daily_meals(day);
 CREATE INDEX idx_daily_meals_meal_event ON daily_meals(meal_event_id, item_ordinal);
+CREATE INDEX idx_daily_meals_food ON daily_meals(food_id, day);
+CREATE INDEX idx_food_aliases_food ON food_aliases(food_id);
 CREATE INDEX idx_note_import_components_state ON note_import_components(lifecycle_state, note_date);
 
 CREATE TRIGGER sessions_require_active_type_insert
@@ -518,12 +549,8 @@ INSERT INTO engagement_statuses (code, label, sort_order) VALUES
 ('paused', 'Paused', 40), ('completed', 'Completed', 50), ('abandoned', 'Abandoned', 60);
 
 INSERT INTO schema_migrations (version, name) VALUES
-(1, 'add note-source tracking and planned sessions'),
-(2, 'link engagement milestones to achievement sessions'),
-(3, 'add canonical session and engagement taxonomies'),
-(4, 'normalize taxonomy references and add meals and weekly planning'),
-(5, 'add meal events, leisure assessment, and component provenance');
+(1, 'official schema v1: canonical food dictionary');
 
-PRAGMA user_version = 5;
+PRAGMA user_version = 1;
 COMMIT;
 PRAGMA foreign_keys = ON;
