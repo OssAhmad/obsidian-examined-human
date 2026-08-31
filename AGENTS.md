@@ -49,3 +49,10 @@ npm run build
 ```
 
 Never commit `EH.db`, SQLite journal files, `data.json`, or another user's private session data.
+
+## Tooling and Wax Vault testing
+
+- Python is not a plugin runtime dependency. If a maintenance or validation task explicitly needs Python, use the verified interpreter: `& 'C:\Users\Azimi\Apps\Anaconda\Ins\python.exe' -X utf8 ...`. Do not use `C:\Users\Azimi\Apps\Anaconda\python.exe`; that path does not exist.
+- After a major plugin-facing change (for example, UI behavior, imports, refresh behavior, dashboard queries, settings, or data flow), build and deploy the current plugin for the user to test in the Wax Vault: `C:\Users\Azimi\ossaFiles\vaults\ossaWaxVault\.obsidian\plugins\examined-human`.
+- A Wax Vault deployment contains only `main.js`, `manifest.json`, and `styles.css`. Preserve fresh settings by never copying `data.json`; never modify `EQH.db`, any SQLite journal/WAL file, or unrelated plugins. Do not commit, tag, or push unless the user explicitly asks.
+- Run verification commands separately when diagnosing a failure. A previous combined `npm run check`/build sequence stalled at the lint startup banner, while direct linting later completed normally; give every command a bounded run, report a stall as unverified rather than successful, and continue with separately bounded `npm run lint`, `npm run typecheck`, `npm test`, and `npm run build` checks. In the restricted Windows sandbox, esbuild access-denied errors are environmental; rerun the identical build in the permitted environment before treating it as a source failure.

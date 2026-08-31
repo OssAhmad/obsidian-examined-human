@@ -1,4 +1,4 @@
-import { App, Notice, Platform, PluginSettingTab, Setting } from 'obsidian';
+import { App, Notice, PluginSettingTab, Setting } from 'obsidian';
 import { DEFAULT_SESSION_COLORS, SESSION_TYPES } from './events.ts';
 import { DEFAULT_JOURNAL_FOLDER, normalizeJournalFolder } from './journal-folder.ts';
 import type ExaminedHumanPlugin from './main.ts';
