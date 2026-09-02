@@ -12271,7 +12271,13 @@ async function discoverEhForms(app, mode, journalFolder, existingCache) {
       reusedFileCount += 1;
       continue;
     }
-    const discovered = formsInText(file, await app.vault.cachedRead(file));
+    let discovered;
+    try {
+      discovered = formsInText(file, await app.vault.cachedRead(file));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      throw new Error(message.startsWith(`${file.path}:`) ? message : `${file.path}: ${message}`);
+    }
     entries3[file.path] = cacheEntry(file, discovered);
     forms.push(...restore(file, entries3[file.path]));
     scannedFileCount += 1;
