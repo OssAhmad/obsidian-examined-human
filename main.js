@@ -2196,7 +2196,7 @@ __export(main_exports, {
   default: () => ExaminedHumanPlugin
 });
 module.exports = __toCommonJS(main_exports);
-var import_obsidian21 = require("obsidian");
+var import_obsidian22 = require("obsidian");
 
 // src/database-path.ts
 function normalizeVaultDatabasePath(value) {
@@ -2297,6 +2297,239 @@ function colorForSession(event, colors) {
   return (_a = colors[sessionType]) != null ? _a : UNKNOWN_TYPE_COLOR;
 }
 
+// src/native-logger/database-utils.ts
+function aliasConfig(table) {
+  const aliases = {
+    engagements: ["engagement_aliases", "engagement_id"],
+    exercises: ["exercise_aliases", "exercise_id"],
+    accounts: ["account_aliases", "account_id"],
+    foods: ["food_aliases", "food_id"]
+  };
+  return aliases[table];
+}
+function queryRows(db, sql, params = []) {
+  const statement = db.prepare(sql);
+  try {
+    statement.bind(params);
+    const result = [];
+    while (statement.step()) result.push(statement.getAsObject());
+    return result;
+  } finally {
+    statement.free();
+  }
+}
+function lastInsertId(db) {
+  var _a;
+  return Number((_a = queryRows(db, "SELECT last_insert_rowid() AS id")[0]) == null ? void 0 : _a.id);
+}
+function requireIsoDate(value, label) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) throw new Error(`${label} must use YYYY-MM-DD.`);
+  const parsed = /* @__PURE__ */ new Date(`${value}T00:00:00Z`);
+  if (Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== value) {
+    throw new Error(`${label} is not a valid calendar date.`);
+  }
+}
+function addIsoDays(value, days) {
+  requireIsoDate(value, "Date");
+  const parsed = /* @__PURE__ */ new Date(`${value}T00:00:00Z`);
+  parsed.setUTCDate(parsed.getUTCDate() + days);
+  return parsed.toISOString().slice(0, 10);
+}
+function assertSchemaV1(db) {
+  var _a, _b;
+  const version = Number((_b = (_a = queryRows(db, "PRAGMA user_version")[0]) == null ? void 0 : _a.user_version) != null ? _b : 0);
+  if (version !== 1) throw new Error(`Native EH import requires official Data Schema v1; this database reports v${version}.`);
+}
+function hasFinanceFoundationSchema(db) {
+  const required = ["budget_plans", "budget_targets", "expected_financial_movements"];
+  return required.every((name) => queryRows(
+    db,
+    "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ? LIMIT 1",
+    [name]
+  ).length === 1);
+}
+function hasRetiredSingleBudgetSchema(db) {
+  const required = ["active_budget_plan", "budget_targets", "expected_financial_movements"];
+  return required.every((name) => queryRows(
+    db,
+    "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ? LIMIT 1",
+    [name]
+  ).length === 1);
+}
+function assertFinanceFoundationSchema(db) {
+  assertSchemaV1(db);
+  if (!hasFinanceFoundationSchema(db)) {
+    throw new Error("Current Finance foundations are missing. Upgrade this official Data Schema v1 database before using budgets or ledger balances.");
+  }
+}
+function hasValuationHistorySchema(db) {
+  const required = ["valuation_rate_sets", "valuation_rates"];
+  return required.every((name) => queryRows(
+    db,
+    "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ? LIMIT 1",
+    [name]
+  ).length === 1);
+}
+function assertValuationHistorySchema(db) {
+  assertFinanceFoundationSchema(db);
+  if (!hasValuationHistorySchema(db)) {
+    throw new Error("Valuation history is missing. Upgrade this official Data Schema v1 database before importing or viewing Valuation Rates.");
+  }
+}
+function resolveTaxonomy(db, table, value) {
+  if (!["session_types", "engagement_types", "engagement_statuses"].includes(table)) {
+    throw new Error(`Unsupported taxonomy table: ${table}`);
+  }
+  const normalized = value.trim().toLowerCase();
+  if (!normalized) return null;
+  const row = queryRows(db, `
+    SELECT id, code FROM ${table}
+    WHERE code = ? COLLATE NOCASE AND is_active = 1
+    LIMIT 1
+  `, [normalized])[0];
+  return row ? { id: Number(row.id), code: String(row.code) } : null;
+}
+function taxonomyCodes(db, table) {
+  if (!["session_types", "engagement_types", "engagement_statuses"].includes(table)) {
+    throw new Error(`Unsupported taxonomy table: ${table}`);
+  }
+  return queryRows(db, `SELECT code FROM ${table} WHERE is_active = 1 ORDER BY sort_order, code`).map((row) => String(row.code));
+}
+function resolveEntity(db, value, table) {
+  const normalized = value.trim();
+  if (!normalized) return null;
+  const [aliasTable, foreignKey] = aliasConfig(table);
+  const result = queryRows(db, `
+    SELECT DISTINCT entity.id, entity.name
+    FROM ${table} AS entity
+    LEFT JOIN ${aliasTable} AS alias ON alias.${foreignKey} = entity.id
+    WHERE entity.name = ? COLLATE NOCASE OR alias.alias = ? COLLATE NOCASE
+  `, [normalized, normalized]);
+  if (result.length > 1) throw new Error(`Ambiguous ${table.slice(0, -1)}: ${normalized}`);
+  return result[0] ? { id: Number(result[0].id), name: String(result[0].name) } : null;
+}
+function resolveFood(db, value) {
+  const normalized = value.trim();
+  if (!normalized) return null;
+  const row = queryRows(db, `
+    SELECT DISTINCT food.id, food.name, food.category,
+      food.calories_kcal_per_100g, food.protein_g_per_100g,
+      food.carbs_g_per_100g, food.fat_g_per_100g, food.salt_g_per_100g,
+      food.fiber_g_per_100g, food.cholesterol_mg_per_100g, food.notes
+    FROM foods AS food
+    LEFT JOIN food_aliases AS alias ON alias.food_id = food.id
+    WHERE food.name = ? COLLATE NOCASE OR alias.alias = ? COLLATE NOCASE
+    LIMIT 2
+  `, [normalized, normalized]);
+  if (row.length !== 1) return null;
+  const food = row[0];
+  return {
+    id: Number(food.id),
+    name: String(food.name),
+    category: food.category == null ? null : String(food.category),
+    caloriesKcalPer100g: Number(food.calories_kcal_per_100g),
+    proteinGPer100g: Number(food.protein_g_per_100g),
+    carbsGPer100g: Number(food.carbs_g_per_100g),
+    fatGPer100g: Number(food.fat_g_per_100g),
+    saltGPer100g: Number(food.salt_g_per_100g),
+    fiberGPer100g: food.fiber_g_per_100g == null ? null : Number(food.fiber_g_per_100g),
+    cholesterolMgPer100g: food.cholesterol_mg_per_100g == null ? null : Number(food.cholesterol_mg_per_100g),
+    notes: food.notes == null ? null : String(food.notes)
+  };
+}
+function ensureAlias(db, table, entity, aliasValue) {
+  const alias = aliasValue.trim();
+  if (!alias) return false;
+  const [aliasTable, foreignKey] = aliasConfig(table);
+  const existing = queryRows(db, `
+    SELECT alias.${foreignKey} AS entity_id, entity.name
+    FROM ${aliasTable} AS alias
+    JOIN ${table} AS entity ON entity.id = alias.${foreignKey}
+    WHERE alias.alias = ? COLLATE NOCASE
+  `, [alias])[0];
+  if (existing) {
+    if (Number(existing.entity_id) === entity.id) return false;
+    throw new Error(`Alias '${alias}' already belongs to '${String(existing.name)}'; cannot assign it to '${entity.name}'.`);
+  }
+  db.run(`INSERT INTO ${aliasTable} (${foreignKey}, alias) VALUES (?, ?)`, [entity.id, alias]);
+  return true;
+}
+function removeAlias(db, table, entity, aliasValue) {
+  const alias = aliasValue.trim();
+  if (!alias) throw new Error("Alias is empty.");
+  const [aliasTable, foreignKey] = aliasConfig(table);
+  const existing = queryRows(db, `
+    SELECT alias.${foreignKey} AS entity_id, entity.name
+    FROM ${aliasTable} AS alias
+    JOIN ${table} AS entity ON entity.id = alias.${foreignKey}
+    WHERE alias.alias = ? COLLATE NOCASE
+    LIMIT 1
+  `, [alias])[0];
+  if (!existing) throw new Error(`Alias '${alias}' does not exist.`);
+  if (Number(existing.entity_id) !== entity.id) {
+    throw new Error(`Alias '${alias}' belongs to '${String(existing.name)}', not '${entity.name}'.`);
+  }
+  db.run(`DELETE FROM ${aliasTable} WHERE ${foreignKey} = ? AND alias = ? COLLATE NOCASE`, [entity.id, alias]);
+}
+function moveAlias(db, table, aliasValue, destination) {
+  const alias = aliasValue.trim();
+  if (!alias) throw new Error("Alias is empty.");
+  const [aliasTable, foreignKey] = aliasConfig(table);
+  const existing = queryRows(db, `
+    SELECT ${foreignKey} AS entity_id FROM ${aliasTable}
+    WHERE alias = ? COLLATE NOCASE
+    LIMIT 1
+  `, [alias])[0];
+  if (!existing) throw new Error(`Alias '${alias}' does not exist and cannot be moved.`);
+  if (Number(existing.entity_id) === destination.id) return false;
+  db.run(`UPDATE ${aliasTable} SET ${foreignKey} = ? WHERE alias = ? COLLATE NOCASE`, [destination.id, alias]);
+  return true;
+}
+function parseAliases(value) {
+  return value.trim().replace(/^\[/, "").replace(/\]$/, "").split(",").map((item) => item.trim()).filter(Boolean);
+}
+
+// src/native-logger/valuation-rates.ts
+function normalizeValuationUnit(value) {
+  return value.trim().replace(/\s+/g, " ").toLocaleUpperCase();
+}
+function parseValuationRateEntries(lines, errors) {
+  const units = /* @__PURE__ */ new Set();
+  return lines.map((line, index) => {
+    var _a;
+    const ordinal = index + 1;
+    const parts = line.split("|").map((part) => part.trim());
+    if (parts.length !== 2) {
+      errors.push(`Invalid Valuation Rate #${ordinal} '${line}'; expected unit | positive value.`);
+    }
+    const unitLabel = (_a = parts[0]) != null ? _a : "";
+    const unitKey = normalizeValuationUnit(unitLabel);
+    if (!unitKey || /[|\r\n]/.test(unitLabel)) errors.push(`Valuation Rate #${ordinal} unit is empty or invalid.`);
+    if (units.has(unitKey)) errors.push(`Valuation Rates duplicate unit '${unitLabel}'. Use only one normalized unit per date.`);
+    units.add(unitKey);
+    const value = Number(parts[1]);
+    if (!Number.isFinite(value) || value <= 0) errors.push(`Valuation Rate #${ordinal} value must be a positive number.`);
+    return { ordinal, unitKey, unitLabel: unitLabel.trim().replace(/\s+/g, " "), value };
+  });
+}
+function writeHistoricalValuationRates(db, source, rates) {
+  if (rates.length === 0) return 0;
+  assertValuationHistorySchema(db);
+  if (queryRows(db, "SELECT 1 FROM valuation_rate_sets WHERE rate_date = ? LIMIT 1", [source.noteDate]).length > 0) {
+    throw new Error(`Valuation Rates for ${source.noteDate} are already finalized and cannot be replaced.`);
+  }
+  db.run(`INSERT INTO valuation_rate_sets (
+    rate_date, source_file_name, source_file_path, source_checksum
+  ) VALUES (?, ?, ?, ?)`, [source.noteDate, source.fileName, source.filePath, source.sourceChecksum]);
+  const rateSetId = lastInsertId(db);
+  for (const rate of rates) {
+    db.run(`INSERT INTO valuation_rates (
+      rate_set_id, source_ordinal, unit_key, unit_label, value
+    ) VALUES (?, ?, ?, ?, ?)`, [rateSetId, rate.ordinal, rate.unitKey, rate.unitLabel, rate.value]);
+  }
+  return rates.length;
+}
+
 // src/examined-human-query.ts
 var REQUIRED_COLUMNS = {
   sessions: ["id", "engagement_id", "date", "start_time", "end_time", "duration_minutes", "session_type_id", "notes"],
@@ -2385,7 +2618,23 @@ var ENGAGEMENT_DASHBOARD_COLUMNS = {
 var FINANCIAL_DASHBOARD_COLUMNS = {
   accounts: ["id", "name", "type", "currency"],
   transactions: ["id", "account_id", "date", "amount", "category", "description"],
-  engagements: ["id", "name"]
+  engagements: ["id", "name"],
+  budget_plans: ["id", "period_start", "period_end", "source_file_name", "source_file_path", "source_checksum"],
+  budget_targets: ["id", "budget_plan_id", "source_ordinal", "currency", "amount", "engagement_id", "engagement_raw"],
+  expected_financial_movements: [
+    "id",
+    "budget_plan_id",
+    "source_ordinal",
+    "due_date",
+    "currency",
+    "amount",
+    "account_id",
+    "engagement_id",
+    "engagement_raw",
+    "description"
+  ],
+  valuation_rate_sets: ["id", "rate_date", "source_file_name", "source_file_path", "source_checksum"],
+  valuation_rates: ["id", "rate_set_id", "source_ordinal", "unit_key", "unit_label", "value"]
 };
 var NUTRITION_DASHBOARD_COLUMNS = {
   daily_metrics: ["date", "calories", "protein_g", "dieted"],
@@ -3220,160 +3469,404 @@ function queryEngagementDashboard(db, requestedEngagementId, startDate, endDate)
     unassignedTransactionCount
   };
 }
-function queryFinancialDashboard(db, startDate, endDate) {
-  var _a, _b, _c;
+function queryFinancialDashboard(db, startDate, endDate, valuationOptions = { label: "EHM", referenceUnit: "USD" }) {
+  var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t;
   validateDashboardSchema(db, "Financial Dashboard", FINANCIAL_DASHBOARD_COLUMNS);
-  const rangeParams = [startDate, startDate, endDate];
   const currencyExpression = `COALESCE(NULLIF(TRIM(account.currency), ''), 'Unspecified')`;
   const linkJoin = `LEFT JOIN engagements AS engagement
       ON CAST(engagement.id AS TEXT) = TRIM(CAST(transaction_row.category AS TEXT))`;
-  const summary = rows(db, `
-    SELECT COUNT(*) AS transaction_count,
-           SUM(CASE WHEN engagement.id IS NOT NULL THEN 1 ELSE 0 END) AS linked_count,
-           SUM(CASE WHEN engagement.id IS NULL THEN 1 ELSE 0 END) AS unresolved_count
+  const ledger = rows(db, `
+    SELECT transaction_row.id, transaction_row.account_id, transaction_row.date,
+           transaction_row.amount, transaction_row.description,
+           account.name AS account_name, account.type AS account_type,
+           ${currencyExpression} AS currency,
+           engagement.id AS engagement_id, engagement.name AS engagement_name
     FROM transactions AS transaction_row
+    JOIN accounts AS account ON account.id = transaction_row.account_id
     ${linkJoin}
-    WHERE (? IS NULL OR transaction_row.date >= ?)
-      AND transaction_row.date <= ?
-  `, rangeParams)[0];
-  const currencies = rows(db, `
-    SELECT ${currencyExpression} AS currency,
-           COUNT(*) AS transaction_count,
-           COALESCE(SUM(CASE WHEN transaction_row.amount > 0 THEN transaction_row.amount ELSE 0 END), 0) AS inflow,
-           COALESCE(SUM(CASE WHEN transaction_row.amount < 0 THEN -transaction_row.amount ELSE 0 END), 0) AS outflow,
-           COALESCE(SUM(transaction_row.amount), 0) AS net
-    FROM transactions AS transaction_row
-    JOIN accounts AS account ON account.id = transaction_row.account_id
-    WHERE (? IS NULL OR transaction_row.date >= ?)
-      AND transaction_row.date <= ?
-    GROUP BY ${currencyExpression}
-    ORDER BY currency COLLATE NOCASE
-  `, rangeParams).map((row) => {
-    var _a2, _b2, _c2, _d;
+    ORDER BY transaction_row.date, transaction_row.id
+  `).map((row) => {
+    var _a2;
+    const description = nullableText(row.description);
+    const marker = (_a2 = description == null ? void 0 : description.trim().toLowerCase()) != null ? _a2 : "";
+    const kind = marker.startsWith("[eh opening balance]") ? "opening_balance" : marker.startsWith("[eh reconciliation]") ? "reconciliation" : "normal";
     return {
-      currency: String(row.currency),
-      transactionCount: Number((_a2 = row.transaction_count) != null ? _a2 : 0),
-      inflow: Number((_b2 = row.inflow) != null ? _b2 : 0),
-      outflow: Number((_c2 = row.outflow) != null ? _c2 : 0),
-      net: Number((_d = row.net) != null ? _d : 0)
-    };
-  });
-  const dailyFlow = rows(db, `
-    SELECT transaction_row.date,
-           ${currencyExpression} AS currency,
-           COUNT(*) AS transaction_count,
-           COALESCE(SUM(CASE WHEN transaction_row.amount > 0 THEN transaction_row.amount ELSE 0 END), 0) AS inflow,
-           COALESCE(SUM(CASE WHEN transaction_row.amount < 0 THEN -transaction_row.amount ELSE 0 END), 0) AS outflow,
-           COALESCE(SUM(transaction_row.amount), 0) AS net
-    FROM transactions AS transaction_row
-    JOIN accounts AS account ON account.id = transaction_row.account_id
-    WHERE (? IS NULL OR transaction_row.date >= ?)
-      AND transaction_row.date <= ?
-    GROUP BY transaction_row.date, ${currencyExpression}
-    ORDER BY transaction_row.date, currency COLLATE NOCASE
-  `, rangeParams).map((row) => {
-    var _a2, _b2, _c2, _d;
-    return {
-      date: String(row.date),
-      currency: String(row.currency),
-      transactionCount: Number((_a2 = row.transaction_count) != null ? _a2 : 0),
-      inflow: Number((_b2 = row.inflow) != null ? _b2 : 0),
-      outflow: Number((_c2 = row.outflow) != null ? _c2 : 0),
-      net: Number((_d = row.net) != null ? _d : 0)
-    };
-  });
-  const engagements = rows(db, `
-    SELECT engagement.id AS engagement_id,
-           engagement.name AS engagement_name,
-           ${currencyExpression} AS currency,
-           COUNT(*) AS transaction_count,
-           COALESCE(SUM(CASE WHEN transaction_row.amount > 0 THEN transaction_row.amount ELSE 0 END), 0) AS inflow,
-           COALESCE(SUM(CASE WHEN transaction_row.amount < 0 THEN -transaction_row.amount ELSE 0 END), 0) AS outflow,
-           COALESCE(SUM(transaction_row.amount), 0) AS net
-    FROM transactions AS transaction_row
-    JOIN accounts AS account ON account.id = transaction_row.account_id
-    JOIN engagements AS engagement
-      ON CAST(engagement.id AS TEXT) = TRIM(CAST(transaction_row.category AS TEXT))
-    WHERE (? IS NULL OR transaction_row.date >= ?)
-      AND transaction_row.date <= ?
-    GROUP BY engagement.id, engagement.name, ${currencyExpression}
-    ORDER BY outflow DESC, engagement.name COLLATE NOCASE
-  `, rangeParams).map((row) => {
-    var _a2, _b2, _c2, _d;
-    return {
-      engagementId: Number(row.engagement_id),
-      engagementName: String(row.engagement_name),
-      currency: String(row.currency),
-      transactionCount: Number((_a2 = row.transaction_count) != null ? _a2 : 0),
-      inflow: Number((_b2 = row.inflow) != null ? _b2 : 0),
-      outflow: Number((_c2 = row.outflow) != null ? _c2 : 0),
-      net: Number((_d = row.net) != null ? _d : 0)
-    };
-  });
-  const accounts = rows(db, `
-    SELECT account.id AS account_id,
-           account.name AS account_name,
-           account.type AS account_type,
-           ${currencyExpression} AS currency,
-           COUNT(*) AS transaction_count,
-           COALESCE(SUM(CASE WHEN transaction_row.amount > 0 THEN transaction_row.amount ELSE 0 END), 0) AS inflow,
-           COALESCE(SUM(CASE WHEN transaction_row.amount < 0 THEN -transaction_row.amount ELSE 0 END), 0) AS outflow,
-           COALESCE(SUM(transaction_row.amount), 0) AS net
-    FROM accounts AS account
-    JOIN transactions AS transaction_row ON transaction_row.account_id = account.id
-    WHERE (? IS NULL OR transaction_row.date >= ?)
-      AND transaction_row.date <= ?
-    GROUP BY account.id, account.name, account.type, ${currencyExpression}
-    ORDER BY currency COLLATE NOCASE, ABS(net) DESC, account.name COLLATE NOCASE
-  `, rangeParams).map((row) => {
-    var _a2, _b2, _c2, _d;
-    return {
+      id: Number(row.id),
       accountId: Number(row.account_id),
+      date: String(row.date),
+      amount: Number(row.amount),
+      currency: normalizeValuationUnit(String(row.currency)),
       accountName: String(row.account_name),
-      accountType: nullableText(row.account_type),
-      currency: String(row.currency),
-      transactionCount: Number((_a2 = row.transaction_count) != null ? _a2 : 0),
-      inflow: Number((_b2 = row.inflow) != null ? _b2 : 0),
-      outflow: Number((_c2 = row.outflow) != null ? _c2 : 0),
-      net: Number((_d = row.net) != null ? _d : 0)
+      engagementName: nullableText(row.engagement_name),
+      engagementId: nullableNumber(row.engagement_id),
+      description,
+      kind,
+      isTransfer: false
     };
   });
-  const recentTransactions = rows(db, `
-    SELECT transaction_row.id,
-           transaction_row.date,
-           transaction_row.amount,
-           transaction_row.description,
-           account.name AS account_name,
-           ${currencyExpression} AS currency,
-           engagement.name AS engagement_name
-    FROM transactions AS transaction_row
-    JOIN accounts AS account ON account.id = transaction_row.account_id
-    ${linkJoin}
-    WHERE (? IS NULL OR transaction_row.date >= ?)
-      AND transaction_row.date <= ?
-    ORDER BY transaction_row.date DESC, transaction_row.id DESC
-    LIMIT 24
-  `, rangeParams).map((row) => ({
-    id: Number(row.id),
-    accountId: Number(row.account_id),
-    date: String(row.date),
-    amount: Number(row.amount),
-    currency: String(row.currency),
-    accountName: String(row.account_name),
-    engagementName: nullableText(row.engagement_name),
-    description: nullableText(row.description)
+  const transferGroups = /* @__PURE__ */ new Map();
+  for (const row of ledger) {
+    if (row.kind !== "normal" || row.amount === 0) continue;
+    const key = `${row.date}\0${row.currency}\0${Math.abs(row.amount)}`;
+    const group = (_a = transferGroups.get(key)) != null ? _a : [];
+    group.push(row);
+    transferGroups.set(key, group);
+  }
+  for (const group of transferGroups.values()) {
+    const negatives = group.filter((row) => row.amount < 0);
+    const positives = group.filter((row) => row.amount > 0);
+    if (negatives.length === 1 && positives.length === 1 && negatives[0].accountId !== positives[0].accountId) {
+      negatives[0].isTransfer = true;
+      positives[0].isTransfer = true;
+      negatives[0].kind = "transfer";
+      positives[0].kind = "transfer";
+    }
+  }
+  const asOfLedger = ledger.filter((row) => row.date <= endDate);
+  const inRange = (row) => (startDate == null || row.date >= startDate) && row.date <= endDate;
+  const rangeLedger = asOfLedger.filter(inRange);
+  const ordinary = (row) => row.kind === "normal" && !row.isTransfer;
+  const flowRows = rangeLedger.filter(ordinary);
+  const aggregateFlow = (records) => {
+    var _a2, _b2;
+    return {
+      currency: (_b2 = (_a2 = records[0]) == null ? void 0 : _a2.currency) != null ? _b2 : "Unspecified",
+      transactionCount: records.length,
+      inflow: records.reduce((sum, row) => sum + (row.amount > 0 ? row.amount : 0), 0),
+      outflow: records.reduce((sum, row) => sum + (row.amount < 0 ? -row.amount : 0), 0),
+      net: records.reduce((sum, row) => sum + row.amount, 0)
+    };
+  };
+  const groupBy = (records, keyFor) => {
+    var _a2;
+    const grouped = /* @__PURE__ */ new Map();
+    for (const record of records) {
+      const key = keyFor(record);
+      const group = (_a2 = grouped.get(key)) != null ? _a2 : [];
+      group.push(record);
+      grouped.set(key, group);
+    }
+    return grouped;
+  };
+  const currencies = [...groupBy(flowRows, (row) => row.currency).values()].map(aggregateFlow).sort((left, right) => left.currency.localeCompare(right.currency));
+  const dailyFlow = [...groupBy(flowRows, (row) => `${row.date}\0${row.currency}`).values()].map((records) => ({ date: records[0].date, ...aggregateFlow(records) })).sort((left, right) => left.date.localeCompare(right.date) || left.currency.localeCompare(right.currency));
+  const engagements = [...groupBy(flowRows.filter((row) => row.engagementId != null), (row) => `${row.engagementId}\0${row.currency}`).values()].map((records) => ({
+    engagementId: records[0].engagementId,
+    engagementName: records[0].engagementName,
+    ...aggregateFlow(records)
+  })).sort((left, right) => right.outflow - left.outflow || left.engagementName.localeCompare(right.engagementName));
+  const rateRows = rows(db, `
+    SELECT rate_set.rate_date, rate.id, rate.unit_key, rate.value
+    FROM valuation_rates AS rate
+    JOIN valuation_rate_sets AS rate_set ON rate_set.id = rate.rate_set_id
+    WHERE rate_set.rate_date <= ?
+    ORDER BY rate_set.rate_date DESC, rate.id DESC
+  `, [endDate]);
+  const latestRates = /* @__PURE__ */ new Map();
+  for (const row of rateRows) {
+    const unitKey = String(row.unit_key);
+    if (!latestRates.has(unitKey)) latestRates.set(unitKey, { value: Number(row.value), date: String(row.rate_date) });
+  }
+  const referenceUnit = normalizeValuationUnit(valuationOptions.referenceUnit) || "USD";
+  const valuationLabel = valuationOptions.label.trim() || "EHM";
+  const rateHistory = /* @__PURE__ */ new Map();
+  for (const row of [...rateRows].reverse()) {
+    const unitKey = normalizeValuationUnit(String(row.unit_key));
+    const history = (_b = rateHistory.get(unitKey)) != null ? _b : [];
+    history.push({ date: String(row.rate_date), value: Number(row.value) });
+    rateHistory.set(unitKey, history);
+  }
+  const valuationRateFor = (unit, date) => {
+    var _a2;
+    const unitKey = normalizeValuationUnit(unit);
+    if (unitKey === referenceUnit) return 1;
+    const history = (_a2 = rateHistory.get(unitKey)) != null ? _a2 : [];
+    let low = 0;
+    let high = history.length - 1;
+    let match = null;
+    while (low <= high) {
+      const middle = Math.floor((low + high) / 2);
+      if (history[middle].date <= date) {
+        match = history[middle].value;
+        low = middle + 1;
+      } else {
+        high = middle - 1;
+      }
+    }
+    return match;
+  };
+  const accountRows = rows(db, `
+    SELECT id, name, type, ${currencyExpression} AS currency
+    FROM accounts AS account
+    ORDER BY currency COLLATE NOCASE, name COLLATE NOCASE
+  `);
+  const accounts = accountRows.map((row) => {
+    var _a2, _b2;
+    const accountId = Number(row.id);
+    const accountLedger = asOfLedger.filter((entry) => entry.accountId === accountId);
+    const accountPeriodFlow = accountLedger.filter(inRange).filter(ordinary);
+    const record = aggregateFlow(accountPeriodFlow);
+    const currency2 = normalizeValuationUnit(String(row.currency));
+    const unitKey = normalizeValuationUnit(currency2);
+    const observedRate = latestRates.get(unitKey);
+    const valuationKind = unitKey === referenceUnit ? "reference" : observedRate ? "observed" : "missing";
+    const valuationRate = valuationKind === "reference" ? 1 : (_a2 = observedRate == null ? void 0 : observedRate.value) != null ? _a2 : null;
+    return {
+      accountId,
+      accountName: String(row.name),
+      accountType: nullableText(row.type),
+      ...record,
+      currency: currency2,
+      balance: accountLedger.reduce((sum, entry) => sum + entry.amount, 0),
+      openingBalance: accountLedger.filter((entry) => entry.kind === "opening_balance").reduce((sum, entry) => sum + entry.amount, 0),
+      reconciliationAdjustment: accountLedger.filter((entry) => entry.kind === "reconciliation").reduce((sum, entry) => sum + entry.amount, 0),
+      transferIn: accountLedger.filter(inRange).filter((entry) => entry.isTransfer && entry.amount > 0).reduce((sum, entry) => sum + entry.amount, 0),
+      transferOut: accountLedger.filter(inRange).filter((entry) => entry.isTransfer && entry.amount < 0).reduce((sum, entry) => sum + -entry.amount, 0),
+      lastActivityDate: accountLedger.length ? accountLedger[accountLedger.length - 1].date : null,
+      valuationRate,
+      valuationRateDate: valuationKind === "reference" ? null : (_b2 = observedRate == null ? void 0 : observedRate.date) != null ? _b2 : null,
+      valuationAmount: valuationRate == null ? null : accountLedger.reduce((sum, entry) => sum + entry.amount, 0) * valuationRate,
+      valuationKind
+    };
+  });
+  const activePlanRow = rows(db, `
+    SELECT id, period_start, period_end, source_file_name, source_file_path, source_checksum
+    FROM budget_plans
+    WHERE period_start <= ? AND period_end >= ?
+    ORDER BY period_start DESC
+    LIMIT 1
+  `, [endDate, endDate])[0];
+  let activeBudget = null;
+  if (activePlanRow) {
+    const periodStart = String(activePlanRow.period_start);
+    const periodEnd = String(activePlanRow.period_end);
+    const budgetLedger = asOfLedger.filter((row) => row.date >= periodStart && row.date <= periodEnd && ordinary(row));
+    const targetRows = rows(db, `
+      SELECT target.id, target.currency, target.amount, target.engagement_id,
+             target.engagement_raw, engagement.name AS engagement_name
+      FROM budget_targets AS target
+      LEFT JOIN engagements AS engagement ON engagement.id = target.engagement_id
+      WHERE target.budget_plan_id = ?
+      ORDER BY target.source_ordinal
+    `, [Number(activePlanRow.id)]);
+    const targets = targetRows.map((row) => {
+      var _a2;
+      const engagementId = nullableNumber(row.engagement_id);
+      const amount = Number(row.amount);
+      const actualAmount = budgetLedger.filter((entry) => entry.currency === normalizeValuationUnit(String(row.currency)) && entry.engagementId === engagementId && Math.sign(entry.amount) === Math.sign(amount)).reduce((sum, entry) => sum + entry.amount, 0);
+      return {
+        id: Number(row.id),
+        currency: normalizeValuationUnit(String(row.currency)),
+        amount,
+        engagementId,
+        engagementName: (_a2 = nullableText(row.engagement_name)) != null ? _a2 : String(row.engagement_raw),
+        actualAmount,
+        variance: actualAmount - amount
+      };
+    });
+    const expectedRows = rows(db, `
+      SELECT movement.id, movement.due_date, movement.currency, movement.amount,
+             movement.account_id, movement.engagement_id, movement.engagement_raw, movement.description,
+             account.name AS account_name, engagement.name AS engagement_name
+      FROM expected_financial_movements AS movement
+      LEFT JOIN accounts AS account ON account.id = movement.account_id
+      LEFT JOIN engagements AS engagement ON engagement.id = movement.engagement_id
+      WHERE movement.budget_plan_id = ?
+      ORDER BY movement.due_date, movement.source_ordinal
+    `, [Number(activePlanRow.id)]);
+    const matchingActuals = /* @__PURE__ */ new Map();
+    for (const row of budgetLedger) {
+      const key = `${row.date}\0${row.currency}\0${row.amount}\0${row.accountId}\0${(_c = row.engagementId) != null ? _c : ""}`;
+      const matches = (_d = matchingActuals.get(key)) != null ? _d : [];
+      matches.push(row);
+      matchingActuals.set(key, matches);
+    }
+    const expectedMovements = expectedRows.map((row) => {
+      var _a2, _b2, _c2;
+      const accountId = nullableNumber(row.account_id);
+      const engagementId = nullableNumber(row.engagement_id);
+      const key = `${String(row.due_date)}\0${normalizeValuationUnit(String(row.currency))}\0${Number(row.amount)}\0${accountId != null ? accountId : ""}\0${engagementId != null ? engagementId : ""}`;
+      const matches = (_a2 = matchingActuals.get(key)) != null ? _a2 : [];
+      const isMatched = matches.length > 0;
+      if (isMatched) matches.shift();
+      return {
+        id: Number(row.id),
+        dueDate: String(row.due_date),
+        currency: normalizeValuationUnit(String(row.currency)),
+        amount: Number(row.amount),
+        accountId,
+        accountName: (_b2 = nullableText(row.account_name)) != null ? _b2 : "Unknown account",
+        engagementId,
+        engagementName: (_c2 = nullableText(row.engagement_name)) != null ? _c2 : String(row.engagement_raw),
+        description: nullableText(row.description),
+        isMatched
+      };
+    });
+    activeBudget = {
+      periodStart,
+      periodEnd,
+      sourceFileName: String(activePlanRow.source_file_name),
+      sourceFilePath: String(activePlanRow.source_file_path),
+      sourceChecksum: String(activePlanRow.source_checksum),
+      targets,
+      expectedMovements
+    };
+  }
+  const missingAccounts = accounts.filter((account) => account.balance !== 0 && account.valuationAmount == null).map((account) => ({
+    accountId: account.accountId,
+    accountName: account.accountName,
+    unit: account.currency,
+    balance: account.balance
   }));
+  const valuedAccounts = accounts.filter((account) => account.valuationAmount != null);
+  const valuation = {
+    label: valuationLabel,
+    referenceUnit,
+    asOfDate: endDate,
+    assetTotal: valuedAccounts.reduce((sum, account) => {
+      var _a2;
+      return sum + Math.max(0, (_a2 = account.valuationAmount) != null ? _a2 : 0);
+    }, 0),
+    liabilityTotal: valuedAccounts.reduce((sum, account) => {
+      var _a2;
+      return sum + Math.min(0, (_a2 = account.valuationAmount) != null ? _a2 : 0);
+    }, 0),
+    netWorth: valuedAccounts.reduce((sum, account) => {
+      var _a2;
+      return sum + ((_a2 = account.valuationAmount) != null ? _a2 : 0);
+    }, 0),
+    valuedAccountCount: valuedAccounts.length,
+    missingAccounts
+  };
+  const selectedAccount = valuationOptions.selectedAccountId == null ? null : (_e = accounts.find((account) => account.accountId === valuationOptions.selectedAccountId)) != null ? _e : null;
+  const explorerLedger = selectedAccount ? asOfLedger.filter((row) => row.accountId === selectedAccount.accountId) : asOfLedger;
+  const explorerRangeLedger = explorerLedger.filter(inRange);
+  const explorerFlowRows = explorerRangeLedger.filter(ordinary);
+  const valuedFlow = (records) => {
+    let inflow = 0;
+    let outflow = 0;
+    let valuedCount = 0;
+    let missingCount = 0;
+    for (const record of records) {
+      const rate = valuationRateFor(record.currency, record.date);
+      if (rate == null && record.amount !== 0) {
+        missingCount += 1;
+        continue;
+      }
+      const amount = record.amount * (rate != null ? rate : 0);
+      valuedCount += 1;
+      if (amount > 0) inflow += amount;
+      else if (amount < 0) outflow += -amount;
+    }
+    return { inflow, outflow, net: inflow - outflow, valuedCount, missingCount };
+  };
+  const valuationFlow = valuedFlow(explorerFlowRows);
+  const nativeFlow = selectedAccount ? aggregateFlow(explorerFlowRows) : null;
+  const explorerEngagements = [...groupBy(
+    explorerFlowRows.filter((row) => row.engagementId != null),
+    (row) => String(row.engagementId)
+  ).values()].map((records) => {
+    var _a2, _b2, _c2, _d2;
+    const native = selectedAccount ? aggregateFlow(records) : null;
+    const valued = valuedFlow(records);
+    return {
+      engagementId: records[0].engagementId,
+      engagementName: records[0].engagementName,
+      transactionCount: records.length,
+      nativeCurrency: (_a2 = selectedAccount == null ? void 0 : selectedAccount.currency) != null ? _a2 : null,
+      nativeInflow: (_b2 = native == null ? void 0 : native.inflow) != null ? _b2 : null,
+      nativeOutflow: (_c2 = native == null ? void 0 : native.outflow) != null ? _c2 : null,
+      nativeNet: (_d2 = native == null ? void 0 : native.net) != null ? _d2 : null,
+      valuationTransactionCount: valued.valuedCount,
+      valuationInflow: valued.inflow,
+      valuationOutflow: valued.outflow,
+      valuationNet: valued.net,
+      missingValuationTransactionCount: valued.missingCount
+    };
+  }).sort((left, right) => {
+    var _a2, _b2, _c2, _d2;
+    const leftActivity = selectedAccount ? ((_a2 = left.nativeInflow) != null ? _a2 : 0) + ((_b2 = left.nativeOutflow) != null ? _b2 : 0) : left.valuationInflow + left.valuationOutflow;
+    const rightActivity = selectedAccount ? ((_c2 = right.nativeInflow) != null ? _c2 : 0) + ((_d2 = right.nativeOutflow) != null ? _d2 : 0) : right.valuationInflow + right.valuationOutflow;
+    return rightActivity - leftActivity || left.engagementName.localeCompare(right.engagementName);
+  });
+  const chartLedger = selectedAccount ? asOfLedger.filter((row) => row.accountId === selectedAccount.accountId) : asOfLedger;
+  const chartStart = (_g = startDate != null ? startDate : (_f = chartLedger[0]) == null ? void 0 : _f.date) != null ? _g : endDate;
+  const balanceHistory = [];
+  if (chartLedger.length > 0) {
+    const balances = /* @__PURE__ */ new Map();
+    const rowsByDate = /* @__PURE__ */ new Map();
+    for (const row of chartLedger) {
+      if (row.date < chartStart) {
+        balances.set(row.accountId, ((_h = balances.get(row.accountId)) != null ? _h : 0) + row.amount);
+      } else {
+        const dated = (_i = rowsByDate.get(row.date)) != null ? _i : [];
+        dated.push(row);
+        rowsByDate.set(row.date, dated);
+      }
+    }
+    const cursor = /* @__PURE__ */ new Date(`${chartStart}T00:00:00Z`);
+    const finalDate = /* @__PURE__ */ new Date(`${endDate}T00:00:00Z`);
+    while (cursor <= finalDate) {
+      const date = cursor.toISOString().slice(0, 10);
+      for (const row of (_j = rowsByDate.get(date)) != null ? _j : []) {
+        balances.set(row.accountId, ((_k = balances.get(row.accountId)) != null ? _k : 0) + row.amount);
+      }
+      if (selectedAccount) {
+        const nativeBalance = (_l = balances.get(selectedAccount.accountId)) != null ? _l : 0;
+        const rate = valuationRateFor(selectedAccount.currency, date);
+        const missing = nativeBalance !== 0 && rate == null;
+        balanceHistory.push({
+          date,
+          nativeBalance,
+          valuationBalance: missing ? null : nativeBalance * (rate != null ? rate : 0),
+          missingAccountCount: missing ? 1 : 0
+        });
+      } else {
+        let valuationBalance = 0;
+        let missingAccountCount = 0;
+        for (const account of accounts) {
+          const nativeBalance = (_m = balances.get(account.accountId)) != null ? _m : 0;
+          if (nativeBalance === 0) continue;
+          const rate = valuationRateFor(account.currency, date);
+          if (rate == null) missingAccountCount += 1;
+          else valuationBalance += nativeBalance * rate;
+        }
+        balanceHistory.push({ date, nativeBalance: null, valuationBalance, missingAccountCount });
+      }
+      cursor.setUTCDate(cursor.getUTCDate() + 1);
+    }
+  }
+  const explorer = {
+    accountId: (_n = selectedAccount == null ? void 0 : selectedAccount.accountId) != null ? _n : null,
+    accountName: (_o = selectedAccount == null ? void 0 : selectedAccount.accountName) != null ? _o : "All accounts",
+    nativeCurrency: (_p = selectedAccount == null ? void 0 : selectedAccount.currency) != null ? _p : null,
+    nativeBalance: (_q = selectedAccount == null ? void 0 : selectedAccount.balance) != null ? _q : null,
+    nativeInflow: (_r = nativeFlow == null ? void 0 : nativeFlow.inflow) != null ? _r : null,
+    nativeOutflow: (_s = nativeFlow == null ? void 0 : nativeFlow.outflow) != null ? _s : null,
+    nativeNet: (_t = nativeFlow == null ? void 0 : nativeFlow.net) != null ? _t : null,
+    valuationBalance: selectedAccount ? selectedAccount.valuationAmount : valuation.netWorth,
+    valuationInflow: valuationFlow.inflow,
+    valuationOutflow: valuationFlow.outflow,
+    valuationNet: valuationFlow.net,
+    missingCurrentValuationAccountCount: selectedAccount ? selectedAccount.balance !== 0 && selectedAccount.valuationAmount == null ? 1 : 0 : valuation.missingAccounts.length,
+    missingFlowValuationTransactionCount: valuationFlow.missingCount,
+    balanceHistory,
+    engagements: explorerEngagements
+  };
   return {
     startDate,
     endDate,
-    transactionCount: Number((_a = summary == null ? void 0 : summary.transaction_count) != null ? _a : 0),
-    linkedTransactionCount: Number((_b = summary == null ? void 0 : summary.linked_count) != null ? _b : 0),
-    unresolvedTransactionCount: Number((_c = summary == null ? void 0 : summary.unresolved_count) != null ? _c : 0),
+    transactionCount: rangeLedger.length,
+    linkedTransactionCount: rangeLedger.filter((row) => row.engagementId != null).length,
+    unresolvedTransactionCount: rangeLedger.filter((row) => row.engagementId == null).length,
     currencies,
     dailyFlow,
     engagements,
     accounts,
-    recentTransactions
+    recentTransactions: [...explorerRangeLedger].sort((left, right) => right.date.localeCompare(left.date) || right.id - left.id).slice(0, 24),
+    activeBudget,
+    valuation,
+    explorer
   };
 }
 function queryNutritionDashboard(db, startDate, endDate) {
@@ -3925,8 +4418,8 @@ var ExaminedHumanDatabase = class {
       (db) => queryEngagementDashboard(db, engagementId, startDate, endDate)
     );
   }
-  async financialDashboard(databasePath, startDate, endDate) {
-    return this.withDatabase(databasePath, (db) => queryFinancialDashboard(db, startDate, endDate));
+  async financialDashboard(databasePath, startDate, endDate, valuationOptions) {
+    return this.withDatabase(databasePath, (db) => queryFinancialDashboard(db, startDate, endDate, valuationOptions));
   }
   async nutritionDashboard(databasePath, startDate, endDate) {
     return this.withDatabase(databasePath, (db) => queryNutritionDashboard(db, startDate, endDate));
@@ -3970,58 +4463,32 @@ var ExaminedHumanDatabase = class {
 };
 
 // src/DailyAssessmentView.ts
-var import_obsidian9 = require("obsidian");
+var import_obsidian8 = require("obsidian");
 
 // src/daily-note-index.ts
-var import_obsidian = require("obsidian");
-
-// src/journal-folder.ts
-var DEFAULT_JOURNAL_FOLDER = "Oss Ahmad Journal";
-function normalizeJournalFolder(value) {
-  const forwardSlashes = value.trim().replace(/\\/g, "/");
-  if (forwardSlashes.startsWith("/") || /^[A-Za-z]:\//.test(forwardSlashes) || /^[A-Za-z][A-Za-z0-9+.-]*:/.test(forwardSlashes)) {
-    throw new Error("Journal folder must be relative to the vault root. Absolute paths are not supported.");
-  }
-  const parts = forwardSlashes.split("/").filter((part) => part && part !== ".");
-  if (parts.some((part) => part === "..")) {
-    throw new Error('Journal folder cannot leave the vault. Remove ".." segments.');
-  }
-  return parts.join("/");
-}
-function pathIsInJournalFolder(filePath, journalFolder) {
-  const folder = normalizeJournalFolder(journalFolder);
-  const normalizedPath = filePath.replace(/\\/g, "/").replace(/^\/+/, "");
-  return folder === "" || normalizedPath.startsWith(`${folder}/`);
-}
-
-// src/daily-note-index.ts
-var EH_FORM_PATTERN = /^####\s+EH\s+Form\s*$/mi;
-function parseDailyFilename(fileName) {
-  if (!fileName.endsWith(".md")) return null;
-  const label = fileName.slice(0, -3);
-  const parsed = (0, import_obsidian.moment)(label, ["YYYY-MM-DD", "MMM D, YYYY", "MMM DD, YYYY"], true);
-  return parsed.isValid() ? parsed.format("YYYY-MM-DD") : null;
-}
-async function buildDailyNoteList(app, index, todayDate, journalFolder = DEFAULT_JOURNAL_FOLDER) {
+async function buildDailyNoteList(_app, index, todayDate, discoveredForms = []) {
   const importedByDate = new Map(index.importedNotes.map((note) => [note.date, note]));
   const sourceByDate = new Map(index.noteSources.map((source) => [source.date, source]));
   const earliestImported = index.importedNotes.length > 0 ? index.importedNotes[index.importedNotes.length - 1].date : null;
-  const unimportedCandidates = app.vault.getMarkdownFiles().filter((file) => pathIsInJournalFolder(file.path, journalFolder)).map((file) => ({ file, date: parseDailyFilename(file.name) })).filter((candidate) => candidate.date != null && !importedByDate.has(candidate.date) && (earliestImported == null || candidate.date >= earliestImported));
-  const inspectedCandidates = await Promise.all(unimportedCandidates.map(async ({ file, date }) => {
+  const unimportedCandidates = discoveredForms.filter((form) => form.kind === "daily" && form.date != null && !importedByDate.has(form.date) && (earliestImported == null || form.date >= earliestImported));
+  const unimported = unimportedCandidates.map((form) => {
     var _a;
-    const content = await app.vault.cachedRead(file);
-    if (!EH_FORM_PATTERN.test(content)) return null;
     return {
-      date,
-      fileName: file.name,
-      filePath: file.path,
-      status: date < todayDate ? "needs-import" : "current-future",
-      temporalState: date < todayDate ? "overdue" : date === todayDate ? "current" : "future",
+      date: form.date,
+      fileName: form.fileName,
+      filePath: form.filePath,
+      status: form.date < todayDate ? "needs-import" : "current-future",
+      temporalState: form.date < todayDate ? "overdue" : form.date === todayDate ? "current" : "future",
       importedAt: null,
-      sourceState: (_a = sourceByDate.get(date)) != null ? _a : null
+      sourceState: (_a = sourceByDate.get(form.date)) != null ? _a : null
     };
-  }));
-  const unimported = inspectedCandidates.filter((item) => item != null);
+  });
+  const byDate = /* @__PURE__ */ new Map();
+  for (const item of unimported) {
+    const existing = byDate.get(item.date);
+    if (existing) throw new Error(`Two EH Daily Forms declare ${item.date}: ${existing.filePath} and ${item.filePath}.`);
+    byDate.set(item.date, item);
+  }
   const imported = index.importedNotes.slice(0, 50).map((note) => {
     var _a;
     return {
@@ -4034,17 +4501,17 @@ async function buildDailyNoteList(app, index, todayDate, journalFolder = DEFAULT
       sourceState: (_a = sourceByDate.get(note.date)) != null ? _a : null
     };
   });
-  return [...unimported, ...imported].sort((left, right) => right.date.localeCompare(left.date));
+  return [...byDate.values(), ...imported].sort((left, right) => right.date.localeCompare(left.date));
 }
 
 // src/DailyImportConfirmationModal.ts
-var import_obsidian2 = require("obsidian");
+var import_obsidian = require("obsidian");
 function confirmDailyImport(app, options) {
   return new Promise((resolve) => {
     new DailyImportConfirmationModal(app, options, resolve).open();
   });
 }
-var DailyImportConfirmationModal = class extends import_obsidian2.Modal {
+var DailyImportConfirmationModal = class extends import_obsidian.Modal {
   constructor(app, options, resolveChoice) {
     super(app);
     this.options = options;
@@ -4127,13 +4594,13 @@ var DailyImportConfirmationModal = class extends import_obsidian2.Modal {
 };
 
 // src/NativeMealImportConfirmationModal.ts
-var import_obsidian3 = require("obsidian");
+var import_obsidian2 = require("obsidian");
 function confirmNativeMealImport(app, options) {
   return new Promise((resolve) => {
     new NativeMealImportConfirmationModal(app, options, resolve).open();
   });
 }
-var NativeMealImportConfirmationModal = class extends import_obsidian3.Modal {
+var NativeMealImportConfirmationModal = class extends import_obsidian2.Modal {
   constructor(app, options, resolveChoice) {
     super(app);
     this.options = options;
@@ -4224,10 +4691,10 @@ function layoutOverlappingEvents(events) {
 }
 
 // src/native-logger/write-service.ts
-var import_obsidian4 = require("obsidian");
+var import_obsidian3 = require("obsidian");
 
 // migrations/000_create_schema_v1.sql
-var create_schema_v1_default = "-- Empty official Examined Human Data Schema v1.\n-- This file contains structure and canonical taxonomy seeds only; it contains no user data.\n\nPRAGMA foreign_keys = OFF;\nBEGIN IMMEDIATE;\n\nCREATE TABLE schema_migrations (\n    version INTEGER PRIMARY KEY,\n    name TEXT NOT NULL,\n    applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP\n);\n\nCREATE TABLE session_types (\n    id INTEGER PRIMARY KEY,\n    code TEXT NOT NULL COLLATE NOCASE UNIQUE,\n    label TEXT NOT NULL,\n    description TEXT,\n    is_active INTEGER NOT NULL DEFAULT 1 CHECK (is_active IN (0, 1)),\n    sort_order INTEGER NOT NULL DEFAULT 0,\n    CHECK (code <> '' AND code = lower(trim(code)))\n);\n\nCREATE TABLE engagement_types (\n    id INTEGER PRIMARY KEY,\n    code TEXT NOT NULL COLLATE NOCASE UNIQUE,\n    label TEXT NOT NULL,\n    description TEXT,\n    is_active INTEGER NOT NULL DEFAULT 1 CHECK (is_active IN (0, 1)),\n    sort_order INTEGER NOT NULL DEFAULT 0,\n    CHECK (code <> '' AND code = lower(trim(code)))\n);\n\nCREATE TABLE engagement_statuses (\n    id INTEGER PRIMARY KEY,\n    code TEXT NOT NULL COLLATE NOCASE UNIQUE,\n    label TEXT NOT NULL,\n    description TEXT,\n    is_active INTEGER NOT NULL DEFAULT 1 CHECK (is_active IN (0, 1)),\n    sort_order INTEGER NOT NULL DEFAULT 0,\n    CHECK (code <> '' AND code = lower(trim(code)))\n);\n\nCREATE TABLE engagements (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    name TEXT NOT NULL,\n    type_id INTEGER NOT NULL REFERENCES engagement_types(id),\n    status_id INTEGER REFERENCES engagement_statuses(id),\n    start_date DATE,\n    target_date DATE,\n    completion_date DATE,\n    notes TEXT\n);\n\nCREATE TABLE sessions (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    engagement_id INTEGER NOT NULL REFERENCES engagements(id),\n    date DATE NOT NULL,\n    start_time TEXT,\n    end_time TEXT,\n    duration_minutes INTEGER,\n    session_type_id INTEGER NOT NULL REFERENCES session_types(id),\n    notes TEXT\n);\n\nCREATE TABLE note_sources (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    note_date TEXT NOT NULL UNIQUE,\n    file_name TEXT NOT NULL,\n    file_path TEXT NOT NULL UNIQUE,\n    content_checksum TEXT NOT NULL,\n    lifecycle_state TEXT NOT NULL,\n    parse_status TEXT NOT NULL,\n    last_error TEXT,\n    first_seen_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,\n    last_scanned_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,\n    last_import_attempt_at TEXT,\n    finalized_at TEXT\n);\n\nCREATE TABLE planned_sessions (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    source_note_id INTEGER NOT NULL REFERENCES note_sources(id) ON DELETE CASCADE,\n    source_ordinal INTEGER NOT NULL,\n    date TEXT NOT NULL,\n    interval_raw TEXT,\n    start_time TEXT NOT NULL,\n    end_time TEXT NOT NULL,\n    duration_minutes INTEGER NOT NULL,\n    time_is_estimated INTEGER NOT NULL DEFAULT 0,\n    session_type_raw TEXT NOT NULL,\n    resolved_session_type_id INTEGER REFERENCES session_types(id) ON DELETE SET NULL,\n    engagement_raw TEXT NOT NULL,\n    resolved_engagement_id INTEGER REFERENCES engagements(id) ON DELETE SET NULL,\n    notes TEXT,\n    warning_text TEXT,\n    UNIQUE (source_note_id, source_ordinal)\n);\n\nCREATE TABLE daily_metrics (\n    date DATE PRIMARY KEY,\n    mood REAL,\n    energy REAL,\n    stress REAL,\n    weight_kg REAL,\n    sleep_hours REAL,\n    calories INTEGER,\n    protein_g INTEGER,\n    fasted INTEGER DEFAULT 0,\n    dieted INTEGER DEFAULT 0,\n    studied INTEGER DEFAULT 0,\n    worked INTEGER DEFAULT 0,\n    exercised INTEGER DEFAULT 0,\n    notes TEXT\n);\n\nCREATE TABLE imported_notes (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    note_date DATE NOT NULL,\n    file_name TEXT NOT NULL,\n    file_path TEXT NOT NULL,\n    imported_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,\n    checksum TEXT,\n    UNIQUE (file_name)\n);\n\nCREATE TABLE accounts (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    name TEXT NOT NULL,\n    type TEXT,\n    address TEXT,\n    currency TEXT DEFAULT NULL\n);\n\nCREATE TABLE account_aliases (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    account_id INTEGER NOT NULL REFERENCES accounts(id),\n    alias TEXT NOT NULL UNIQUE\n);\n\nCREATE TABLE transactions (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    account_id INTEGER NOT NULL REFERENCES accounts(id),\n    date DATE NOT NULL,\n    amount REAL NOT NULL,\n    category TEXT,\n    description TEXT\n);\n\nCREATE TABLE engagement_aliases (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    engagement_id INTEGER NOT NULL REFERENCES engagements(id),\n    alias TEXT NOT NULL UNIQUE\n);\n\nCREATE TABLE engagement_milestones (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    engagement_id INTEGER NOT NULL REFERENCES engagements(id),\n    name TEXT NOT NULL,\n    date DATE,\n    notes TEXT,\n    session_id INTEGER NOT NULL REFERENCES sessions(id) ON DELETE RESTRICT\n);\n\nCREATE TABLE engagement_measurements (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    milestone_id INTEGER NOT NULL REFERENCES engagement_milestones(id),\n    metric_name TEXT NOT NULL,\n    metric_value TEXT NOT NULL,\n    measurement_date DATE,\n    notes TEXT\n);\n\nCREATE TABLE exercises (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    name TEXT NOT NULL,\n    category TEXT\n);\n\nCREATE TABLE exercise_aliases (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    exercise_id INTEGER NOT NULL REFERENCES exercises(id),\n    alias TEXT NOT NULL UNIQUE\n);\n\nCREATE TABLE session_exercises (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    session_id INTEGER NOT NULL REFERENCES sessions(id),\n    exercise_id INTEGER NOT NULL REFERENCES exercises(id),\n    order_index INTEGER\n);\n\nCREATE TABLE exercise_sets (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    session_exercise_id INTEGER NOT NULL REFERENCES session_exercises(id),\n    set_number INTEGER,\n    weight REAL,\n    reps INTEGER,\n    distance REAL,\n    duration_minutes REAL,\n    notes TEXT,\n    pain_level REAL,\n    duration_seconds REAL\n);\n\nCREATE TABLE muscles (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    name TEXT NOT NULL UNIQUE,\n    body_region TEXT,\n    notes TEXT\n);\n\nCREATE TABLE exercise_muscles (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    exercise_id INTEGER NOT NULL REFERENCES exercises(id),\n    muscle_id INTEGER NOT NULL REFERENCES muscles(id),\n    role TEXT\n);\n\nCREATE TABLE people (\n    id INTEGER PRIMARY KEY,\n    name TEXT NOT NULL\n);\n\nCREATE TABLE reports (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    person_id INTEGER NOT NULL REFERENCES people(id),\n    report_timestamp TEXT NOT NULL,\n    report_type TEXT NOT NULL,\n    provider TEXT,\n    title TEXT,\n    relative_path TEXT NOT NULL\n);\n\nCREATE TABLE markers (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    name TEXT NOT NULL UNIQUE,\n    unit TEXT,\n    textbook_normal_range TEXT\n);\n\nCREATE TABLE measurements (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    report_id INTEGER NOT NULL REFERENCES reports(id),\n    marker_id INTEGER NOT NULL REFERENCES markers(id),\n    value REAL NOT NULL,\n    notes TEXT,\n    reference_range_at_time TEXT,\n    flag TEXT\n);\n\nCREATE TABLE stoicism_entries (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    date DATE NOT NULL,\n    score REAL,\n    notes TEXT\n);\n\nCREATE TABLE weekly_plans (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    week_start_date DATE NOT NULL UNIQUE,\n    source_file_name TEXT NOT NULL,\n    source_file_path TEXT NOT NULL UNIQUE,\n    source_checksum TEXT NOT NULL,\n    main_outcome TEXT,\n    important_deadline TEXT,\n    constraint_or_risk TEXT,\n    imported_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP\n);\n\nCREATE TABLE weekly_plan_sessions (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    weekly_plan_id INTEGER NOT NULL REFERENCES weekly_plans(id) ON DELETE CASCADE,\n    date DATE NOT NULL,\n    start_time TEXT NOT NULL,\n    end_time TEXT NOT NULL,\n    duration_minutes INTEGER NOT NULL CHECK (duration_minutes > 0),\n    session_type_id INTEGER REFERENCES session_types(id),\n    engagement_id INTEGER REFERENCES engagements(id),\n    original_cell_text TEXT NOT NULL,\n    notes TEXT,\n    source_row INTEGER NOT NULL,\n    source_column_start INTEGER NOT NULL,\n    source_column_end INTEGER NOT NULL,\n    UNIQUE (weekly_plan_id, date, start_time, end_time)\n);\n\nCREATE TABLE weekly_commitments (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    weekly_plan_id INTEGER NOT NULL REFERENCES weekly_plans(id) ON DELETE CASCADE,\n    source_ordinal INTEGER NOT NULL,\n    target_minutes INTEGER NOT NULL CHECK (target_minutes > 0),\n    engagement_id INTEGER NOT NULL REFERENCES engagements(id),\n    engagement_raw TEXT NOT NULL,\n    commitment_text TEXT NOT NULL,\n    UNIQUE (weekly_plan_id, source_ordinal)\n);\n\nCREATE TABLE meal_events (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    day DATE NOT NULL,\n    meal_type TEXT NOT NULL COLLATE NOCASE,\n    is_leisure INTEGER NOT NULL DEFAULT 0 CHECK (is_leisure IN (0, 1)),\n    classification_source TEXT NOT NULL DEFAULT 'default'\n        CHECK (classification_source IN ('default', 'manual', 'meal_limit', 'manual_and_meal_limit')),\n    calorie_limit_kcal REAL CHECK (calorie_limit_kcal IS NULL OR calorie_limit_kcal > 0),\n    notes TEXT,\n    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,\n    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,\n    CHECK (meal_type IN ('breakfast', 'lunch', 'dinner', 'snacks')),\n    UNIQUE (day, meal_type)\n);\n\nCREATE TABLE daily_meals (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    day DATE NOT NULL,\n    food TEXT NOT NULL CHECK (trim(food) <> ''),\n    calories INTEGER,\n    protein_g REAL,\n    meal_event_id INTEGER REFERENCES meal_events(id) ON DELETE CASCADE,\n    item_ordinal INTEGER CHECK (item_ordinal IS NULL OR item_ordinal > 0),\n    food_id INTEGER REFERENCES foods(id) ON DELETE SET NULL,\n    amount_g REAL CHECK (amount_g IS NULL OR amount_g > 0),\n    carbs_g REAL CHECK (carbs_g IS NULL OR carbs_g >= 0),\n    fat_g REAL CHECK (fat_g IS NULL OR fat_g >= 0),\n    salt_g REAL CHECK (salt_g IS NULL OR salt_g >= 0),\n    fiber_g REAL CHECK (fiber_g IS NULL OR fiber_g >= 0),\n    cholesterol_mg REAL CHECK (cholesterol_mg IS NULL OR cholesterol_mg >= 0)\n);\n\nCREATE TABLE foods (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    name TEXT NOT NULL COLLATE NOCASE UNIQUE CHECK (trim(name) <> ''),\n    category TEXT,\n    calories_kcal_per_100g REAL NOT NULL CHECK (calories_kcal_per_100g >= 0),\n    protein_g_per_100g REAL NOT NULL CHECK (protein_g_per_100g >= 0),\n    carbs_g_per_100g REAL NOT NULL CHECK (carbs_g_per_100g >= 0),\n    fat_g_per_100g REAL NOT NULL CHECK (fat_g_per_100g >= 0),\n    salt_g_per_100g REAL NOT NULL CHECK (salt_g_per_100g >= 0),\n    fiber_g_per_100g REAL CHECK (fiber_g_per_100g IS NULL OR fiber_g_per_100g >= 0),\n    cholesterol_mg_per_100g REAL CHECK (cholesterol_mg_per_100g IS NULL OR cholesterol_mg_per_100g >= 0),\n    notes TEXT,\n    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,\n    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP\n);\n\nCREATE TABLE food_aliases (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    food_id INTEGER NOT NULL REFERENCES foods(id) ON DELETE CASCADE,\n    alias TEXT NOT NULL COLLATE NOCASE UNIQUE CHECK (trim(alias) <> '')\n);\n\nCREATE TABLE daily_meal_assessments (\n    day DATE PRIMARY KEY,\n    daily_calorie_limit_kcal REAL NOT NULL CHECK (daily_calorie_limit_kcal >= 0),\n    minimum_protein_g REAL NOT NULL DEFAULT 0 CHECK (minimum_protein_g >= 0),\n    daily_calories_kcal REAL CHECK (daily_calories_kcal IS NULL OR daily_calories_kcal >= 0),\n    daily_metrics_calories_kcal REAL CHECK (daily_metrics_calories_kcal IS NULL OR daily_metrics_calories_kcal >= 0),\n    meal_items_calories_kcal REAL NOT NULL DEFAULT 0 CHECK (meal_items_calories_kcal >= 0),\n    daily_calorie_source TEXT NOT NULL DEFAULT 'missing'\n        CHECK (daily_calorie_source IN ('daily_metrics', 'meal_items', 'higher_of_both', 'missing')),\n    protein_g REAL CHECK (protein_g IS NULL OR protein_g >= 0),\n    recorded_dieted INTEGER CHECK (recorded_dieted IS NULL OR recorded_dieted IN (0, 1)),\n    evaluated_dieted INTEGER CHECK (evaluated_dieted IS NULL OR evaluated_dieted IN (0, 1)),\n    evaluated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP\n);\n\nCREATE TABLE note_import_components (\n    note_date DATE NOT NULL,\n    component TEXT NOT NULL CHECK (trim(component) <> ''),\n    lifecycle_state TEXT NOT NULL CHECK (lifecycle_state IN ('ephemeral', 'finalized')),\n    source_file_path TEXT NOT NULL CHECK (trim(source_file_path) <> ''),\n    source_checksum TEXT NOT NULL CHECK (trim(source_checksum) <> ''),\n    plugin_version TEXT NOT NULL CHECK (trim(plugin_version) <> ''),\n    row_count INTEGER NOT NULL DEFAULT 0 CHECK (row_count >= 0),\n    imported_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,\n    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,\n    PRIMARY KEY (note_date, component)\n);\n\nCREATE UNIQUE INDEX uq_accounts_name_nocase ON accounts(name COLLATE NOCASE);\nCREATE UNIQUE INDEX uq_account_aliases_alias_nocase ON account_aliases(alias COLLATE NOCASE);\nCREATE UNIQUE INDEX uq_engagements_name_nocase ON engagements(name COLLATE NOCASE);\nCREATE UNIQUE INDEX uq_engagement_aliases_alias_nocase ON engagement_aliases(alias COLLATE NOCASE);\nCREATE UNIQUE INDEX uq_exercise_aliases_alias_nocase ON exercise_aliases(alias COLLATE NOCASE);\nCREATE UNIQUE INDEX uq_muscles_name_nocase ON muscles(name COLLATE NOCASE);\nCREATE INDEX idx_sessions_date ON sessions(date);\nCREATE INDEX idx_sessions_engagement ON sessions(engagement_id);\nCREATE INDEX idx_sessions_type ON sessions(session_type_id);\nCREATE INDEX idx_engagements_type ON engagements(type_id);\nCREATE INDEX idx_engagements_status ON engagements(status_id);\nCREATE INDEX idx_note_sources_date ON note_sources(note_date);\nCREATE INDEX idx_note_sources_state ON note_sources(lifecycle_state);\nCREATE INDEX idx_planned_sessions_date ON planned_sessions(date);\nCREATE INDEX idx_planned_sessions_source ON planned_sessions(source_note_id);\nCREATE INDEX idx_planned_sessions_type ON planned_sessions(resolved_session_type_id);\nCREATE INDEX idx_transactions_date ON transactions(date);\nCREATE INDEX idx_engagement_milestones_session ON engagement_milestones(session_id);\nCREATE INDEX idx_exercise_sets_session ON exercise_sets(session_exercise_id);\nCREATE INDEX idx_weekly_plan_sessions_plan ON weekly_plan_sessions(weekly_plan_id);\nCREATE INDEX idx_weekly_plan_sessions_date ON weekly_plan_sessions(date);\nCREATE INDEX idx_weekly_plan_sessions_type ON weekly_plan_sessions(session_type_id);\nCREATE INDEX idx_weekly_plan_sessions_engagement ON weekly_plan_sessions(engagement_id);\nCREATE INDEX idx_weekly_commitments_plan ON weekly_commitments(weekly_plan_id);\nCREATE INDEX idx_weekly_commitments_engagement ON weekly_commitments(engagement_id);\nCREATE INDEX idx_meal_events_day ON meal_events(day);\nCREATE INDEX idx_meal_events_type ON meal_events(meal_type);\nCREATE INDEX idx_daily_meals_day ON daily_meals(day);\nCREATE INDEX idx_daily_meals_meal_event ON daily_meals(meal_event_id, item_ordinal);\nCREATE INDEX idx_daily_meals_food ON daily_meals(food_id, day);\nCREATE INDEX idx_food_aliases_food ON food_aliases(food_id);\nCREATE INDEX idx_note_import_components_state ON note_import_components(lifecycle_state, note_date);\n\nCREATE TRIGGER sessions_require_active_type_insert\nBEFORE INSERT ON sessions\nWHEN NOT EXISTS (SELECT 1 FROM session_types WHERE id = NEW.session_type_id AND is_active = 1)\nBEGIN SELECT RAISE(ABORT, 'unknown or inactive session type'); END;\n\nCREATE TRIGGER sessions_require_active_type_update\nBEFORE UPDATE OF session_type_id ON sessions\nWHEN NOT EXISTS (SELECT 1 FROM session_types WHERE id = NEW.session_type_id AND is_active = 1)\nBEGIN SELECT RAISE(ABORT, 'unknown or inactive session type'); END;\n\nCREATE TRIGGER engagements_require_active_type_insert\nBEFORE INSERT ON engagements\nWHEN NOT EXISTS (SELECT 1 FROM engagement_types WHERE id = NEW.type_id AND is_active = 1)\nBEGIN SELECT RAISE(ABORT, 'unknown or inactive engagement type'); END;\n\nCREATE TRIGGER engagements_require_active_type_update\nBEFORE UPDATE OF type_id ON engagements\nWHEN NOT EXISTS (SELECT 1 FROM engagement_types WHERE id = NEW.type_id AND is_active = 1)\nBEGIN SELECT RAISE(ABORT, 'unknown or inactive engagement type'); END;\n\nCREATE TRIGGER engagements_require_active_status_insert\nBEFORE INSERT ON engagements\nWHEN NEW.status_id IS NOT NULL\n AND NOT EXISTS (SELECT 1 FROM engagement_statuses WHERE id = NEW.status_id AND is_active = 1)\nBEGIN SELECT RAISE(ABORT, 'unknown or inactive engagement status'); END;\n\nCREATE TRIGGER engagements_require_active_status_update\nBEFORE UPDATE OF status_id ON engagements\nWHEN NEW.status_id IS NOT NULL\n AND NOT EXISTS (SELECT 1 FROM engagement_statuses WHERE id = NEW.status_id AND is_active = 1)\nBEGIN SELECT RAISE(ABORT, 'unknown or inactive engagement status'); END;\n\nCREATE TRIGGER daily_meals_meal_event_day_insert\nBEFORE INSERT ON daily_meals\nWHEN NEW.meal_event_id IS NOT NULL\n AND NOT EXISTS (SELECT 1 FROM meal_events WHERE id = NEW.meal_event_id AND day = NEW.day)\nBEGIN SELECT RAISE(ABORT, 'daily_meals.day must match its meal event day'); END;\n\nCREATE TRIGGER daily_meals_meal_event_day_update\nBEFORE UPDATE OF meal_event_id, day ON daily_meals\nWHEN NEW.meal_event_id IS NOT NULL\n AND NOT EXISTS (SELECT 1 FROM meal_events WHERE id = NEW.meal_event_id AND day = NEW.day)\nBEGIN SELECT RAISE(ABORT, 'daily_meals.day must match its meal event day'); END;\n\nCREATE TRIGGER trg_exercises_name_nocase_insert\nBEFORE INSERT ON exercises\nWHEN EXISTS (SELECT 1 FROM exercises WHERE name = NEW.name COLLATE NOCASE)\nBEGIN SELECT RAISE(ABORT, 'exercise name already exists (case-insensitive)'); END;\n\nCREATE TRIGGER trg_exercises_name_nocase_update\nBEFORE UPDATE OF name ON exercises\nWHEN EXISTS (SELECT 1 FROM exercises WHERE id <> OLD.id AND name = NEW.name COLLATE NOCASE)\nBEGIN SELECT RAISE(ABORT, 'exercise name already exists (case-insensitive)'); END;\n\nCREATE VIEW meal_event_totals AS\nSELECT\n    me.id AS meal_event_id,\n    me.day,\n    me.meal_type,\n    me.is_leisure AS recorded_is_leisure,\n    me.classification_source,\n    me.calorie_limit_kcal,\n    COUNT(dm.id) AS item_count,\n    COALESCE(SUM(dm.calories), 0) AS total_calories_kcal,\n    COALESCE(SUM(dm.protein_g), 0.0) AS total_protein_g,\n    SUM(CASE WHEN dm.id IS NOT NULL AND dm.calories IS NULL THEN 1 ELSE 0 END) AS items_missing_calories,\n    CASE\n        WHEN me.meal_type = 'snacks' THEN 0\n        WHEN me.is_leisure = 1 THEN 1\n        WHEN me.calorie_limit_kcal IS NOT NULL\n         AND COALESCE(SUM(dm.calories), 0) > me.calorie_limit_kcal THEN 1\n        ELSE 0\n    END AS evaluated_is_leisure\nFROM meal_events AS me\nLEFT JOIN daily_meals AS dm ON dm.meal_event_id = me.id\nGROUP BY me.id, me.day, me.meal_type, me.is_leisure, me.classification_source, me.calorie_limit_kcal;\n\nCREATE VIEW daily_leisure_meal_summary AS\nWITH evaluated_days AS (\n    SELECT\n        dma.day,\n        dma.daily_calorie_limit_kcal,\n        dma.daily_calories_kcal,\n        COALESCE(SUM(CASE\n            WHEN met.meal_type IN ('breakfast', 'lunch', 'dinner') THEN met.evaluated_is_leisure\n            ELSE 0\n        END), 0) AS direct_leisure_meals\n    FROM daily_meal_assessments AS dma\n    LEFT JOIN meal_event_totals AS met ON met.day = dma.day\n    GROUP BY dma.day, dma.daily_calorie_limit_kcal, dma.daily_calories_kcal\n)\nSELECT\n    day,\n    3 AS counted_meals,\n    direct_leisure_meals,\n    daily_calories_kcal,\n    daily_calorie_limit_kcal,\n    CASE\n        WHEN daily_calories_kcal IS NOT NULL\n         AND daily_calories_kcal > daily_calorie_limit_kcal\n         AND daily_calorie_limit_kcal > 0 THEN 1\n        ELSE 0\n    END AS daily_limit_exceeded,\n    CASE\n        WHEN daily_calories_kcal IS NOT NULL\n         AND daily_calories_kcal > daily_calorie_limit_kcal\n         AND daily_calorie_limit_kcal > 0\n         AND direct_leisure_meals < 2 THEN 2\n        ELSE direct_leisure_meals\n    END AS leisure_meals\nFROM evaluated_days;\n\nINSERT INTO session_types (code, label, description, sort_order) VALUES\n('authorship', 'Authorship', 'Creating an authored work', 10),\n('chore', 'Chore', 'Routine personal or household work', 20),\n('exercise', 'Exercise', 'Physical training', 30),\n('leisure', 'Leisure', 'Recreation and unstructured leisure', 40),\n('maintenance', 'Maintenance', 'Maintaining systems, spaces, or obligations', 50),\n('meditation', 'Meditation', 'Meditation or contemplative practice', 60),\n('reading', 'Reading', 'Reading not classified as study or research', 70),\n('research', 'Research', 'Exploratory search and evidence gathering', 80),\n('social', 'Social', 'Social and relationship time', 90),\n('study', 'Study', 'Structured learning toward mastery', 100),\n('thinking', 'Thinking', 'Deliberate reflection or problem framing', 110),\n('work', 'Work', 'Professional execution', 120),\n('writing', 'Writing', 'Writing not classified as authorship', 130);\n\nINSERT INTO engagement_types (code, label, sort_order) VALUES\n('article', 'Article', 10), ('authorship', 'Authorship', 20), ('book', 'Book', 30),\n('career', 'Career', 40), ('certification', 'Certification', 50), ('course', 'Course', 60),\n('exam', 'Exam', 70), ('fitness', 'Fitness', 80), ('leisure', 'Leisure', 90),\n('maintenance', 'Maintenance', 100), ('practice', 'Practice', 110),\n('relationship', 'Relationship', 120), ('speech', 'Speech', 130), ('startup', 'Startup', 140);\n\nINSERT INTO engagement_statuses (code, label, sort_order) VALUES\n('planned', 'Planned', 10), ('pending', 'Pending', 20), ('active', 'Active', 30),\n('paused', 'Paused', 40), ('completed', 'Completed', 50), ('abandoned', 'Abandoned', 60);\n\nINSERT INTO schema_migrations (version, name) VALUES\n(1, 'official schema v1: canonical food dictionary');\n\nPRAGMA user_version = 1;\nCOMMIT;\nPRAGMA foreign_keys = ON;\n";
+var create_schema_v1_default = "-- Empty official Examined Human Data Schema v1.\n-- This file contains structure and canonical taxonomy seeds only; it contains no user data.\n\nPRAGMA foreign_keys = OFF;\nBEGIN IMMEDIATE;\n\nCREATE TABLE schema_migrations (\n    version INTEGER PRIMARY KEY,\n    name TEXT NOT NULL,\n    applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP\n);\n\nCREATE TABLE session_types (\n    id INTEGER PRIMARY KEY,\n    code TEXT NOT NULL COLLATE NOCASE UNIQUE,\n    label TEXT NOT NULL,\n    description TEXT,\n    is_active INTEGER NOT NULL DEFAULT 1 CHECK (is_active IN (0, 1)),\n    sort_order INTEGER NOT NULL DEFAULT 0,\n    CHECK (code <> '' AND code = lower(trim(code)))\n);\n\nCREATE TABLE engagement_types (\n    id INTEGER PRIMARY KEY,\n    code TEXT NOT NULL COLLATE NOCASE UNIQUE,\n    label TEXT NOT NULL,\n    description TEXT,\n    is_active INTEGER NOT NULL DEFAULT 1 CHECK (is_active IN (0, 1)),\n    sort_order INTEGER NOT NULL DEFAULT 0,\n    CHECK (code <> '' AND code = lower(trim(code)))\n);\n\nCREATE TABLE engagement_statuses (\n    id INTEGER PRIMARY KEY,\n    code TEXT NOT NULL COLLATE NOCASE UNIQUE,\n    label TEXT NOT NULL,\n    description TEXT,\n    is_active INTEGER NOT NULL DEFAULT 1 CHECK (is_active IN (0, 1)),\n    sort_order INTEGER NOT NULL DEFAULT 0,\n    CHECK (code <> '' AND code = lower(trim(code)))\n);\n\nCREATE TABLE engagements (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    name TEXT NOT NULL,\n    type_id INTEGER NOT NULL REFERENCES engagement_types(id),\n    status_id INTEGER REFERENCES engagement_statuses(id),\n    start_date DATE,\n    target_date DATE,\n    completion_date DATE,\n    notes TEXT\n);\n\nCREATE TABLE sessions (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    engagement_id INTEGER NOT NULL REFERENCES engagements(id),\n    date DATE NOT NULL,\n    start_time TEXT,\n    end_time TEXT,\n    duration_minutes INTEGER,\n    session_type_id INTEGER NOT NULL REFERENCES session_types(id),\n    notes TEXT\n);\n\nCREATE TABLE note_sources (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    note_date TEXT NOT NULL UNIQUE,\n    file_name TEXT NOT NULL,\n    file_path TEXT NOT NULL UNIQUE,\n    content_checksum TEXT NOT NULL,\n    lifecycle_state TEXT NOT NULL,\n    parse_status TEXT NOT NULL,\n    last_error TEXT,\n    first_seen_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,\n    last_scanned_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,\n    last_import_attempt_at TEXT,\n    finalized_at TEXT\n);\n\nCREATE TABLE planned_sessions (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    source_note_id INTEGER NOT NULL REFERENCES note_sources(id) ON DELETE CASCADE,\n    source_ordinal INTEGER NOT NULL,\n    date TEXT NOT NULL,\n    interval_raw TEXT,\n    start_time TEXT NOT NULL,\n    end_time TEXT NOT NULL,\n    duration_minutes INTEGER NOT NULL,\n    time_is_estimated INTEGER NOT NULL DEFAULT 0,\n    session_type_raw TEXT NOT NULL,\n    resolved_session_type_id INTEGER REFERENCES session_types(id) ON DELETE SET NULL,\n    engagement_raw TEXT NOT NULL,\n    resolved_engagement_id INTEGER REFERENCES engagements(id) ON DELETE SET NULL,\n    notes TEXT,\n    warning_text TEXT,\n    UNIQUE (source_note_id, source_ordinal)\n);\n\nCREATE TABLE daily_metrics (\n    date DATE PRIMARY KEY,\n    mood REAL,\n    energy REAL,\n    stress REAL,\n    weight_kg REAL,\n    sleep_hours REAL,\n    calories INTEGER,\n    protein_g INTEGER,\n    fasted INTEGER DEFAULT 0,\n    dieted INTEGER DEFAULT 0,\n    studied INTEGER DEFAULT 0,\n    worked INTEGER DEFAULT 0,\n    exercised INTEGER DEFAULT 0,\n    notes TEXT\n);\n\nCREATE TABLE imported_notes (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    note_date DATE NOT NULL,\n    file_name TEXT NOT NULL,\n    file_path TEXT NOT NULL,\n    imported_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,\n    checksum TEXT,\n    UNIQUE (file_name)\n);\n\nCREATE TABLE accounts (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    name TEXT NOT NULL,\n    type TEXT,\n    address TEXT,\n    currency TEXT DEFAULT NULL\n);\n\nCREATE TABLE account_aliases (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    account_id INTEGER NOT NULL REFERENCES accounts(id),\n    alias TEXT NOT NULL UNIQUE\n);\n\nCREATE TABLE transactions (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    account_id INTEGER NOT NULL REFERENCES accounts(id),\n    date DATE NOT NULL,\n    amount REAL NOT NULL,\n    category TEXT,\n    description TEXT\n);\n\nCREATE TABLE budget_plans (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    period_start DATE NOT NULL,\n    period_end DATE NOT NULL,\n    source_file_name TEXT NOT NULL,\n    source_file_path TEXT NOT NULL,\n    source_checksum TEXT NOT NULL,\n    imported_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,\n    CHECK (julianday(period_end) - julianday(period_start) >= 3),\n    UNIQUE (period_start, period_end)\n);\n\nCREATE TABLE budget_targets (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    budget_plan_id INTEGER NOT NULL REFERENCES budget_plans(id) ON DELETE CASCADE,\n    source_ordinal INTEGER NOT NULL,\n    currency TEXT NOT NULL CHECK (trim(currency) <> ''),\n    amount REAL NOT NULL CHECK (amount <> 0),\n    engagement_id INTEGER NOT NULL REFERENCES engagements(id),\n    engagement_raw TEXT NOT NULL,\n    UNIQUE (budget_plan_id, source_ordinal)\n);\n\nCREATE TABLE expected_financial_movements (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    budget_plan_id INTEGER NOT NULL REFERENCES budget_plans(id) ON DELETE CASCADE,\n    source_ordinal INTEGER NOT NULL,\n    due_date DATE NOT NULL,\n    currency TEXT NOT NULL CHECK (trim(currency) <> ''),\n    amount REAL NOT NULL CHECK (amount <> 0),\n    account_id INTEGER NOT NULL REFERENCES accounts(id),\n    engagement_id INTEGER NOT NULL REFERENCES engagements(id),\n    engagement_raw TEXT NOT NULL,\n    description TEXT,\n    UNIQUE (budget_plan_id, source_ordinal)\n);\n\nCREATE TABLE valuation_rate_sets (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    rate_date DATE NOT NULL UNIQUE,\n    source_file_name TEXT NOT NULL,\n    source_file_path TEXT NOT NULL,\n    source_checksum TEXT NOT NULL,\n    imported_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP\n);\n\nCREATE TABLE valuation_rates (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    rate_set_id INTEGER NOT NULL REFERENCES valuation_rate_sets(id) ON DELETE CASCADE,\n    source_ordinal INTEGER NOT NULL,\n    unit_key TEXT NOT NULL,\n    unit_label TEXT NOT NULL,\n    value REAL NOT NULL CHECK (value > 0),\n    UNIQUE (rate_set_id, source_ordinal),\n    UNIQUE (rate_set_id, unit_key)\n);\n\nCREATE TABLE engagement_aliases (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    engagement_id INTEGER NOT NULL REFERENCES engagements(id),\n    alias TEXT NOT NULL UNIQUE\n);\n\nCREATE TABLE engagement_milestones (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    engagement_id INTEGER NOT NULL REFERENCES engagements(id),\n    name TEXT NOT NULL,\n    date DATE,\n    notes TEXT,\n    session_id INTEGER NOT NULL REFERENCES sessions(id) ON DELETE RESTRICT\n);\n\nCREATE TABLE engagement_measurements (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    milestone_id INTEGER NOT NULL REFERENCES engagement_milestones(id),\n    metric_name TEXT NOT NULL,\n    metric_value TEXT NOT NULL,\n    measurement_date DATE,\n    notes TEXT\n);\n\nCREATE TABLE exercises (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    name TEXT NOT NULL,\n    category TEXT\n);\n\nCREATE TABLE exercise_aliases (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    exercise_id INTEGER NOT NULL REFERENCES exercises(id),\n    alias TEXT NOT NULL UNIQUE\n);\n\nCREATE TABLE session_exercises (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    session_id INTEGER NOT NULL REFERENCES sessions(id),\n    exercise_id INTEGER NOT NULL REFERENCES exercises(id),\n    order_index INTEGER\n);\n\nCREATE TABLE exercise_sets (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    session_exercise_id INTEGER NOT NULL REFERENCES session_exercises(id),\n    set_number INTEGER,\n    weight REAL,\n    reps INTEGER,\n    distance REAL,\n    duration_minutes REAL,\n    notes TEXT,\n    pain_level REAL,\n    duration_seconds REAL\n);\n\nCREATE TABLE muscles (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    name TEXT NOT NULL UNIQUE,\n    body_region TEXT,\n    notes TEXT\n);\n\nCREATE TABLE exercise_muscles (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    exercise_id INTEGER NOT NULL REFERENCES exercises(id),\n    muscle_id INTEGER NOT NULL REFERENCES muscles(id),\n    role TEXT\n);\n\nCREATE TABLE people (\n    id INTEGER PRIMARY KEY,\n    name TEXT NOT NULL\n);\n\nCREATE TABLE reports (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    person_id INTEGER NOT NULL REFERENCES people(id),\n    report_timestamp TEXT NOT NULL,\n    report_type TEXT NOT NULL,\n    provider TEXT,\n    title TEXT,\n    relative_path TEXT NOT NULL\n);\n\nCREATE TABLE markers (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    name TEXT NOT NULL UNIQUE,\n    unit TEXT,\n    textbook_normal_range TEXT\n);\n\nCREATE TABLE measurements (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    report_id INTEGER NOT NULL REFERENCES reports(id),\n    marker_id INTEGER NOT NULL REFERENCES markers(id),\n    value REAL NOT NULL,\n    notes TEXT,\n    reference_range_at_time TEXT,\n    flag TEXT\n);\n\nCREATE TABLE stoicism_entries (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    date DATE NOT NULL,\n    score REAL,\n    notes TEXT\n);\n\nCREATE TABLE weekly_plans (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    week_start_date DATE NOT NULL UNIQUE,\n    source_file_name TEXT NOT NULL,\n    source_file_path TEXT NOT NULL UNIQUE,\n    source_checksum TEXT NOT NULL,\n    main_outcome TEXT,\n    important_deadline TEXT,\n    constraint_or_risk TEXT,\n    imported_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP\n);\n\nCREATE TABLE weekly_plan_sessions (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    weekly_plan_id INTEGER NOT NULL REFERENCES weekly_plans(id) ON DELETE CASCADE,\n    date DATE NOT NULL,\n    start_time TEXT NOT NULL,\n    end_time TEXT NOT NULL,\n    duration_minutes INTEGER NOT NULL CHECK (duration_minutes > 0),\n    session_type_id INTEGER REFERENCES session_types(id),\n    engagement_id INTEGER REFERENCES engagements(id),\n    original_cell_text TEXT NOT NULL,\n    notes TEXT,\n    source_row INTEGER NOT NULL,\n    source_column_start INTEGER NOT NULL,\n    source_column_end INTEGER NOT NULL,\n    UNIQUE (weekly_plan_id, date, start_time, end_time)\n);\n\nCREATE TABLE weekly_commitments (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    weekly_plan_id INTEGER NOT NULL REFERENCES weekly_plans(id) ON DELETE CASCADE,\n    source_ordinal INTEGER NOT NULL,\n    target_minutes INTEGER NOT NULL CHECK (target_minutes > 0),\n    engagement_id INTEGER NOT NULL REFERENCES engagements(id),\n    engagement_raw TEXT NOT NULL,\n    commitment_text TEXT NOT NULL,\n    UNIQUE (weekly_plan_id, source_ordinal)\n);\n\nCREATE TABLE meal_events (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    day DATE NOT NULL,\n    meal_type TEXT NOT NULL COLLATE NOCASE,\n    is_leisure INTEGER NOT NULL DEFAULT 0 CHECK (is_leisure IN (0, 1)),\n    classification_source TEXT NOT NULL DEFAULT 'default'\n        CHECK (classification_source IN ('default', 'manual', 'meal_limit', 'manual_and_meal_limit')),\n    calorie_limit_kcal REAL CHECK (calorie_limit_kcal IS NULL OR calorie_limit_kcal > 0),\n    notes TEXT,\n    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,\n    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,\n    CHECK (meal_type IN ('breakfast', 'lunch', 'dinner', 'snacks')),\n    UNIQUE (day, meal_type)\n);\n\nCREATE TABLE daily_meals (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    day DATE NOT NULL,\n    food TEXT NOT NULL CHECK (trim(food) <> ''),\n    calories INTEGER,\n    protein_g REAL,\n    meal_event_id INTEGER REFERENCES meal_events(id) ON DELETE CASCADE,\n    item_ordinal INTEGER CHECK (item_ordinal IS NULL OR item_ordinal > 0),\n    food_id INTEGER REFERENCES foods(id) ON DELETE SET NULL,\n    amount_g REAL CHECK (amount_g IS NULL OR amount_g > 0),\n    carbs_g REAL CHECK (carbs_g IS NULL OR carbs_g >= 0),\n    fat_g REAL CHECK (fat_g IS NULL OR fat_g >= 0),\n    salt_g REAL CHECK (salt_g IS NULL OR salt_g >= 0),\n    fiber_g REAL CHECK (fiber_g IS NULL OR fiber_g >= 0),\n    cholesterol_mg REAL CHECK (cholesterol_mg IS NULL OR cholesterol_mg >= 0)\n);\n\nCREATE TABLE foods (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    name TEXT NOT NULL COLLATE NOCASE UNIQUE CHECK (trim(name) <> ''),\n    category TEXT,\n    calories_kcal_per_100g REAL NOT NULL CHECK (calories_kcal_per_100g >= 0),\n    protein_g_per_100g REAL NOT NULL CHECK (protein_g_per_100g >= 0),\n    carbs_g_per_100g REAL NOT NULL CHECK (carbs_g_per_100g >= 0),\n    fat_g_per_100g REAL NOT NULL CHECK (fat_g_per_100g >= 0),\n    salt_g_per_100g REAL NOT NULL CHECK (salt_g_per_100g >= 0),\n    fiber_g_per_100g REAL CHECK (fiber_g_per_100g IS NULL OR fiber_g_per_100g >= 0),\n    cholesterol_mg_per_100g REAL CHECK (cholesterol_mg_per_100g IS NULL OR cholesterol_mg_per_100g >= 0),\n    notes TEXT,\n    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,\n    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP\n);\n\nCREATE TABLE food_aliases (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    food_id INTEGER NOT NULL REFERENCES foods(id) ON DELETE CASCADE,\n    alias TEXT NOT NULL COLLATE NOCASE UNIQUE CHECK (trim(alias) <> '')\n);\n\nCREATE TABLE daily_meal_assessments (\n    day DATE PRIMARY KEY,\n    daily_calorie_limit_kcal REAL NOT NULL CHECK (daily_calorie_limit_kcal >= 0),\n    minimum_protein_g REAL NOT NULL DEFAULT 0 CHECK (minimum_protein_g >= 0),\n    daily_calories_kcal REAL CHECK (daily_calories_kcal IS NULL OR daily_calories_kcal >= 0),\n    daily_metrics_calories_kcal REAL CHECK (daily_metrics_calories_kcal IS NULL OR daily_metrics_calories_kcal >= 0),\n    meal_items_calories_kcal REAL NOT NULL DEFAULT 0 CHECK (meal_items_calories_kcal >= 0),\n    daily_calorie_source TEXT NOT NULL DEFAULT 'missing'\n        CHECK (daily_calorie_source IN ('daily_metrics', 'meal_items', 'higher_of_both', 'missing')),\n    protein_g REAL CHECK (protein_g IS NULL OR protein_g >= 0),\n    recorded_dieted INTEGER CHECK (recorded_dieted IS NULL OR recorded_dieted IN (0, 1)),\n    evaluated_dieted INTEGER CHECK (evaluated_dieted IS NULL OR evaluated_dieted IN (0, 1)),\n    evaluated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP\n);\n\nCREATE TABLE note_import_components (\n    note_date DATE NOT NULL,\n    component TEXT NOT NULL CHECK (trim(component) <> ''),\n    lifecycle_state TEXT NOT NULL CHECK (lifecycle_state IN ('ephemeral', 'finalized')),\n    source_file_path TEXT NOT NULL CHECK (trim(source_file_path) <> ''),\n    source_checksum TEXT NOT NULL CHECK (trim(source_checksum) <> ''),\n    plugin_version TEXT NOT NULL CHECK (trim(plugin_version) <> ''),\n    row_count INTEGER NOT NULL DEFAULT 0 CHECK (row_count >= 0),\n    imported_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,\n    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,\n    PRIMARY KEY (note_date, component)\n);\n\nCREATE UNIQUE INDEX uq_accounts_name_nocase ON accounts(name COLLATE NOCASE);\nCREATE UNIQUE INDEX uq_account_aliases_alias_nocase ON account_aliases(alias COLLATE NOCASE);\nCREATE UNIQUE INDEX uq_engagements_name_nocase ON engagements(name COLLATE NOCASE);\nCREATE UNIQUE INDEX uq_engagement_aliases_alias_nocase ON engagement_aliases(alias COLLATE NOCASE);\nCREATE UNIQUE INDEX uq_exercise_aliases_alias_nocase ON exercise_aliases(alias COLLATE NOCASE);\nCREATE UNIQUE INDEX uq_muscles_name_nocase ON muscles(name COLLATE NOCASE);\nCREATE INDEX idx_sessions_date ON sessions(date);\nCREATE INDEX idx_sessions_engagement ON sessions(engagement_id);\nCREATE INDEX idx_sessions_type ON sessions(session_type_id);\nCREATE INDEX idx_engagements_type ON engagements(type_id);\nCREATE INDEX idx_engagements_status ON engagements(status_id);\nCREATE INDEX idx_note_sources_date ON note_sources(note_date);\nCREATE INDEX idx_note_sources_state ON note_sources(lifecycle_state);\nCREATE INDEX idx_planned_sessions_date ON planned_sessions(date);\nCREATE INDEX idx_planned_sessions_source ON planned_sessions(source_note_id);\nCREATE INDEX idx_planned_sessions_type ON planned_sessions(resolved_session_type_id);\nCREATE INDEX idx_transactions_date ON transactions(date);\nCREATE INDEX idx_budget_plans_period ON budget_plans(period_start, period_end);\nCREATE INDEX idx_budget_targets_plan_currency ON budget_targets(budget_plan_id, currency);\nCREATE INDEX idx_budget_targets_engagement ON budget_targets(engagement_id);\nCREATE INDEX idx_expected_financial_movements_plan_due ON expected_financial_movements(budget_plan_id, due_date);\nCREATE INDEX idx_expected_financial_movements_account ON expected_financial_movements(account_id, due_date);\nCREATE INDEX idx_valuation_rate_sets_date ON valuation_rate_sets(rate_date);\nCREATE INDEX idx_valuation_rates_unit ON valuation_rates(unit_key, rate_set_id);\nCREATE INDEX idx_engagement_milestones_session ON engagement_milestones(session_id);\nCREATE INDEX idx_exercise_sets_session ON exercise_sets(session_exercise_id);\nCREATE INDEX idx_weekly_plan_sessions_plan ON weekly_plan_sessions(weekly_plan_id);\nCREATE INDEX idx_weekly_plan_sessions_date ON weekly_plan_sessions(date);\nCREATE INDEX idx_weekly_plan_sessions_type ON weekly_plan_sessions(session_type_id);\nCREATE INDEX idx_weekly_plan_sessions_engagement ON weekly_plan_sessions(engagement_id);\nCREATE INDEX idx_weekly_commitments_plan ON weekly_commitments(weekly_plan_id);\nCREATE INDEX idx_weekly_commitments_engagement ON weekly_commitments(engagement_id);\nCREATE INDEX idx_meal_events_day ON meal_events(day);\nCREATE INDEX idx_meal_events_type ON meal_events(meal_type);\nCREATE INDEX idx_daily_meals_day ON daily_meals(day);\nCREATE INDEX idx_daily_meals_meal_event ON daily_meals(meal_event_id, item_ordinal);\nCREATE INDEX idx_daily_meals_food ON daily_meals(food_id, day);\nCREATE INDEX idx_food_aliases_food ON food_aliases(food_id);\nCREATE INDEX idx_note_import_components_state ON note_import_components(lifecycle_state, note_date);\n\nCREATE TRIGGER sessions_require_active_type_insert\nBEFORE INSERT ON sessions\nWHEN NOT EXISTS (SELECT 1 FROM session_types WHERE id = NEW.session_type_id AND is_active = 1)\nBEGIN SELECT RAISE(ABORT, 'unknown or inactive session type'); END;\n\nCREATE TRIGGER sessions_require_active_type_update\nBEFORE UPDATE OF session_type_id ON sessions\nWHEN NOT EXISTS (SELECT 1 FROM session_types WHERE id = NEW.session_type_id AND is_active = 1)\nBEGIN SELECT RAISE(ABORT, 'unknown or inactive session type'); END;\n\nCREATE TRIGGER engagements_require_active_type_insert\nBEFORE INSERT ON engagements\nWHEN NOT EXISTS (SELECT 1 FROM engagement_types WHERE id = NEW.type_id AND is_active = 1)\nBEGIN SELECT RAISE(ABORT, 'unknown or inactive engagement type'); END;\n\nCREATE TRIGGER engagements_require_active_type_update\nBEFORE UPDATE OF type_id ON engagements\nWHEN NOT EXISTS (SELECT 1 FROM engagement_types WHERE id = NEW.type_id AND is_active = 1)\nBEGIN SELECT RAISE(ABORT, 'unknown or inactive engagement type'); END;\n\nCREATE TRIGGER engagements_require_active_status_insert\nBEFORE INSERT ON engagements\nWHEN NEW.status_id IS NOT NULL\n AND NOT EXISTS (SELECT 1 FROM engagement_statuses WHERE id = NEW.status_id AND is_active = 1)\nBEGIN SELECT RAISE(ABORT, 'unknown or inactive engagement status'); END;\n\nCREATE TRIGGER engagements_require_active_status_update\nBEFORE UPDATE OF status_id ON engagements\nWHEN NEW.status_id IS NOT NULL\n AND NOT EXISTS (SELECT 1 FROM engagement_statuses WHERE id = NEW.status_id AND is_active = 1)\nBEGIN SELECT RAISE(ABORT, 'unknown or inactive engagement status'); END;\n\nCREATE TRIGGER daily_meals_meal_event_day_insert\nBEFORE INSERT ON daily_meals\nWHEN NEW.meal_event_id IS NOT NULL\n AND NOT EXISTS (SELECT 1 FROM meal_events WHERE id = NEW.meal_event_id AND day = NEW.day)\nBEGIN SELECT RAISE(ABORT, 'daily_meals.day must match its meal event day'); END;\n\nCREATE TRIGGER daily_meals_meal_event_day_update\nBEFORE UPDATE OF meal_event_id, day ON daily_meals\nWHEN NEW.meal_event_id IS NOT NULL\n AND NOT EXISTS (SELECT 1 FROM meal_events WHERE id = NEW.meal_event_id AND day = NEW.day)\nBEGIN SELECT RAISE(ABORT, 'daily_meals.day must match its meal event day'); END;\n\nCREATE TRIGGER trg_exercises_name_nocase_insert\nBEFORE INSERT ON exercises\nWHEN EXISTS (SELECT 1 FROM exercises WHERE name = NEW.name COLLATE NOCASE)\nBEGIN SELECT RAISE(ABORT, 'exercise name already exists (case-insensitive)'); END;\n\nCREATE TRIGGER trg_exercises_name_nocase_update\nBEFORE UPDATE OF name ON exercises\nWHEN EXISTS (SELECT 1 FROM exercises WHERE id <> OLD.id AND name = NEW.name COLLATE NOCASE)\nBEGIN SELECT RAISE(ABORT, 'exercise name already exists (case-insensitive)'); END;\n\nCREATE VIEW meal_event_totals AS\nSELECT\n    me.id AS meal_event_id,\n    me.day,\n    me.meal_type,\n    me.is_leisure AS recorded_is_leisure,\n    me.classification_source,\n    me.calorie_limit_kcal,\n    COUNT(dm.id) AS item_count,\n    COALESCE(SUM(dm.calories), 0) AS total_calories_kcal,\n    COALESCE(SUM(dm.protein_g), 0.0) AS total_protein_g,\n    SUM(CASE WHEN dm.id IS NOT NULL AND dm.calories IS NULL THEN 1 ELSE 0 END) AS items_missing_calories,\n    CASE\n        WHEN me.meal_type = 'snacks' THEN 0\n        WHEN me.is_leisure = 1 THEN 1\n        WHEN me.calorie_limit_kcal IS NOT NULL\n         AND COALESCE(SUM(dm.calories), 0) > me.calorie_limit_kcal THEN 1\n        ELSE 0\n    END AS evaluated_is_leisure\nFROM meal_events AS me\nLEFT JOIN daily_meals AS dm ON dm.meal_event_id = me.id\nGROUP BY me.id, me.day, me.meal_type, me.is_leisure, me.classification_source, me.calorie_limit_kcal;\n\nCREATE VIEW daily_leisure_meal_summary AS\nWITH evaluated_days AS (\n    SELECT\n        dma.day,\n        dma.daily_calorie_limit_kcal,\n        dma.daily_calories_kcal,\n        COALESCE(SUM(CASE\n            WHEN met.meal_type IN ('breakfast', 'lunch', 'dinner') THEN met.evaluated_is_leisure\n            ELSE 0\n        END), 0) AS direct_leisure_meals\n    FROM daily_meal_assessments AS dma\n    LEFT JOIN meal_event_totals AS met ON met.day = dma.day\n    GROUP BY dma.day, dma.daily_calorie_limit_kcal, dma.daily_calories_kcal\n)\nSELECT\n    day,\n    3 AS counted_meals,\n    direct_leisure_meals,\n    daily_calories_kcal,\n    daily_calorie_limit_kcal,\n    CASE\n        WHEN daily_calories_kcal IS NOT NULL\n         AND daily_calories_kcal > daily_calorie_limit_kcal\n         AND daily_calorie_limit_kcal > 0 THEN 1\n        ELSE 0\n    END AS daily_limit_exceeded,\n    CASE\n        WHEN daily_calories_kcal IS NOT NULL\n         AND daily_calories_kcal > daily_calorie_limit_kcal\n         AND daily_calorie_limit_kcal > 0\n         AND direct_leisure_meals < 2 THEN 2\n        ELSE direct_leisure_meals\n    END AS leisure_meals\nFROM evaluated_days;\n\nINSERT INTO session_types (code, label, description, sort_order) VALUES\n('authorship', 'Authorship', 'Creating an authored work', 10),\n('chore', 'Chore', 'Routine personal or household work', 20),\n('exercise', 'Exercise', 'Physical training', 30),\n('leisure', 'Leisure', 'Recreation and unstructured leisure', 40),\n('maintenance', 'Maintenance', 'Maintaining systems, spaces, or obligations', 50),\n('meditation', 'Meditation', 'Meditation or contemplative practice', 60),\n('reading', 'Reading', 'Reading not classified as study or research', 70),\n('research', 'Research', 'Exploratory search and evidence gathering', 80),\n('social', 'Social', 'Social and relationship time', 90),\n('study', 'Study', 'Structured learning toward mastery', 100),\n('thinking', 'Thinking', 'Deliberate reflection or problem framing', 110),\n('work', 'Work', 'Professional execution', 120),\n('writing', 'Writing', 'Writing not classified as authorship', 130);\n\nINSERT INTO engagement_types (code, label, sort_order) VALUES\n('article', 'Article', 10), ('authorship', 'Authorship', 20), ('book', 'Book', 30),\n('career', 'Career', 40), ('certification', 'Certification', 50), ('course', 'Course', 60),\n('exam', 'Exam', 70), ('fitness', 'Fitness', 80), ('leisure', 'Leisure', 90),\n('maintenance', 'Maintenance', 100), ('practice', 'Practice', 110),\n('relationship', 'Relationship', 120), ('speech', 'Speech', 130), ('startup', 'Startup', 140);\n\nINSERT INTO engagement_statuses (code, label, sort_order) VALUES\n('planned', 'Planned', 10), ('pending', 'Pending', 20), ('active', 'Active', 30),\n('paused', 'Paused', 40), ('completed', 'Completed', 50), ('abandoned', 'Abandoned', 60);\n\nINSERT INTO schema_migrations (version, name) VALUES\n(1, 'official schema v1: food, finance, valuation, and mutable budget foundations');\n\nPRAGMA user_version = 1;\nCOMMIT;\nPRAGMA foreign_keys = ON;\n";
 
 // src/native-logger/checksum.ts
 function toHex(bytes) {
@@ -4322,7 +4789,7 @@ function hasColumns2(db, table, required) {
   const available = new Set(rows2(db, `PRAGMA table_info("${table}")`).map((row) => String(row.name)));
   return required.every((column) => available.has(column));
 }
-function requireIsoDate(value, label) {
+function requireIsoDate2(value, label) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) throw new Error(`${label} must use YYYY-MM-DD.`);
 }
 function assertMealImportSchema(db) {
@@ -4407,8 +4874,8 @@ function mealComponentMatchesInspection(db, date, inspection) {
 function writeMealInspection(db, input) {
   var _a;
   assertMealImportSchema(db);
-  requireIsoDate(input.noteDate, "Note date");
-  requireIsoDate(input.todayDate, "Today date");
+  requireIsoDate2(input.noteDate, "Note date");
+  requireIsoDate2(input.todayDate, "Today date");
   if (!input.inspection.ready) throw new Error("Meals import cannot run while validation errors remain.");
   if (!input.sourceFilePath.trim()) throw new Error("The source Daily Note path is required.");
   if (!input.sourceChecksum.trim()) throw new Error("The source Daily Note checksum is required.");
@@ -4516,162 +4983,6 @@ function writeMealInspection(db, input) {
   };
 }
 
-// src/native-logger/database-utils.ts
-function aliasConfig(table) {
-  const aliases = {
-    engagements: ["engagement_aliases", "engagement_id"],
-    exercises: ["exercise_aliases", "exercise_id"],
-    accounts: ["account_aliases", "account_id"],
-    foods: ["food_aliases", "food_id"]
-  };
-  return aliases[table];
-}
-function queryRows(db, sql, params = []) {
-  const statement = db.prepare(sql);
-  try {
-    statement.bind(params);
-    const result = [];
-    while (statement.step()) result.push(statement.getAsObject());
-    return result;
-  } finally {
-    statement.free();
-  }
-}
-function lastInsertId(db) {
-  var _a;
-  return Number((_a = queryRows(db, "SELECT last_insert_rowid() AS id")[0]) == null ? void 0 : _a.id);
-}
-function requireIsoDate2(value, label) {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) throw new Error(`${label} must use YYYY-MM-DD.`);
-  const parsed = /* @__PURE__ */ new Date(`${value}T00:00:00Z`);
-  if (Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== value) {
-    throw new Error(`${label} is not a valid calendar date.`);
-  }
-}
-function addIsoDays(value, days) {
-  requireIsoDate2(value, "Date");
-  const parsed = /* @__PURE__ */ new Date(`${value}T00:00:00Z`);
-  parsed.setUTCDate(parsed.getUTCDate() + days);
-  return parsed.toISOString().slice(0, 10);
-}
-function assertSchemaV1(db) {
-  var _a, _b;
-  const version = Number((_b = (_a = queryRows(db, "PRAGMA user_version")[0]) == null ? void 0 : _a.user_version) != null ? _b : 0);
-  if (version !== 1) throw new Error(`Native EH import requires official Data Schema v1; this database reports v${version}.`);
-}
-function resolveTaxonomy(db, table, value) {
-  if (!["session_types", "engagement_types", "engagement_statuses"].includes(table)) {
-    throw new Error(`Unsupported taxonomy table: ${table}`);
-  }
-  const normalized = value.trim().toLowerCase();
-  if (!normalized) return null;
-  const row = queryRows(db, `
-    SELECT id, code FROM ${table}
-    WHERE code = ? COLLATE NOCASE AND is_active = 1
-    LIMIT 1
-  `, [normalized])[0];
-  return row ? { id: Number(row.id), code: String(row.code) } : null;
-}
-function taxonomyCodes(db, table) {
-  if (!["session_types", "engagement_types", "engagement_statuses"].includes(table)) {
-    throw new Error(`Unsupported taxonomy table: ${table}`);
-  }
-  return queryRows(db, `SELECT code FROM ${table} WHERE is_active = 1 ORDER BY sort_order, code`).map((row) => String(row.code));
-}
-function resolveEntity(db, value, table) {
-  const normalized = value.trim();
-  if (!normalized) return null;
-  const [aliasTable, foreignKey] = aliasConfig(table);
-  const result = queryRows(db, `
-    SELECT DISTINCT entity.id, entity.name
-    FROM ${table} AS entity
-    LEFT JOIN ${aliasTable} AS alias ON alias.${foreignKey} = entity.id
-    WHERE entity.name = ? COLLATE NOCASE OR alias.alias = ? COLLATE NOCASE
-  `, [normalized, normalized]);
-  if (result.length > 1) throw new Error(`Ambiguous ${table.slice(0, -1)}: ${normalized}`);
-  return result[0] ? { id: Number(result[0].id), name: String(result[0].name) } : null;
-}
-function resolveFood(db, value) {
-  const normalized = value.trim();
-  if (!normalized) return null;
-  const row = queryRows(db, `
-    SELECT DISTINCT food.id, food.name, food.category,
-      food.calories_kcal_per_100g, food.protein_g_per_100g,
-      food.carbs_g_per_100g, food.fat_g_per_100g, food.salt_g_per_100g,
-      food.fiber_g_per_100g, food.cholesterol_mg_per_100g, food.notes
-    FROM foods AS food
-    LEFT JOIN food_aliases AS alias ON alias.food_id = food.id
-    WHERE food.name = ? COLLATE NOCASE OR alias.alias = ? COLLATE NOCASE
-    LIMIT 2
-  `, [normalized, normalized]);
-  if (row.length !== 1) return null;
-  const food = row[0];
-  return {
-    id: Number(food.id),
-    name: String(food.name),
-    category: food.category == null ? null : String(food.category),
-    caloriesKcalPer100g: Number(food.calories_kcal_per_100g),
-    proteinGPer100g: Number(food.protein_g_per_100g),
-    carbsGPer100g: Number(food.carbs_g_per_100g),
-    fatGPer100g: Number(food.fat_g_per_100g),
-    saltGPer100g: Number(food.salt_g_per_100g),
-    fiberGPer100g: food.fiber_g_per_100g == null ? null : Number(food.fiber_g_per_100g),
-    cholesterolMgPer100g: food.cholesterol_mg_per_100g == null ? null : Number(food.cholesterol_mg_per_100g),
-    notes: food.notes == null ? null : String(food.notes)
-  };
-}
-function ensureAlias(db, table, entity, aliasValue) {
-  const alias = aliasValue.trim();
-  if (!alias) return false;
-  const [aliasTable, foreignKey] = aliasConfig(table);
-  const existing = queryRows(db, `
-    SELECT alias.${foreignKey} AS entity_id, entity.name
-    FROM ${aliasTable} AS alias
-    JOIN ${table} AS entity ON entity.id = alias.${foreignKey}
-    WHERE alias.alias = ? COLLATE NOCASE
-  `, [alias])[0];
-  if (existing) {
-    if (Number(existing.entity_id) === entity.id) return false;
-    throw new Error(`Alias '${alias}' already belongs to '${String(existing.name)}'; cannot assign it to '${entity.name}'.`);
-  }
-  db.run(`INSERT INTO ${aliasTable} (${foreignKey}, alias) VALUES (?, ?)`, [entity.id, alias]);
-  return true;
-}
-function removeAlias(db, table, entity, aliasValue) {
-  const alias = aliasValue.trim();
-  if (!alias) throw new Error("Alias is empty.");
-  const [aliasTable, foreignKey] = aliasConfig(table);
-  const existing = queryRows(db, `
-    SELECT alias.${foreignKey} AS entity_id, entity.name
-    FROM ${aliasTable} AS alias
-    JOIN ${table} AS entity ON entity.id = alias.${foreignKey}
-    WHERE alias.alias = ? COLLATE NOCASE
-    LIMIT 1
-  `, [alias])[0];
-  if (!existing) throw new Error(`Alias '${alias}' does not exist.`);
-  if (Number(existing.entity_id) !== entity.id) {
-    throw new Error(`Alias '${alias}' belongs to '${String(existing.name)}', not '${entity.name}'.`);
-  }
-  db.run(`DELETE FROM ${aliasTable} WHERE ${foreignKey} = ? AND alias = ? COLLATE NOCASE`, [entity.id, alias]);
-}
-function moveAlias(db, table, aliasValue, destination) {
-  const alias = aliasValue.trim();
-  if (!alias) throw new Error("Alias is empty.");
-  const [aliasTable, foreignKey] = aliasConfig(table);
-  const existing = queryRows(db, `
-    SELECT ${foreignKey} AS entity_id FROM ${aliasTable}
-    WHERE alias = ? COLLATE NOCASE
-    LIMIT 1
-  `, [alias])[0];
-  if (!existing) throw new Error(`Alias '${alias}' does not exist and cannot be moved.`);
-  if (Number(existing.entity_id) === destination.id) return false;
-  db.run(`UPDATE ${aliasTable} SET ${foreignKey} = ? WHERE alias = ? COLLATE NOCASE`, [destination.id, alias]);
-  return true;
-}
-function parseAliases(value) {
-  return value.trim().replace(/^\[/, "").replace(/\]$/, "").split(",").map((item) => item.trim()).filter(Boolean);
-}
-
 // src/native-logger/meals.ts
 var MEAL_TYPES = ["breakfast", "lunch", "dinner", "snacks"];
 function sectionBody(content, name) {
@@ -4723,12 +5034,12 @@ function parseMealItems(db, segment, type, errors) {
   for (const originalLine of lines.slice(entriesIndex + 1)) {
     const line = originalLine.trim().replace(/^[-*]\s+/, "");
     if (!line) continue;
-    const fields = line.split("|").map((field) => field.trim());
-    if (fields.length !== 2) {
+    const fields2 = line.split("|").map((field) => field.trim());
+    if (fields2.length !== 2) {
       errors.push(`${type} row "${line}" must use food | amount_g.`);
       continue;
     }
-    const [foodRaw, amountRaw] = fields;
+    const [foodRaw, amountRaw] = fields2;
     if (!foodRaw) {
       errors.push(`${type} contains a food row with an empty food name.`);
       continue;
@@ -4965,7 +5276,7 @@ function argumentExpectation(expected) {
 }
 function optionalIsoDate(value, label) {
   if (!value.trim()) return null;
-  requireIsoDate2(value, label);
+  requireIsoDate(value, label);
   return value;
 }
 function requiredNonNegativeNumber(value, label) {
@@ -5007,15 +5318,25 @@ function splitFields(line, expected) {
   const delimiter = (_a = command == null ? void 0 : command[1]) != null ? _a : line.includes("|") ? "|" : ";";
   return line.split(delimiter).map((part) => part.trim());
 }
-function sectionsFromForm(sourceText) {
+function dailyFormBody(sourceText, expectedDate) {
+  var _a, _b, _c;
   const text = sourceText.replace(FEEDBACK_PATTERN, "\n");
-  const form = /^####\s+EH\s+Form\s*$/mi.exec(text);
-  if (!form) throw new Error("The note does not contain an EH Form heading.");
+  const form = /^####\s+EH\s+Daily\s+Form\s*$/mi.exec(text);
+  if (!form) throw new Error("The note does not contain an EH Daily Form heading.");
   const formStart = form.index + form[0].length;
   const afterForm = text.slice(formStart);
   const end = /^####\s+END\s*$/mi.exec(afterForm);
   if (!end) throw new Error("The note does not contain a #### END marker.");
   const body = afterForm.slice(0, end.index);
+  const declared = (_c = (_b = (_a = /^date:\s*(.*?)\s*$/im.exec(body)) == null ? void 0 : _a[1]) == null ? void 0 : _b.trim()) != null ? _c : "";
+  requireIsoDate(declared, "EH Daily Form date");
+  if (declared !== expectedDate) {
+    throw new Error(`EH Daily Form declares ${declared}, but this import targets ${expectedDate}.`);
+  }
+  return body;
+}
+function sectionsFromForm(sourceText, expectedDate) {
+  const body = dailyFormBody(sourceText, expectedDate);
   const headings = [...body.matchAll(/^#####(?!#)\s+(.+?)\s*$/gm)];
   const result = /* @__PURE__ */ new Map();
   headings.forEach((heading, index) => {
@@ -5184,11 +5505,12 @@ function metricMap(section, errors) {
   }
   return metrics;
 }
-function parseDaily(db, sourceText, thresholds, errors) {
+function parseDaily(db, sourceText, noteDate, thresholds, errors) {
   var _a, _b, _c, _d, _e;
-  const sections = sectionsFromForm(sourceText);
-  const metrics = metricMap(sections.get("daily metrics"), errors);
-  const sessions = entries(sections.get("sessions")).map((line, index) => {
+  const formBody2 = dailyFormBody(sourceText, noteDate);
+  const sections2 = sectionsFromForm(sourceText, noteDate);
+  const metrics = metricMap(sections2.get("daily metrics"), errors);
+  const sessions = entries(sections2.get("sessions")).map((line, index) => {
     const parts = splitFields(line, 4);
     if (parts.length !== 4) errors.push(`Invalid session row '${line}'; expected interval | type | engagement | notes.`);
     const [interval = "", type = "", engagement = "", notes2 = ""] = parts;
@@ -5203,7 +5525,7 @@ function parseDaily(db, sourceText, thresholds, errors) {
       resolvedEngagement: null
     };
   });
-  const transactions = entries(sections.get("transactions")).map((line, index) => {
+  const transactions = entries(sections2.get("transactions")).map((line, index) => {
     const parts = splitFields(line, 4);
     if (parts.length !== 4) errors.push(`Invalid transaction row '${line}'; expected amount | account | engagement | description.`);
     const [amountRaw = "", account = "", engagement = "", description = ""] = parts;
@@ -5218,13 +5540,14 @@ function parseDaily(db, sourceText, thresholds, errors) {
       resolvedEngagement: null
     };
   });
-  const exercises = entries(sections.get("exercise details")).map((line, index) => {
+  const valuationRates = parseValuationRateEntries(entries(sections2.get("valuation rates")), errors);
+  const exercises = entries(sections2.get("exercise details")).map((line, index) => {
     const parts = splitFields(line, 3);
     if (parts.length !== 3) errors.push(`Invalid exercise row '${line}'; expected exercise | [sets] | notes.`);
     const [exercise = "", setsRaw = "", notes2 = ""] = parts;
     return { ordinal: index + 1, exercise, setsRaw, notes: notes2, sets: [], resolvedExercise: null };
   });
-  const milestones = entries(sections.get("milestones")).map((line) => {
+  const milestones = entries(sections2.get("milestones")).map((line) => {
     var _a2, _b2, _c2, _d2, _e2;
     const parts = splitFields(line, 5);
     if (parts.length !== 5) {
@@ -5240,10 +5563,10 @@ function parseDaily(db, sourceText, thresholds, errors) {
       sessionIndex: null
     };
   });
-  const stoicismLines = (_a = sections.get("stoicism")) != null ? _a : "";
+  const stoicismLines = (_a = sections2.get("stoicism")) != null ? _a : "";
   const score = ((_c = (_b = /^score:[ \t]*(.*?)\s*$/im.exec(stoicismLines)) == null ? void 0 : _b[1]) == null ? void 0 : _c.trim()) || null;
   const notes = ((_e = (_d = /^notes:[ \t]*(.*?)\s*$/im.exec(stoicismLines)) == null ? void 0 : _d[1]) == null ? void 0 : _e.trim()) || null;
-  const adminEvents = entries(sections.get("admin events")).map((line) => {
+  const adminEvents = entries(sections2.get("admin events")).map((line) => {
     var _a2;
     const parts = splitFields(line);
     return { command: (_a2 = parts[0]) != null ? _a2 : "", args: parts.slice(1), raw: line };
@@ -5254,9 +5577,10 @@ function parseDaily(db, sourceText, thresholds, errors) {
     transactions,
     exercises,
     milestones,
+    valuationRates,
     stoicism: { score, notes },
     adminEvents,
-    mealInspection: inspectMeals(db, sourceText, thresholds)
+    mealInspection: inspectMeals(db, formBody2, thresholds)
   };
 }
 function applyAdminEvents(db, parsed, noteDate, errors) {
@@ -5386,7 +5710,7 @@ function applyAdminEvents(db, parsed, noteDate, errors) {
         if (args.length === 3) {
           db.run("INSERT INTO accounts (name, type, address) VALUES (?, ?, ?)", args);
         } else {
-          db.run("INSERT INTO accounts (name, type, currency, address) VALUES (?, ?, ?, ?)", [args[0], args[1] || null, args[2] || null, args[3] || null]);
+          db.run("INSERT INTO accounts (name, type, currency, address) VALUES (?, ?, ?, ?)", [args[0], args[1] || null, args[2] ? normalizeValuationUnit(args[2]) : null, args[3] || null]);
         }
       } else if (event.command === "ACCOUNT_ALIAS" || event.command === "ACCOUNT_ALIAS_ADD") {
         const account = resolveEntity(db, args[0], "accounts");
@@ -5420,7 +5744,7 @@ function applyAdminEvents(db, parsed, noteDate, errors) {
       } else if (event.command === "ACCOUNT_SET_CURRENCY") {
         const account = resolveEntity(db, args[0], "accounts");
         if (!account) throw new Error(`Unknown account: ${args[0]}`);
-        db.run("UPDATE accounts SET currency = ? WHERE id = ?", [args[1] || null, account.id]);
+        db.run("UPDATE accounts SET currency = ? WHERE id = ?", [args[1] ? normalizeValuationUnit(args[1]) : null, account.id]);
       } else if (event.command === "ACCOUNT_SET_ADDRESS") {
         const account = resolveEntity(db, args[0], "accounts");
         if (!account) throw new Error(`Unknown account: ${args[0]}`);
@@ -5505,6 +5829,13 @@ function applyAdminEvents(db, parsed, noteDate, errors) {
   }
 }
 function validateFacts(db, parsed, errors, warnings) {
+  if (parsed.valuationRates.length > 0) {
+    try {
+      assertValuationHistorySchema(db);
+    } catch (error) {
+      errors.push(error instanceof Error ? error.message : String(error));
+    }
+  }
   for (const metric of ["mood", "energy", "stress"]) {
     const value = parsed.metrics[metric];
     if (value != null && (typeof value !== "number" || value < -2 || value > 2)) {
@@ -5604,7 +5935,8 @@ function inspectionFor(input, parsed, imported, errors, warnings) {
       exercise_count: parsed.exercises.length,
       meal_count: parsed.mealInspection.foodRowCount,
       milestone_count: parsed.milestones.length,
-      admin_event_count: parsed.adminEvents.length
+      admin_event_count: parsed.adminEvents.length,
+      valuation_rate_count: parsed.valuationRates.length
     },
     preview: {
       daily_metrics: Object.fromEntries(METRIC_FIELDS.map((field) => {
@@ -5649,28 +5981,35 @@ function inspectionFor(input, parsed, imported, errors, warnings) {
           sets: exercise.sets.map((set, index) => ({ set_number: index + 1, ...set })),
           notes: exercise.notes || null
         };
-      })
+      }),
+      valuationRates: parsed.valuationRates.map((rate) => ({ unit: rate.unitLabel, value: rate.value }))
     },
     mealInspection: parsed.mealInspection
   };
 }
 function prepareDaily(db, input) {
   assertSchemaV1(db);
-  requireIsoDate2(input.noteDate, "Note date");
-  requireIsoDate2(input.todayDate, "Today date");
+  requireIsoDate(input.noteDate, "Note date");
+  requireIsoDate(input.todayDate, "Today date");
   const errors = [];
   const warnings = [];
   let parsed;
   try {
-    parsed = parseDaily(db, input.sourceText, input.nutritionThresholds, errors);
+    parsed = parseDaily(db, input.sourceText, input.noteDate, input.nutritionThresholds, errors);
   } catch (error) {
-    const mealInspection = inspectMeals(db, input.sourceText, input.nutritionThresholds);
+    let mealInspection;
+    try {
+      mealInspection = inspectMeals(db, dailyFormBody(input.sourceText, input.noteDate), input.nutritionThresholds);
+    } catch (e) {
+      mealInspection = inspectMeals(db, "", input.nutritionThresholds);
+    }
     parsed = {
       metrics: {},
       sessions: [],
       transactions: [],
       exercises: [],
       milestones: [],
+      valuationRates: [],
       stoicism: { score: null, notes: null },
       adminEvents: [],
       mealInspection
@@ -5681,7 +6020,7 @@ function prepareDaily(db, input) {
   if (imported) errors.push(`${input.noteDate} is already represented by a canonical imported note.`);
   if (errors.length === 0) applyAdminEvents(db, parsed, input.noteDate, errors);
   if (errors.length === 0) {
-    parsed.mealInspection = inspectMeals(db, input.sourceText, input.nutritionThresholds);
+    parsed.mealInspection = inspectMeals(db, dailyFormBody(input.sourceText, input.noteDate), input.nutritionThresholds);
     errors.push(...parsed.mealInspection.errors);
     warnings.push(...parsed.mealInspection.warnings);
   }
@@ -5785,6 +6124,7 @@ function writeHistoricalDailyNote(db, input) {
       transaction.description || null
     ]);
   }
+  const valuationRateCount = writeHistoricalValuationRates(db, input, parsed.valuationRates);
   const exerciseSessionIndex = parsed.sessions.findIndex((session) => {
     var _a2;
     return ((_a2 = session.sessionType) == null ? void 0 : _a2.code) === "exercise";
@@ -5857,13 +6197,14 @@ function writeHistoricalDailyNote(db, input) {
   `, [input.noteDate, input.fileName, input.filePath, input.sourceChecksum]);
   const source = queryRows(db, "SELECT id FROM note_sources WHERE note_date = ?", [input.noteDate])[0];
   if (source) db.run("DELETE FROM planned_sessions WHERE source_note_id = ?", [Number(source.id)]);
-  const rowCount = 1 + parsed.sessions.length + parsed.transactions.length + parsed.exercises.length + exerciseSetCount + parsed.milestones.length * 2 + parsed.mealInspection.foodRowCount;
+  const rowCount = 1 + parsed.sessions.length + parsed.transactions.length + parsed.exercises.length + exerciseSetCount + parsed.milestones.length * 2 + parsed.mealInspection.foodRowCount + valuationRateCount;
   insertComponent(db, input, "full_note", rowCount);
   insertComponent(db, input, "daily_metrics", 1);
   insertComponent(db, input, "sessions", parsed.sessions.length);
   insertComponent(db, input, "transactions", parsed.transactions.length);
   insertComponent(db, input, "exercises", parsed.exercises.length + exerciseSetCount);
   insertComponent(db, input, "milestones", parsed.milestones.length * 2);
+  insertComponent(db, input, "valuation_rates", valuationRateCount);
   return {
     noteDate: input.noteDate,
     sessionCount: parsed.sessions.length,
@@ -5873,6 +6214,7 @@ function writeHistoricalDailyNote(db, input) {
     milestoneCount: parsed.milestones.length,
     foodRowCount: parsed.mealInspection.foodRowCount,
     adminEventCount: parsed.adminEvents.length,
+    valuationRateCount,
     rowCount
   };
 }
@@ -5882,7 +6224,7 @@ function reconcileImportedMilestones(db, input) {
     throw new Error(`${input.noteDate} must be represented by exactly one imported note before milestone reconciliation.`);
   }
   const errors = [];
-  const parsed = parseDaily(db, input.sourceText, input.nutritionThresholds, errors);
+  const parsed = parseDaily(db, input.sourceText, input.noteDate, input.nutritionThresholds, errors);
   if (errors.length > 0) throw new Error(errors.join("\n\n"));
   let createdMilestones = 0;
   let linkedMilestones = 0;
@@ -5949,26 +6291,35 @@ function reconcileImportedMilestones(db, input) {
 var ESTIMATED_START_MINUTE = 7 * 60;
 var ESTIMATED_DURATION_MINUTES = 60;
 var ESTIMATED_SLOTS_PER_DAY = 17;
-function formSections(text) {
+function formSections(text, expectedDate) {
+  var _a, _b, _c;
   const issues = [];
-  const positions = ["#### EH Form"].map((heading) => text.indexOf(heading)).filter((position) => position >= 0);
-  if (positions.length === 0) return { sections: /* @__PURE__ */ new Map(), issues: ["No EH Form heading was found."] };
-  const start = Math.min(...positions);
-  let end = text.indexOf("#### END", start);
-  if (end < 0) {
-    end = text.length;
-    issues.push("No END marker was found; the form was parsed to the end of the note.");
+  const heading = /^####\s+EH\s+Daily\s+Form\s*$/mi.exec(text);
+  if (!heading || heading.index == null) return { sections: /* @__PURE__ */ new Map(), issues: ["No EH Daily Form heading was found."] };
+  const start = heading.index + heading[0].length;
+  const tail = text.slice(start);
+  const endMarker = /^####\s+END\s*$/mi.exec(tail);
+  if (!endMarker || endMarker.index == null) return { sections: /* @__PURE__ */ new Map(), issues: ["EH Daily Form has no matching #### END marker."] };
+  const form = tail.slice(0, endMarker.index);
+  const declared = (_c = (_b = (_a = /^date:\s*(.*?)\s*$/im.exec(form)) == null ? void 0 : _a[1]) == null ? void 0 : _b.trim()) != null ? _c : "";
+  if (!declared) issues.push("EH Daily Form requires date: YYYY-MM-DD.");
+  else {
+    try {
+      requireIsoDate(declared, "EH Daily Form date");
+    } catch (error) {
+      issues.push(error instanceof Error ? error.message : String(error));
+    }
+    if (expectedDate && declared !== expectedDate) issues.push(`EH Daily Form declares ${declared}, but this projection targets ${expectedDate}.`);
   }
-  const form = text.slice(start, end);
   const matches = [...form.matchAll(/^##### (.+?)\r?$/gm)];
-  const sections = /* @__PURE__ */ new Map();
+  const sections2 = /* @__PURE__ */ new Map();
   matches.forEach((match, index) => {
-    var _a, _b;
-    const bodyStart = ((_a = match.index) != null ? _a : 0) + match[0].length;
-    const bodyEnd = index + 1 < matches.length ? (_b = matches[index + 1].index) != null ? _b : form.length : form.length;
-    sections.set(match[1].trim(), form.slice(bodyStart, bodyEnd).trim());
+    var _a2, _b2;
+    const bodyStart = ((_a2 = match.index) != null ? _a2 : 0) + match[0].length;
+    const bodyEnd = index + 1 < matches.length ? (_b2 = matches[index + 1].index) != null ? _b2 : form.length : form.length;
+    sections2.set(match[1].trim(), form.slice(bodyStart, bodyEnd).trim());
   });
-  return { sections, issues };
+  return { sections: sections2, issues };
 }
 function entriesBlock(section) {
   const marker = section.indexOf("ENTRIES:");
@@ -5994,10 +6345,10 @@ function parsePlannedInterval(value) {
   const end = endHour * 60 + endMinute;
   return end > start ? [start, end] : null;
 }
-function inspectPlannedNote(text) {
+function inspectPlannedNote(text, expectedDate) {
   var _a;
-  const extracted = formSections(text);
-  if (extracted.issues.some((issue) => issue.startsWith("No EH Form"))) {
+  const extracted = formSections(text, expectedDate);
+  if (extracted.issues.some((issue) => issue.startsWith("No EH Daily Form"))) {
     return { sessions: [], issues: extracted.issues, parseStatus: "error" };
   }
   const sessionLines = entriesBlock((_a = extracted.sections.get("Sessions")) != null ? _a : "").split(/\r?\n/);
@@ -6063,8 +6414,8 @@ function resolvePlanningFacts(db, parsed) {
   });
 }
 function projectNote(db, note) {
-  requireIsoDate2(note.noteDate, "Daily Note date");
-  const parsed = inspectPlannedNote(note.sourceText);
+  requireIsoDate(note.noteDate, "Daily Note date");
+  const parsed = inspectPlannedNote(note.sourceText, note.noteDate);
   const resolved = resolvePlanningFacts(db, parsed);
   const combinedIssues = parsed.issues.join("\n\n") || null;
   let parseStatus = parsed.parseStatus;
@@ -6125,7 +6476,7 @@ function projectNote(db, note) {
 }
 function syncPlanningNotes(db, notes, cutoffDate) {
   assertSchemaV1(db);
-  requireIsoDate2(cutoffDate, "Planning cutoff");
+  requireIsoDate(cutoffDate, "Planning cutoff");
   const eligible = notes.filter((note) => note.noteDate >= cutoffDate);
   const duplicateDates = eligible.filter((note, index) => eligible.findIndex((other) => other.noteDate === note.noteDate) !== index);
   if (duplicateDates.length > 0) throw new Error(`Multiple Daily Notes were supplied for ${duplicateDates[0].noteDate}.`);
@@ -6161,13 +6512,20 @@ var DAY_OFFSETS = {
   thursday: 5,
   friday: 6
 };
-function parseWeekStart(text) {
-  const frontmatter = /^---\s*\r?\n([\s\S]*?)\r?\n---/.exec(text);
-  if (!frontmatter) throw new Error("Weekly note has no YAML frontmatter.");
-  const match = /^week start:\s*["']?(\d{4}-\d{2}-\d{2})["']?\s*$/im.exec(frontmatter[1]);
-  if (!match) throw new Error("Weekly note YAML must contain a rendered week start: YYYY-MM-DD.");
-  requireIsoDate2(match[1], "Weekly plan start");
-  return match[1];
+function weeklyFormBody(text) {
+  var _a, _b, _c, _d, _e, _f;
+  const form = /^####\s+EH\s+Weekly\s+Form\s*$/mi.exec(text);
+  if (!form || form.index == null) throw new Error("Weekly note has no #### EH Weekly Form heading.");
+  const after = text.slice(form.index + form[0].length);
+  const end = /^####\s+END\s*$/mi.exec(after);
+  if (!end || end.index == null) throw new Error("EH Weekly Form has no matching #### END marker.");
+  const body = after.slice(0, end.index);
+  const start = (_c = (_b = (_a = /^start date:\s*(.*?)\s*$/im.exec(body)) == null ? void 0 : _a[1]) == null ? void 0 : _b.trim()) != null ? _c : "";
+  const finish = (_f = (_e = (_d = /^end date:\s*(.*?)\s*$/im.exec(body)) == null ? void 0 : _d[1]) == null ? void 0 : _e.trim()) != null ? _f : "";
+  requireIsoDate(start, "Weekly plan start date");
+  requireIsoDate(finish, "Weekly plan end date");
+  if (addIsoDays(start, 6) !== finish) throw new Error("Weekly plan end date must equal start date + 6 days.");
+  return { body, weekStart: start };
 }
 function labeledValue(text, label) {
   const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -6292,24 +6650,29 @@ function parseGrid(db, text, weekStart) {
 }
 function parseWeeklyPlan(db, input) {
   assertSchemaV1(db);
-  const weekStart = parseWeekStart(input.sourceText);
+  const form = weeklyFormBody(input.sourceText);
+  const weekStart = form.weekStart;
   if (weekStart !== input.weekStartDate) {
-    throw new Error(`Weekly note index says ${input.weekStartDate}, but YAML says ${weekStart}.`);
+    throw new Error(`Weekly Form discovery says ${input.weekStartDate}, but the form says ${weekStart}.`);
   }
   return {
     weekStart,
-    mainOutcome: labeledValue(input.sourceText, "Main outcome"),
-    importantDeadline: labeledValue(input.sourceText, "Important deadline"),
-    constraintOrRisk: labeledValue(input.sourceText, "Constraint or risk"),
-    commitments: parseCommitments(db, input.sourceText),
-    sessions: parseGrid(db, input.sourceText, weekStart)
+    mainOutcome: labeledValue(form.body, "Main outcome"),
+    importantDeadline: labeledValue(form.body, "Important deadline"),
+    constraintOrRisk: labeledValue(form.body, "Constraint or risk"),
+    commitments: parseCommitments(db, form.body),
+    sessions: parseGrid(db, form.body, weekStart)
   };
 }
 function inspectWeeklyPlan(db, input) {
   const plan = parseWeeklyPlan(db, input);
-  const duplicate = queryRows(db, `SELECT source_file_name FROM weekly_plans
-    WHERE week_start_date = ? OR source_file_path = ? LIMIT 1`, [plan.weekStart, input.filePath])[0];
-  if (duplicate) throw new Error(`Week ${plan.weekStart} has already been imported from ${String(duplicate.source_file_name)}.`);
+  const overlap = queryRows(db, `SELECT week_start_date, source_file_name FROM weekly_plans
+    WHERE week_start_date <> ?
+      AND NOT (date(week_start_date, '+6 days') < ? OR week_start_date > ?)
+    LIMIT 1`, [plan.weekStart, plan.weekStart, addIsoDays(plan.weekStart, 6)])[0];
+  if (overlap) {
+    throw new Error(`Week ${plan.weekStart} overlaps imported week ${String(overlap.week_start_date)} from ${String(overlap.source_file_name)}.`);
+  }
   return {
     weekStart: plan.weekStart,
     commitmentCount: plan.commitments.length,
@@ -6320,19 +6683,39 @@ function inspectWeeklyPlan(db, input) {
 function writeWeeklyPlan(db, input) {
   const result = inspectWeeklyPlan(db, input);
   const plan = parseWeeklyPlan(db, input);
-  db.run(`INSERT INTO weekly_plans (
+  const existing = queryRows(db, "SELECT id FROM weekly_plans WHERE week_start_date = ?", [plan.weekStart])[0];
+  let planId;
+  if (existing) {
+    planId = Number(existing.id);
+    db.run("DELETE FROM weekly_plan_sessions WHERE weekly_plan_id = ?", [planId]);
+    db.run("DELETE FROM weekly_commitments WHERE weekly_plan_id = ?", [planId]);
+    db.run(`UPDATE weekly_plans SET
+      source_file_name = ?, source_file_path = ?, source_checksum = ?,
+      main_outcome = ?, important_deadline = ?, constraint_or_risk = ?, imported_at = CURRENT_TIMESTAMP
+      WHERE id = ?`, [
+      input.fileName,
+      input.filePath,
+      input.sourceChecksum,
+      plan.mainOutcome,
+      plan.importantDeadline,
+      plan.constraintOrRisk,
+      planId
+    ]);
+  } else {
+    db.run(`INSERT INTO weekly_plans (
       week_start_date, source_file_name, source_file_path, source_checksum,
       main_outcome, important_deadline, constraint_or_risk
     ) VALUES (?, ?, ?, ?, ?, ?, ?)`, [
-    plan.weekStart,
-    input.fileName,
-    input.filePath,
-    input.sourceChecksum,
-    plan.mainOutcome,
-    plan.importantDeadline,
-    plan.constraintOrRisk
-  ]);
-  const planId = lastInsertId(db);
+      plan.weekStart,
+      input.fileName,
+      input.filePath,
+      input.sourceChecksum,
+      plan.mainOutcome,
+      plan.importantDeadline,
+      plan.constraintOrRisk
+    ]);
+    planId = lastInsertId(db);
+  }
   for (const item of plan.commitments) {
     db.run(`INSERT INTO weekly_commitments (
       weekly_plan_id, source_ordinal, target_minutes, engagement_id, engagement_raw, commitment_text
@@ -6407,8 +6790,8 @@ function sessionRows(db, planId) {
 }
 function sessionEntryLocation(text) {
   var _a, _b, _c, _d;
-  const form = /^#### EH Form\s*$/m.exec(text);
-  if (!form) throw new Error("no EH Form heading");
+  const form = /^#### EH Daily Form\s*$/m.exec(text);
+  if (!form) throw new Error("no EH Daily Form heading");
   const formTail = text.slice(((_a = form.index) != null ? _a : 0) + form[0].length);
   const formEndMatch = /^#### END\s*$/m.exec(formTail);
   const formEnd = formEndMatch ? ((_b = form.index) != null ? _b : 0) + form[0].length + formEndMatch.index : text.length;
@@ -6418,13 +6801,13 @@ function sessionEntryLocation(text) {
   const sectionStart = ((_d = form.index) != null ? _d : 0) + form[0].length + section.index + section[0].length;
   const tail = text.slice(sectionStart, formEnd);
   const nextHeading = /^##### .+?\s*$/m.exec(tail);
-  const sectionEnd2 = nextHeading ? sectionStart + nextHeading.index : formEnd;
-  const sectionText = text.slice(sectionStart, sectionEnd2);
-  const entries2 = /^ENTRIES:[ \t]*(\r?\n|$)/m.exec(sectionText);
-  if (!entries2) throw new Error("Sessions section has no ENTRIES marker");
-  const position = sectionStart + entries2.index + entries2[0].length;
-  const prefix = entries2[1] ? "" : text.includes("\r\n") ? "\r\n" : "\n";
-  const body = text.slice(position, sectionEnd2);
+  const sectionEnd4 = nextHeading ? sectionStart + nextHeading.index : formEnd;
+  const sectionText = text.slice(sectionStart, sectionEnd4);
+  const entries3 = /^ENTRIES:[ \t]*(\r?\n|$)/m.exec(sectionText);
+  if (!entries3) throw new Error("Sessions section has no ENTRIES marker");
+  const position = sectionStart + entries3.index + entries3[0].length;
+  const prefix = entries3[1] ? "" : text.includes("\r\n") ? "\r\n" : "\n";
+  const body = text.slice(position, sectionEnd4);
   let insideComment = false;
   let occupied = false;
   for (const raw of body.split(/\r?\n/)) {
@@ -6448,7 +6831,7 @@ function sessionEntryLocation(text) {
 function prepareWeeklyDailyNoteWrites(db, selector, todayDate, notes) {
   var _a;
   assertSchemaV1(db);
-  requireIsoDate2(todayDate, "Today");
+  requireIsoDate(todayDate, "Today");
   const plan = resolveWeeklyPlan(db, selector);
   const finalDate = addIsoDays(plan.weekStart, 6);
   const firstDate = todayDate > plan.weekStart ? todayDate : plan.weekStart;
@@ -6560,7 +6943,7 @@ function shouldCreateDatabaseBackup(durability) {
 }
 
 // src/native-logger/admin-event-stage.ts
-var EH_FORM_HEADING = /^####\s+EH\s+Form\s*$/mi;
+var EH_FORM_HEADING = /^####\s+EH\s+Daily\s+Form\s*$/mi;
 var EH_FORM_END = /^####\s+END\s*$/gmi;
 var ADMIN_EVENTS_HEADING = /^#####\s+Admin\s+Events\s*$/gmi;
 var SECTION_HEADING = /^#####\s+/gmi;
@@ -6570,10 +6953,10 @@ function lineEndingFor(text) {
 }
 function formBounds(text) {
   const form = EH_FORM_HEADING.exec(text);
-  if (!form || form.index == null) throw new Error("This note has no #### EH Form block to receive an Admin Event.");
+  if (!form || form.index == null) throw new Error("This note has no #### EH Daily Form block to receive an Admin Event.");
   EH_FORM_END.lastIndex = form.index + form[0].length;
   const end = EH_FORM_END.exec(text);
-  if (!end || end.index == null) throw new Error("This note has an EH Form but no matching #### END marker.");
+  if (!end || end.index == null) throw new Error("This note has an EH Daily Form but no matching #### END marker.");
   return { start: form.index, end: end.index };
 }
 function sectionEnd(formText, afterHeading) {
@@ -6638,7 +7021,16 @@ function prepareAdminEventStage(input) {
 }
 
 // migrations/001_upgrade_v5_to_schema_v1.sql
-var upgrade_v5_to_schema_v1_default = "-- One-time conversion from the retired schema v5 to official Data Schema v1.\n-- This preserves existing meal rows exactly as stored. New imports will populate\n-- daily_meals.food_id and daily_meals.amount_g from canonical foods.\n\nCREATE TABLE foods (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    name TEXT NOT NULL COLLATE NOCASE UNIQUE CHECK (trim(name) <> ''),\n    category TEXT,\n    calories_kcal_per_100g REAL NOT NULL CHECK (calories_kcal_per_100g >= 0),\n    protein_g_per_100g REAL NOT NULL CHECK (protein_g_per_100g >= 0),\n    carbs_g_per_100g REAL NOT NULL CHECK (carbs_g_per_100g >= 0),\n    fat_g_per_100g REAL NOT NULL CHECK (fat_g_per_100g >= 0),\n    salt_g_per_100g REAL NOT NULL CHECK (salt_g_per_100g >= 0),\n    fiber_g_per_100g REAL CHECK (fiber_g_per_100g IS NULL OR fiber_g_per_100g >= 0),\n    cholesterol_mg_per_100g REAL CHECK (cholesterol_mg_per_100g IS NULL OR cholesterol_mg_per_100g >= 0),\n    notes TEXT,\n    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,\n    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP\n);\n\nCREATE TABLE food_aliases (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    food_id INTEGER NOT NULL REFERENCES foods(id) ON DELETE CASCADE,\n    alias TEXT NOT NULL COLLATE NOCASE UNIQUE CHECK (trim(alias) <> '')\n);\n\nALTER TABLE daily_meals\n    ADD COLUMN food_id INTEGER REFERENCES foods(id) ON DELETE SET NULL;\n\nALTER TABLE daily_meals\n    ADD COLUMN amount_g REAL CHECK (amount_g IS NULL OR amount_g > 0);\n\nALTER TABLE daily_meals\n    ADD COLUMN carbs_g REAL CHECK (carbs_g IS NULL OR carbs_g >= 0);\n\nALTER TABLE daily_meals\n    ADD COLUMN fat_g REAL CHECK (fat_g IS NULL OR fat_g >= 0);\n\nALTER TABLE daily_meals\n    ADD COLUMN salt_g REAL CHECK (salt_g IS NULL OR salt_g >= 0);\n\nALTER TABLE daily_meals\n    ADD COLUMN fiber_g REAL CHECK (fiber_g IS NULL OR fiber_g >= 0);\n\nALTER TABLE daily_meals\n    ADD COLUMN cholesterol_mg REAL CHECK (cholesterol_mg IS NULL OR cholesterol_mg >= 0);\n\nCREATE INDEX idx_daily_meals_food ON daily_meals(food_id, day);\nCREATE INDEX idx_food_aliases_food ON food_aliases(food_id);\n\nDELETE FROM schema_migrations;\nINSERT INTO schema_migrations (version, name, applied_at)\nVALUES (1, 'official schema v1: canonical food dictionary', datetime('now'));\n\nPRAGMA user_version = 1;\n";
+var upgrade_v5_to_schema_v1_default = "-- One-time conversion from the retired schema v5 to official Data Schema v1.\n-- This preserves existing meal rows exactly as stored. New imports will populate\n-- daily_meals.food_id and daily_meals.amount_g from canonical foods.\n\nCREATE TABLE foods (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    name TEXT NOT NULL COLLATE NOCASE UNIQUE CHECK (trim(name) <> ''),\n    category TEXT,\n    calories_kcal_per_100g REAL NOT NULL CHECK (calories_kcal_per_100g >= 0),\n    protein_g_per_100g REAL NOT NULL CHECK (protein_g_per_100g >= 0),\n    carbs_g_per_100g REAL NOT NULL CHECK (carbs_g_per_100g >= 0),\n    fat_g_per_100g REAL NOT NULL CHECK (fat_g_per_100g >= 0),\n    salt_g_per_100g REAL NOT NULL CHECK (salt_g_per_100g >= 0),\n    fiber_g_per_100g REAL CHECK (fiber_g_per_100g IS NULL OR fiber_g_per_100g >= 0),\n    cholesterol_mg_per_100g REAL CHECK (cholesterol_mg_per_100g IS NULL OR cholesterol_mg_per_100g >= 0),\n    notes TEXT,\n    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,\n    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP\n);\n\nCREATE TABLE food_aliases (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    food_id INTEGER NOT NULL REFERENCES foods(id) ON DELETE CASCADE,\n    alias TEXT NOT NULL COLLATE NOCASE UNIQUE CHECK (trim(alias) <> '')\n);\n\nALTER TABLE daily_meals\n    ADD COLUMN food_id INTEGER REFERENCES foods(id) ON DELETE SET NULL;\n\nALTER TABLE daily_meals\n    ADD COLUMN amount_g REAL CHECK (amount_g IS NULL OR amount_g > 0);\n\nALTER TABLE daily_meals\n    ADD COLUMN carbs_g REAL CHECK (carbs_g IS NULL OR carbs_g >= 0);\n\nALTER TABLE daily_meals\n    ADD COLUMN fat_g REAL CHECK (fat_g IS NULL OR fat_g >= 0);\n\nALTER TABLE daily_meals\n    ADD COLUMN salt_g REAL CHECK (salt_g IS NULL OR salt_g >= 0);\n\nALTER TABLE daily_meals\n    ADD COLUMN fiber_g REAL CHECK (fiber_g IS NULL OR fiber_g >= 0);\n\nALTER TABLE daily_meals\n    ADD COLUMN cholesterol_mg REAL CHECK (cholesterol_mg IS NULL OR cholesterol_mg >= 0);\n\nCREATE INDEX idx_daily_meals_food ON daily_meals(food_id, day);\nCREATE INDEX idx_food_aliases_food ON food_aliases(food_id);\n\nDELETE FROM schema_migrations;\nINSERT INTO schema_migrations (version, name, applied_at)\nVALUES (1, 'official schema v1: food, finance, and valuation foundations', datetime('now'));\n\nPRAGMA user_version = 1;\n";
+
+// migrations/002_add_finance_foundation_schema_v1.sql
+var add_finance_foundation_schema_v1_default = "-- Additive official Data Schema v1 finance foundation.\n-- The database remains Schema v1. This creates one replaceable active budget plan.\n\nCREATE TABLE active_budget_plan (\n    id INTEGER PRIMARY KEY CHECK (id = 1),\n    period_start DATE NOT NULL,\n    period_end DATE NOT NULL,\n    source_file_name TEXT NOT NULL,\n    source_file_path TEXT NOT NULL,\n    source_checksum TEXT NOT NULL,\n    imported_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,\n    CHECK (julianday(period_end) - julianday(period_start) >= 3)\n);\n\nCREATE TABLE budget_targets (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    budget_plan_id INTEGER NOT NULL REFERENCES active_budget_plan(id) ON DELETE CASCADE,\n    source_ordinal INTEGER NOT NULL,\n    currency TEXT NOT NULL CHECK (trim(currency) <> ''),\n    amount REAL NOT NULL CHECK (amount <> 0),\n    engagement_id INTEGER NOT NULL REFERENCES engagements(id),\n    engagement_raw TEXT NOT NULL,\n    UNIQUE (budget_plan_id, source_ordinal)\n);\n\nCREATE TABLE expected_financial_movements (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    budget_plan_id INTEGER NOT NULL REFERENCES active_budget_plan(id) ON DELETE CASCADE,\n    source_ordinal INTEGER NOT NULL,\n    due_date DATE NOT NULL,\n    currency TEXT NOT NULL CHECK (trim(currency) <> ''),\n    amount REAL NOT NULL CHECK (amount <> 0),\n    account_id INTEGER NOT NULL REFERENCES accounts(id),\n    engagement_id INTEGER NOT NULL REFERENCES engagements(id),\n    engagement_raw TEXT NOT NULL,\n    description TEXT,\n    UNIQUE (budget_plan_id, source_ordinal)\n);\n\nCREATE INDEX idx_budget_targets_plan_currency ON budget_targets(budget_plan_id, currency);\nCREATE INDEX idx_budget_targets_engagement ON budget_targets(engagement_id);\nCREATE INDEX idx_expected_financial_movements_plan_due ON expected_financial_movements(budget_plan_id, due_date);\nCREATE INDEX idx_expected_financial_movements_account ON expected_financial_movements(account_id, due_date);\n\nUPDATE schema_migrations\nSET name = 'official schema v1: food, finance, and valuation foundations'\nWHERE version = 1;\n";
+
+// migrations/003_add_valuation_history_schema_v1.sql
+var add_valuation_history_schema_v1_default = "-- Additive official Data Schema v1 valuation history.\n-- Rates are observed through finalized historical Daily Notes and remain effective until superseded.\n\nCREATE TABLE valuation_rate_sets (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    rate_date DATE NOT NULL UNIQUE,\n    source_file_name TEXT NOT NULL,\n    source_file_path TEXT NOT NULL,\n    source_checksum TEXT NOT NULL,\n    imported_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP\n);\n\nCREATE TABLE valuation_rates (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    rate_set_id INTEGER NOT NULL REFERENCES valuation_rate_sets(id) ON DELETE CASCADE,\n    source_ordinal INTEGER NOT NULL,\n    unit_key TEXT NOT NULL,\n    unit_label TEXT NOT NULL,\n    value REAL NOT NULL CHECK (value > 0),\n    UNIQUE (rate_set_id, source_ordinal),\n    UNIQUE (rate_set_id, unit_key)\n);\n\nCREATE INDEX idx_valuation_rate_sets_date ON valuation_rate_sets(rate_date);\nCREATE INDEX idx_valuation_rates_unit ON valuation_rates(unit_key, rate_set_id);\n\nUPDATE schema_migrations\nSET name = 'official schema v1: food, finance, and valuation foundations'\nWHERE version = 1;\n";
+
+// migrations/004_make_budget_plans_mutable_schema_v1.sql
+var make_budget_plans_mutable_schema_v1_default = "-- Replace the retired single-active Budget Form storage with dated mutable\n-- non-overlapping plans. This is still official Data Schema v1.\n\nCREATE TABLE budget_plans (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    period_start DATE NOT NULL,\n    period_end DATE NOT NULL,\n    source_file_name TEXT NOT NULL,\n    source_file_path TEXT NOT NULL,\n    source_checksum TEXT NOT NULL,\n    imported_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,\n    CHECK (julianday(period_end) - julianday(period_start) >= 3),\n    UNIQUE (period_start, period_end)\n);\n\nCREATE TABLE budget_targets_next (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    budget_plan_id INTEGER NOT NULL REFERENCES budget_plans(id) ON DELETE CASCADE,\n    source_ordinal INTEGER NOT NULL,\n    currency TEXT NOT NULL CHECK (trim(currency) <> ''),\n    amount REAL NOT NULL CHECK (amount <> 0),\n    engagement_id INTEGER NOT NULL REFERENCES engagements(id),\n    engagement_raw TEXT NOT NULL,\n    UNIQUE (budget_plan_id, source_ordinal)\n);\n\nCREATE TABLE expected_financial_movements_next (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    budget_plan_id INTEGER NOT NULL REFERENCES budget_plans(id) ON DELETE CASCADE,\n    source_ordinal INTEGER NOT NULL,\n    due_date DATE NOT NULL,\n    currency TEXT NOT NULL CHECK (trim(currency) <> ''),\n    amount REAL NOT NULL CHECK (amount <> 0),\n    account_id INTEGER NOT NULL REFERENCES accounts(id),\n    engagement_id INTEGER NOT NULL REFERENCES engagements(id),\n    engagement_raw TEXT NOT NULL,\n    description TEXT,\n    UNIQUE (budget_plan_id, source_ordinal)\n);\n\nINSERT INTO budget_plans (\n    id, period_start, period_end, source_file_name, source_file_path, source_checksum, imported_at\n)\nSELECT id, period_start, period_end, source_file_name, source_file_path, source_checksum, imported_at\nFROM active_budget_plan;\n\nINSERT INTO budget_targets_next (\n    id, budget_plan_id, source_ordinal, currency, amount, engagement_id, engagement_raw\n)\nSELECT id, budget_plan_id, source_ordinal, currency, amount, engagement_id, engagement_raw\nFROM budget_targets;\n\nINSERT INTO expected_financial_movements_next (\n    id, budget_plan_id, source_ordinal, due_date, currency, amount, account_id,\n    engagement_id, engagement_raw, description\n)\nSELECT id, budget_plan_id, source_ordinal, due_date, currency, amount, account_id,\n       engagement_id, engagement_raw, description\nFROM expected_financial_movements;\n\nDROP TABLE expected_financial_movements;\nDROP TABLE budget_targets;\nDROP TABLE active_budget_plan;\n\nALTER TABLE budget_targets_next RENAME TO budget_targets;\nALTER TABLE expected_financial_movements_next RENAME TO expected_financial_movements;\n\nCREATE INDEX idx_budget_plans_period ON budget_plans(period_start, period_end);\nCREATE INDEX idx_budget_targets_plan_currency ON budget_targets(budget_plan_id, currency);\nCREATE INDEX idx_budget_targets_engagement ON budget_targets(engagement_id);\nCREATE INDEX idx_expected_financial_movements_plan_due ON expected_financial_movements(budget_plan_id, due_date);\nCREATE INDEX idx_expected_financial_movements_account ON expected_financial_movements(account_id, due_date);\n\nUPDATE schema_migrations\nSET name = 'official schema v1: food, finance, valuation, and mutable budget foundations'\nWHERE version = 1;\n";
 
 // src/native-logger/schema-upgrade-core.ts
 function rows3(db, sql, params = []) {
@@ -6656,24 +7048,383 @@ function previewSchemaV1Upgrade(db) {
   var _a, _b, _c, _d;
   const currentSchemaVersion = Number((_b = (_a = rows3(db, "PRAGMA user_version")[0]) == null ? void 0 : _a.user_version) != null ? _b : 0);
   const migrationEntryCount = Number((_d = (_c = rows3(db, "SELECT COUNT(*) AS count FROM schema_migrations")[0]) == null ? void 0 : _c.count) != null ? _d : 0);
-  if (currentSchemaVersion !== 5) {
+  if (currentSchemaVersion === 5) {
+    return {
+      currentSchemaVersion,
+      targetSchemaVersion: 1,
+      migrationEntryCount,
+      needsFoodDictionary: true,
+      needsFinanceFoundation: true,
+      needsValuationHistory: true,
+      needsMutableBudgets: true
+    };
+  }
+  if (currentSchemaVersion === 1 && (!hasFinanceFoundationSchema(db) || !hasValuationHistorySchema(db))) {
+    return {
+      currentSchemaVersion,
+      targetSchemaVersion: 1,
+      migrationEntryCount,
+      needsFoodDictionary: false,
+      needsFinanceFoundation: !hasFinanceFoundationSchema(db) && !hasRetiredSingleBudgetSchema(db),
+      needsValuationHistory: !hasValuationHistorySchema(db),
+      needsMutableBudgets: !hasFinanceFoundationSchema(db)
+    };
+  }
+  {
     throw new Error(
-      currentSchemaVersion === 1 ? "This database already uses official Data Schema v1." : `This one-time upgrade supports only the retired pre-Schema-v1 database; this database reports v${currentSchemaVersion}.`
+      currentSchemaVersion === 1 ? "This database already includes the current official Data Schema v1 finance, valuation, and mutable budget foundations." : `This one-time upgrade supports only the retired pre-Schema-v1 database; this database reports v${currentSchemaVersion}.`
     );
   }
-  return { currentSchemaVersion, targetSchemaVersion: 1, migrationEntryCount };
 }
-function applyV5ToOfficialSchemaV1(db, upgradeSql) {
+function applyV5ToOfficialSchemaV1(db, foodUpgradeSql, financeUpgradeSql, valuationUpgradeSql, mutableBudgetUpgradeSql) {
   const preview = previewSchemaV1Upgrade(db);
-  db.run(upgradeSql);
+  if (preview.needsFoodDictionary) db.run(foodUpgradeSql);
+  if (preview.needsFinanceFoundation) db.run(financeUpgradeSql);
+  if (preview.needsValuationHistory) db.run(valuationUpgradeSql);
+  if (preview.needsMutableBudgets) db.run(mutableBudgetUpgradeSql);
   assertSchemaV1(db);
   assertMealImportSchema(db);
+  assertFinanceFoundationSchema(db);
+  assertValuationHistorySchema(db);
   return preview;
 }
 
 // src/native-logger/schema-upgrade.ts
 function upgradeV5ToOfficialSchemaV1(db) {
-  return applyV5ToOfficialSchemaV1(db, upgrade_v5_to_schema_v1_default);
+  return applyV5ToOfficialSchemaV1(db, upgrade_v5_to_schema_v1_default, add_finance_foundation_schema_v1_default, add_valuation_history_schema_v1_default, make_budget_plans_mutable_schema_v1_default);
+}
+
+// src/native-logger/budget.ts
+var BUDGET_FORM_HEADING = /^####\s+EH\s+Budget\s+Form\s*$/im;
+function hasBudgetForm(sourceText) {
+  return BUDGET_FORM_HEADING.test(sourceText);
+}
+function formBody(sourceText) {
+  const form = BUDGET_FORM_HEADING.exec(sourceText);
+  if (!form || form.index == null) throw new Error("This note does not contain an EH Budget Form heading.");
+  const after = sourceText.slice(form.index + form[0].length);
+  const end = /^####\s+END\s*$/im.exec(after);
+  if (!end) throw new Error("The EH Budget Form has no matching #### END marker.");
+  return after.slice(0, end.index);
+}
+function labeledValue2(text, label) {
+  const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const match = new RegExp(`^${escaped}:\\s*(.*?)\\s*$`, "im").exec(text);
+  const value = match == null ? void 0 : match[1].trim();
+  if (!value) throw new Error(`EH Budget Form requires '${label}: YYYY-MM-DD'.`);
+  return value;
+}
+function sections(body) {
+  const headings = [...body.matchAll(/^#####(?!#)\s+(.+?)\s*$/gm)];
+  const result = /* @__PURE__ */ new Map();
+  headings.forEach((heading, index) => {
+    var _a, _b;
+    const start = ((_a = heading.index) != null ? _a : 0) + heading[0].length;
+    const end = index + 1 < headings.length ? (_b = headings[index + 1].index) != null ? _b : body.length : body.length;
+    result.set(heading[1].trim().toLowerCase(), body.slice(start, end));
+  });
+  return result;
+}
+function entries2(section, label) {
+  if (!section) return [];
+  const marker = /^ENTRIES:[ \t]*$/im.exec(section);
+  if (!marker) throw new Error(`${label} has no ENTRIES marker.`);
+  return section.slice(marker.index + marker[0].length).split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+}
+function fields(line, expected, label) {
+  const parts = line.split("|").map((part) => part.trim());
+  if (parts.length !== expected) throw new Error(`Invalid ${label} '${line}'; expected ${expected} pipe-separated fields.`);
+  return parts;
+}
+function currency(value, label) {
+  const normalized = normalizeValuationUnit(value);
+  if (!normalized || /[|\r\n]/.test(normalized)) throw new Error(`${label} currency is empty or invalid.`);
+  return normalized;
+}
+function signedAmount(value, label) {
+  const amount = Number(value);
+  if (!Number.isFinite(amount) || amount === 0) throw new Error(`${label} amount must be a non-zero number.`);
+  return amount;
+}
+function daysInclusive(start, end) {
+  const startTime = Date.parse(`${start}T00:00:00Z`);
+  const endTime = Date.parse(`${end}T00:00:00Z`);
+  return Math.round((endTime - startTime) / 864e5) + 1;
+}
+function accountCurrency(db, accountId) {
+  const row = queryRows(db, "SELECT currency FROM accounts WHERE id = ?", [accountId])[0];
+  const value = (row == null ? void 0 : row.currency) == null ? "" : normalizeValuationUnit(String(row.currency));
+  return value || null;
+}
+function parseBudgetForm(db, input) {
+  assertFinanceFoundationSchema(db);
+  const body = formBody(input.sourceText);
+  const periodStart = labeledValue2(body, "period start");
+  const periodEnd = labeledValue2(body, "period end");
+  requireIsoDate(periodStart, "Budget period start");
+  requireIsoDate(periodEnd, "Budget period end");
+  if (daysInclusive(periodStart, periodEnd) < 4) throw new Error("Budget periods must contain at least four calendar days.");
+  const sectionMap = sections(body);
+  const targets = entries2(sectionMap.get("budget targets"), "Budget Targets").map((line, index) => {
+    const [rawCurrency, rawAmount, rawEngagement] = fields(line, 3, "Budget Target");
+    const engagement = resolveEntity(db, rawEngagement, "engagements");
+    if (!engagement) throw new Error(`Unknown engagement in Budget Target #${index + 1}: '${rawEngagement}'.`);
+    return {
+      ordinal: index + 1,
+      currency: currency(rawCurrency, `Budget Target #${index + 1}`),
+      amount: signedAmount(rawAmount, `Budget Target #${index + 1}`),
+      engagement,
+      engagementRaw: rawEngagement
+    };
+  });
+  const expectedMovements = entries2(sectionMap.get("expected movements"), "Expected Movements").map((line, index) => {
+    const [rawDate, rawCurrency, rawAmount, rawAccount, rawEngagement, rawDescription] = fields(line, 6, "Expected Movement");
+    requireIsoDate(rawDate, `Expected Movement #${index + 1} date`);
+    const account = resolveEntity(db, rawAccount, "accounts");
+    if (!account) throw new Error(`Unknown account in Expected Movement #${index + 1}: '${rawAccount}'.`);
+    const engagement = resolveEntity(db, rawEngagement, "engagements");
+    if (!engagement) throw new Error(`Unknown engagement in Expected Movement #${index + 1}: '${rawEngagement}'.`);
+    const movementCurrency = currency(rawCurrency, `Expected Movement #${index + 1}`);
+    const configuredCurrency = accountCurrency(db, account.id);
+    if (configuredCurrency && configuredCurrency !== movementCurrency) {
+      throw new Error(`Expected Movement #${index + 1} uses ${movementCurrency}, but ${account.name} is configured as ${configuredCurrency}.`);
+    }
+    if (rawDate < periodStart || rawDate > periodEnd) {
+      throw new Error(`Expected Movement #${index + 1} date ${rawDate} is outside the budget period.`);
+    }
+    return {
+      ordinal: index + 1,
+      dueDate: rawDate,
+      currency: movementCurrency,
+      amount: signedAmount(rawAmount, `Expected Movement #${index + 1}`),
+      account,
+      engagement,
+      engagementRaw: rawEngagement,
+      description: rawDescription || null
+    };
+  });
+  return { periodStart, periodEnd, targets, expectedMovements };
+}
+function inspectBudgetForm(db, input) {
+  const parsed = parseBudgetForm(db, input);
+  assertBudgetDoesNotOverlap(db, parsed.periodStart, parsed.periodEnd);
+  return {
+    periodStart: parsed.periodStart,
+    periodEnd: parsed.periodEnd,
+    targetCount: parsed.targets.length,
+    expectedMovementCount: parsed.expectedMovements.length,
+    updatedExistingBudget: queryRows(db, `
+      SELECT 1 FROM budget_plans WHERE period_start = ? AND period_end = ? LIMIT 1
+    `, [parsed.periodStart, parsed.periodEnd])[0] != null
+  };
+}
+function assertBudgetDoesNotOverlap(db, periodStart, periodEnd) {
+  const conflict = queryRows(db, `
+    SELECT period_start, period_end, source_file_path
+    FROM budget_plans
+    WHERE NOT (period_end < ? OR period_start > ?)
+      AND NOT (period_start = ? AND period_end = ?)
+    ORDER BY period_start
+    LIMIT 1
+  `, [periodStart, periodEnd, periodStart, periodEnd])[0];
+  if (conflict) {
+    throw new Error(
+      `Budget period ${periodStart} to ${periodEnd} overlaps the existing budget ${String(conflict.period_start)} to ${String(conflict.period_end)} in ${String(conflict.source_file_path)}.`
+    );
+  }
+}
+function writeBudgetForm(db, input) {
+  var _a;
+  const parsed = parseBudgetForm(db, input);
+  assertBudgetDoesNotOverlap(db, parsed.periodStart, parsed.periodEnd);
+  const existing = queryRows(db, `
+    SELECT id FROM budget_plans WHERE period_start = ? AND period_end = ? LIMIT 1
+  `, [parsed.periodStart, parsed.periodEnd])[0];
+  const updatedExistingBudget = existing != null;
+  const existingBudgetPlanId = updatedExistingBudget ? Number(existing.id) : null;
+  if (existingBudgetPlanId != null) {
+    db.run("DELETE FROM budget_targets WHERE budget_plan_id = ?", [existingBudgetPlanId]);
+    db.run("DELETE FROM expected_financial_movements WHERE budget_plan_id = ?", [existingBudgetPlanId]);
+    db.run(`UPDATE budget_plans
+      SET source_file_name = ?, source_file_path = ?, source_checksum = ?, imported_at = CURRENT_TIMESTAMP
+      WHERE id = ?`, [input.fileName, input.filePath, input.sourceChecksum, existingBudgetPlanId]);
+  } else {
+    db.run(`INSERT INTO budget_plans (
+      period_start, period_end, source_file_name, source_file_path, source_checksum
+    ) VALUES (?, ?, ?, ?, ?)`, [
+      parsed.periodStart,
+      parsed.periodEnd,
+      input.fileName,
+      input.filePath,
+      input.sourceChecksum
+    ]);
+  }
+  const budgetPlanId = existingBudgetPlanId != null ? existingBudgetPlanId : Number((_a = queryRows(db, "SELECT last_insert_rowid() AS id")[0]) == null ? void 0 : _a.id);
+  for (const target of parsed.targets) {
+    db.run(`INSERT INTO budget_targets (
+      budget_plan_id, source_ordinal, currency, amount, engagement_id, engagement_raw
+    ) VALUES (?, ?, ?, ?, ?, ?)`, [
+      budgetPlanId,
+      target.ordinal,
+      target.currency,
+      target.amount,
+      target.engagement.id,
+      target.engagementRaw
+    ]);
+  }
+  for (const movement of parsed.expectedMovements) {
+    db.run(`INSERT INTO expected_financial_movements (
+      budget_plan_id, source_ordinal, due_date, currency, amount, account_id,
+      engagement_id, engagement_raw, description
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, [
+      budgetPlanId,
+      movement.ordinal,
+      movement.dueDate,
+      movement.currency,
+      movement.amount,
+      movement.account.id,
+      movement.engagement.id,
+      movement.engagementRaw,
+      movement.description
+    ]);
+  }
+  return {
+    periodStart: parsed.periodStart,
+    periodEnd: parsed.periodEnd,
+    targetCount: parsed.targets.length,
+    expectedMovementCount: parsed.expectedMovements.length,
+    updatedExistingBudget
+  };
+}
+
+// src/native-logger/finance-entry-stage.ts
+var EH_FORM_HEADING2 = /^####\s+EH\s+Daily\s+Form\s*$/mi;
+var EH_FORM_END2 = /^####\s+END\s*$/gmi;
+var TRANSACTIONS_HEADING = /^#####\s+Transactions\s*$/gmi;
+var SECTION_HEADING2 = /^#####\s+/gmi;
+var ENTRIES_MARKER2 = /^ENTRIES:\s*$/gmi;
+function lineEndingFor2(text) {
+  return text.includes("\r\n") ? "\r\n" : "\n";
+}
+function formBounds2(text) {
+  const form = EH_FORM_HEADING2.exec(text);
+  if (!form || form.index == null) throw new Error("This note has no #### EH Daily Form block to receive a financial entry.");
+  EH_FORM_END2.lastIndex = form.index + form[0].length;
+  const end = EH_FORM_END2.exec(text);
+  if (!end || end.index == null) throw new Error("This note has an EH Daily Form but no matching #### END marker.");
+  return { start: form.index, end: end.index };
+}
+function sectionEnd2(formText, afterHeading) {
+  var _a;
+  SECTION_HEADING2.lastIndex = afterHeading;
+  const next = SECTION_HEADING2.exec(formText);
+  return (_a = next == null ? void 0 : next.index) != null ? _a : formText.length;
+}
+async function prepareFinanceEntryStage(input) {
+  const line = input.line.trim();
+  if (!line || /\r|\n/.test(line)) throw new Error("A financial entry must be exactly one non-empty line.");
+  const { start, end } = formBounds2(input.sourceText);
+  const beforeForm = input.sourceText.slice(0, start);
+  const formText = input.sourceText.slice(start, end);
+  const afterForm = input.sourceText.slice(end);
+  const lineEnding = lineEndingFor2(input.sourceText);
+  TRANSACTIONS_HEADING.lastIndex = 0;
+  const heading = TRANSACTIONS_HEADING.exec(formText);
+  let updatedForm;
+  if (!heading || heading.index == null) {
+    const separator = formText.endsWith(lineEnding.repeat(2)) ? "" : lineEnding;
+    updatedForm = `${formText}${separator}${lineEnding}##### Transactions${lineEnding}ENTRIES:${lineEnding}${line}${lineEnding}`;
+  } else {
+    const contentStart = heading.index + heading[0].length;
+    const endOfSection = sectionEnd2(formText, contentStart);
+    const section = formText.slice(contentStart, endOfSection);
+    ENTRIES_MARKER2.lastIndex = 0;
+    const marker = ENTRIES_MARKER2.exec(section);
+    if (!marker || marker.index == null) {
+      const prefix = section.startsWith(lineEnding) ? "" : lineEnding;
+      const replacement = `${prefix}ENTRIES:${lineEnding}${line}${lineEnding}${section}`;
+      updatedForm = `${formText.slice(0, contentStart)}${replacement}${formText.slice(endOfSection)}`;
+    } else {
+      const transactionLines = section.slice(marker.index + marker[0].length).split(/\r?\n/).map((candidate) => candidate.trim()).filter(Boolean);
+      if (transactionLines.includes(line)) throw new Error("This financial entry is already staged in the selected Daily Note.");
+      const insertAt = contentStart + marker.index + marker[0].length;
+      const beforeEntries = formText.slice(0, insertAt);
+      const afterEntries = formText.slice(insertAt);
+      const prefix = beforeEntries.endsWith(lineEnding) ? "" : lineEnding;
+      const suffix = afterEntries.startsWith(lineEnding) ? "" : lineEnding;
+      updatedForm = `${beforeEntries}${prefix}${line}${lineEnding}${suffix}${afterEntries}`;
+    }
+  }
+  return {
+    ...input,
+    line,
+    sourceChecksum: await sha256Text(input.sourceText),
+    updatedText: `${beforeForm}${updatedForm}${afterForm}`
+  };
+}
+
+// src/native-logger/valuation-rate-stage.ts
+var EH_FORM_HEADING3 = /^####\s+EH\s+Daily\s+Form\s*$/mi;
+var EH_FORM_END3 = /^####\s+END\s*$/gmi;
+var RATES_HEADING = /^#####\s+Valuation\s+Rates\s*$/gmi;
+var SECTION_HEADING3 = /^#####\s+/gmi;
+var ENTRIES_MARKER3 = /^ENTRIES:\s*$/gmi;
+function lineEndingFor3(text) {
+  return text.includes("\r\n") ? "\r\n" : "\n";
+}
+function formBounds3(text) {
+  const form = EH_FORM_HEADING3.exec(text);
+  if (!form || form.index == null) throw new Error("This note has no #### EH Daily Form block to receive Valuation Rates.");
+  EH_FORM_END3.lastIndex = form.index + form[0].length;
+  const end = EH_FORM_END3.exec(text);
+  if (!end || end.index == null) throw new Error("This note has an EH Daily Form but no matching #### END marker.");
+  return { start: form.index, end: end.index };
+}
+function sectionEnd3(formText, afterHeading) {
+  var _a, _b;
+  SECTION_HEADING3.lastIndex = afterHeading;
+  return (_b = (_a = SECTION_HEADING3.exec(formText)) == null ? void 0 : _a.index) != null ? _b : formText.length;
+}
+async function prepareValuationRateStage(input) {
+  const lines = input.lines.map((line) => line.trim()).filter(Boolean);
+  if (lines.length === 0 || lines.some((line) => /\r|\n/.test(line))) throw new Error("Each Valuation Rate must be one non-empty line.");
+  const { start, end } = formBounds3(input.sourceText);
+  const beforeForm = input.sourceText.slice(0, start);
+  const formText = input.sourceText.slice(start, end);
+  const afterForm = input.sourceText.slice(end);
+  const lineEnding = lineEndingFor3(input.sourceText);
+  RATES_HEADING.lastIndex = 0;
+  const heading = RATES_HEADING.exec(formText);
+  let updatedForm;
+  if (!heading || heading.index == null) {
+    throw new Error("This EH Daily Form has no Valuation Rates section. Add the section and its ENTRIES marker to the template first.");
+  } else {
+    const contentStart = heading.index + heading[0].length;
+    const endOfSection = sectionEnd3(formText, contentStart);
+    const section = formText.slice(contentStart, endOfSection);
+    ENTRIES_MARKER3.lastIndex = 0;
+    const marker = ENTRIES_MARKER3.exec(section);
+    if (!marker || marker.index == null) {
+      throw new Error("The Valuation Rates section has no ENTRIES marker. Add it to the template first.");
+    } else {
+      const existing = section.slice(marker.index + marker[0].length).split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+      if (existing.length > 0) throw new Error("The selected Daily Note already has Valuation Rates. A date may have only one rate set.");
+      const insertAt = contentStart + marker.index + marker[0].length;
+      const beforeEntries = formText.slice(0, insertAt);
+      const afterEntries = formText.slice(insertAt);
+      const prefix = beforeEntries.endsWith(lineEnding) ? "" : lineEnding;
+      const suffix = afterEntries.startsWith(lineEnding) ? "" : lineEnding;
+      updatedForm = `${beforeEntries}${prefix}${lines.join(lineEnding)}${lineEnding}${suffix}${afterEntries}`;
+    }
+  }
+  return {
+    noteDate: input.noteDate,
+    fileName: input.fileName,
+    filePath: input.filePath,
+    lines,
+    sourceChecksum: await sha256Text(input.sourceText),
+    updatedText: `${beforeForm}${updatedForm}${afterForm}`
+  };
 }
 
 // src/native-logger/write-service.ts
@@ -6767,6 +7518,28 @@ var NativeLoggerWriteService = class {
       return {
         ...mutation.value,
         databasePath: mutation.databasePath,
+        backupPath: mutation.backupPath,
+        backupsPruned: mutation.backupsPruned,
+        backupRetentionWarning: mutation.backupRetentionWarning
+      };
+    });
+  }
+  async inspectBudget(request) {
+    const input = await this.budgetInput(request);
+    return this.inspectDatabase(request.databasePath, (db) => inspectBudgetForm(db, input));
+  }
+  importBudget(request) {
+    return this.enqueue(async () => {
+      const input = await this.budgetInput(request);
+      const mutation = await this.mutateDatabase(
+        request.databasePath,
+        "budget-plan",
+        (db) => writeBudgetForm(db, input)
+      );
+      return {
+        ...mutation.value,
+        databasePath: mutation.databasePath,
+        sourceChecksum: input.sourceChecksum,
         backupPath: mutation.backupPath,
         backupsPruned: mutation.backupsPruned,
         backupRetentionWarning: mutation.backupRetentionWarning
@@ -6980,6 +7753,34 @@ var NativeLoggerWriteService = class {
       return preview;
     });
   }
+  previewFinanceEntryStage(request) {
+    return prepareFinanceEntryStage(request);
+  }
+  stageFinanceEntry(preview) {
+    return this.enqueue(async () => {
+      const file = this.requireFile(preview.filePath, "Daily Note");
+      const current = await this.app.vault.read(file);
+      if (await sha256Text(current) !== preview.sourceChecksum) {
+        throw new Error(`${preview.fileName} changed during preview. Refresh and retry; no note was written.`);
+      }
+      await this.app.vault.modify(file, preview.updatedText);
+      return preview;
+    });
+  }
+  previewValuationRateStage(request) {
+    return prepareValuationRateStage(request);
+  }
+  stageValuationRates(preview) {
+    return this.enqueue(async () => {
+      const file = this.requireFile(preview.filePath, "Daily Note");
+      const current = await this.app.vault.read(file);
+      if (await sha256Text(current) !== preview.sourceChecksum) {
+        throw new Error(`${preview.fileName} changed during preview. Refresh and retry; no note was written.`);
+      }
+      await this.app.vault.modify(file, preview.updatedText);
+      return preview;
+    });
+  }
   async dailyInput(request) {
     return {
       ...request,
@@ -6988,6 +7789,9 @@ var NativeLoggerWriteService = class {
     };
   }
   async weeklyInput(request) {
+    return { ...request, sourceChecksum: await sha256Text(request.sourceText) };
+  }
+  async budgetInput(request) {
     return { ...request, sourceChecksum: await sha256Text(request.sourceText) };
   }
   async planningInputs(notes) {
@@ -7080,7 +7884,7 @@ var NativeLoggerWriteService = class {
   }
   requireFile(path, label) {
     const file = this.app.vault.getAbstractFileByPath(path);
-    if (!(file instanceof import_obsidian4.TFile)) throw new Error(`${label} was not found inside the vault: ${path}`);
+    if (!(file instanceof import_obsidian3.TFile)) throw new Error(`${label} was not found inside the vault: ${path}`);
     return file;
   }
   async createBackup(databasePath, bytes, label = "meals") {
@@ -7089,9 +7893,9 @@ var NativeLoggerWriteService = class {
     const dot = fileName.lastIndexOf(".");
     const stem = dot > 0 ? fileName.slice(0, dot) : fileName;
     const extension = dot > 0 ? fileName.slice(dot) : ".db";
-    const backupDirectory = (0, import_obsidian4.normalizePath)(backupDirectoryForDatabase(databasePath));
+    const backupDirectory = (0, import_obsidian3.normalizePath)(backupDirectoryForDatabase(databasePath));
     await this.ensureFolder(backupDirectory);
-    const backupPath = (0, import_obsidian4.normalizePath)(
+    const backupPath = (0, import_obsidian3.normalizePath)(
       `${backupDirectory}/${stem}.before-${label}-${backupTimestamp()}${extension}`
     );
     if (await this.app.vault.adapter.exists(backupPath)) {
@@ -7106,7 +7910,7 @@ var NativeLoggerWriteService = class {
     if (limit === 0) return { backupsPruned: 0, backupRetentionWarning: null };
     let backupsPruned = 0;
     try {
-      const backupDirectory = (0, import_obsidian4.normalizePath)(backupDirectoryForDatabase(databasePath));
+      const backupDirectory = (0, import_obsidian3.normalizePath)(backupDirectoryForDatabase(databasePath));
       const listing = await this.app.vault.adapter.list(backupDirectory);
       const removals = pluginBackupRetentionPlan(databasePath, listing.files, limit, protectedPath);
       for (const path of removals) {
@@ -7129,7 +7933,7 @@ var NativeLoggerWriteService = class {
       indexedType: (candidate) => {
         const existing = this.app.vault.getAbstractFileByPath(candidate);
         if (!existing) return null;
-        return existing instanceof import_obsidian4.TFolder ? "folder" : "file";
+        return existing instanceof import_obsidian3.TFolder ? "folder" : "file";
       },
       persistedType: async (candidate) => {
         var _a;
@@ -7160,20 +7964,20 @@ var NativeLoggerWriteService = class {
 };
 
 // src/CommandForms.ts
-var import_obsidian7 = require("obsidian");
-
-// src/command-staging.ts
 var import_obsidian6 = require("obsidian");
 
-// src/AdminEventStageModal.ts
+// src/command-staging.ts
 var import_obsidian5 = require("obsidian");
+
+// src/AdminEventStageModal.ts
+var import_obsidian4 = require("obsidian");
 function chooseAdminEventStageTarget(app, targets) {
   return new Promise((resolve) => new AdminEventStageTargetModal(app, targets, resolve).open());
 }
 function confirmAdminEventStage(app, preview) {
   return new Promise((resolve) => new AdminEventStageConfirmationModal(app, preview, resolve).open());
 }
-var AdminEventStageTargetModal = class extends import_obsidian5.Modal {
+var AdminEventStageTargetModal = class extends import_obsidian4.Modal {
   constructor(app, targets, resolve) {
     super(app);
     this.targets = targets;
@@ -7209,7 +8013,7 @@ var AdminEventStageTargetModal = class extends import_obsidian5.Modal {
     this.contentEl.empty();
   }
 };
-var AdminEventStageConfirmationModal = class extends import_obsidian5.Modal {
+var AdminEventStageConfirmationModal = class extends import_obsidian4.Modal {
   constructor(app, preview, resolve) {
     super(app);
     this.preview = preview;
@@ -7242,18 +8046,18 @@ var AdminEventStageConfirmationModal = class extends import_obsidian5.Modal {
 };
 
 // src/command-staging.ts
-async function chooseTarget(plugin, preferredTarget) {
+async function chooseUnimportedDailyNote(plugin, preferredTarget) {
   if (preferredTarget && preferredTarget.status !== "imported") return preferredTarget;
-  const today = (0, import_obsidian6.moment)().format("YYYY-MM-DD");
+  const today = (0, import_obsidian5.moment)().format("YYYY-MM-DD");
   const index = await plugin.database.dailyNoteIndex(plugin.settings.databasePath);
   const candidates = (await buildDailyNoteList(
     plugin.app,
     index,
     today,
-    plugin.settings.journalFolder
+    plugin.knownForms()
   )).filter((item) => item.status !== "imported");
   if (candidates.length === 0) {
-    new import_obsidian6.Notice("There are no unimported EH Daily Notes available to receive this command.");
+    new import_obsidian5.Notice("There are no unimported EH Daily Notes available to receive this command.");
     return null;
   }
   if (candidates.length === 1) return candidates[0];
@@ -7262,10 +8066,10 @@ async function chooseTarget(plugin, preferredTarget) {
 async function stageAdminCommands(options) {
   const commands = options.commands.map((command) => command.trim()).filter(Boolean);
   if (commands.length === 0) throw new Error("No Admin Event commands were supplied.");
-  const target = await chooseTarget(options.plugin, options.preferredTarget);
+  const target = await chooseUnimportedDailyNote(options.plugin, options.preferredTarget);
   if (!target) return null;
   const file = options.plugin.app.vault.getAbstractFileByPath(target.filePath);
-  if (!(file instanceof import_obsidian6.TFile)) throw new Error(`Daily Note not found: ${target.filePath}`);
+  if (!(file instanceof import_obsidian5.TFile)) throw new Error(`Daily Note not found: ${target.filePath}`);
   const preview = await options.plugin.nativeLogger.previewAdminEventStage({
     noteDate: target.date,
     fileName: target.fileName,
@@ -7275,7 +8079,7 @@ async function stageAdminCommands(options) {
   });
   if (!await confirmAdminEventStage(options.plugin.app, preview)) return null;
   await options.plugin.nativeLogger.stageAdminEvent(preview);
-  new import_obsidian6.Notice(`${commands.length === 1 ? "Command staged" : `${commands.length} commands staged`} in ${target.fileName}.`, 8e3);
+  new import_obsidian5.Notice(`${commands.length === 1 ? "Command staged" : `${commands.length} commands staged`} in ${target.fileName}.`, 8e3);
   return target;
 }
 
@@ -7312,7 +8116,7 @@ function collectionFor(catalog, kind) {
 function openReferenceRepair(app, options) {
   new ReferenceRepairModal(app, options).open();
 }
-var ReferenceRepairModal = class extends import_obsidian7.Modal {
+var ReferenceRepairModal = class extends import_obsidian6.Modal {
   constructor(app, options) {
     var _a, _b, _c, _d;
     super(app);
@@ -7373,26 +8177,26 @@ var ReferenceRepairModal = class extends import_obsidian7.Modal {
     });
   }
   renderCreateFields(kindLabel) {
-    new import_obsidian7.Setting(this.contentEl).setName(`Canonical ${kindLabel} name`).setDesc("This is the name EH stores as the source of truth.").addText((text) => text.setValue(this.canonicalName).onChange((value) => {
+    new import_obsidian6.Setting(this.contentEl).setName(`Canonical ${kindLabel} name`).setDesc("This is the name EH stores as the source of truth.").addText((text) => text.setValue(this.canonicalName).onChange((value) => {
       this.canonicalName = value;
     }));
-    new import_obsidian7.Setting(this.contentEl).setName(`Also keep \u201C${this.options.reference.rawName}\u201D as an alias`).setDesc("Recommended when today\u2019s wording differs from the canonical name.").addToggle((toggle) => toggle.setValue(this.includeRawAlias).onChange((value) => {
+    new import_obsidian6.Setting(this.contentEl).setName(`Also keep \u201C${this.options.reference.rawName}\u201D as an alias`).setDesc("Recommended when today\u2019s wording differs from the canonical name.").addToggle((toggle) => toggle.setValue(this.includeRawAlias).onChange((value) => {
       this.includeRawAlias = value;
     }));
     if (this.options.reference.kind === "food") this.renderFoodFields();
     if (this.options.reference.kind === "engagement") this.renderEngagementFields();
     if (this.options.reference.kind === "exercise") {
-      new import_obsidian7.Setting(this.contentEl).setName("Category (optional)").addText((text) => text.setValue(this.category).onChange((value) => {
+      new import_obsidian6.Setting(this.contentEl).setName("Category (optional)").addText((text) => text.setValue(this.category).onChange((value) => {
         this.category = value;
       }));
     }
     if (this.options.reference.kind === "account") this.renderAccountFields();
   }
   renderFoodFields() {
-    new import_obsidian7.Setting(this.contentEl).setName("Food category (optional)").addText((text) => text.setValue(this.category).onChange((value) => {
+    new import_obsidian6.Setting(this.contentEl).setName("Food category (optional)").addText((text) => text.setValue(this.category).onChange((value) => {
       this.category = value;
     }));
-    const fields = [
+    const fields2 = [
       ["calories", "Calories per 100 g", true, "kcal"],
       ["protein", "Protein per 100 g", true, "g"],
       ["carbs", "Carbs per 100 g", true, "g"],
@@ -7401,8 +8205,8 @@ var ReferenceRepairModal = class extends import_obsidian7.Modal {
       ["fiber", "Fiber per 100 g", false, "g, optional"],
       ["cholesterol", "Cholesterol per 100 g", false, "mg, optional"]
     ];
-    for (const [key, name, , description] of fields) {
-      new import_obsidian7.Setting(this.contentEl).setName(name).setDesc(description).addText((text) => {
+    for (const [key, name, , description] of fields2) {
+      new import_obsidian6.Setting(this.contentEl).setName(name).setDesc(description).addText((text) => {
         text.inputEl.type = "number";
         text.inputEl.min = "0";
         text.inputEl.step = "any";
@@ -7411,32 +8215,32 @@ var ReferenceRepairModal = class extends import_obsidian7.Modal {
         });
       });
     }
-    new import_obsidian7.Setting(this.contentEl).setName("Notes (optional)").addTextArea((text) => text.setValue(this.notes).onChange((value) => {
+    new import_obsidian6.Setting(this.contentEl).setName("Notes (optional)").addTextArea((text) => text.setValue(this.notes).onChange((value) => {
       this.notes = value;
     }));
   }
   renderEngagementFields() {
-    new import_obsidian7.Setting(this.contentEl).setName("Engagement type").addDropdown((dropdown) => {
+    new import_obsidian6.Setting(this.contentEl).setName("Engagement type").addDropdown((dropdown) => {
       for (const value of this.options.catalog.engagementTypes) dropdown.addOption(value, value);
       return dropdown.setValue(this.engagementType).onChange((value) => {
         this.engagementType = value;
       });
     });
-    new import_obsidian7.Setting(this.contentEl).setName("Initial status").addDropdown((dropdown) => {
+    new import_obsidian6.Setting(this.contentEl).setName("Initial status").addDropdown((dropdown) => {
       for (const value of this.options.catalog.engagementStatuses) dropdown.addOption(value, value);
       return dropdown.setValue(this.engagementStatus).onChange((value) => {
         this.engagementStatus = value;
       });
     });
-    new import_obsidian7.Setting(this.contentEl).setName("Notes (optional)").addTextArea((text) => text.setValue(this.notes).onChange((value) => {
+    new import_obsidian6.Setting(this.contentEl).setName("Notes (optional)").addTextArea((text) => text.setValue(this.notes).onChange((value) => {
       this.notes = value;
     }));
   }
   renderAccountFields() {
-    new import_obsidian7.Setting(this.contentEl).setName("Account type (optional)").addText((text) => text.setValue(this.accountType).onChange((value) => {
+    new import_obsidian6.Setting(this.contentEl).setName("Account type (optional)").addText((text) => text.setValue(this.accountType).onChange((value) => {
       this.accountType = value;
     }));
-    new import_obsidian7.Setting(this.contentEl).setName("Currency (optional)").addText((text) => text.setValue(this.currency).onChange((value) => {
+    new import_obsidian6.Setting(this.contentEl).setName("Currency (optional)").addText((text) => text.setValue(this.currency).onChange((value) => {
       this.currency = value;
     }));
   }
@@ -7449,7 +8253,7 @@ var ReferenceRepairModal = class extends import_obsidian7.Modal {
       });
       return;
     }
-    new import_obsidian7.Setting(this.contentEl).setName(`Existing ${kindLabel}`).setDesc(`EH will stage \u201C${this.options.reference.rawName}\u201D as an alias of the selected canonical record.`).addDropdown((dropdown) => {
+    new import_obsidian6.Setting(this.contentEl).setName(`Existing ${kindLabel}`).setDesc(`EH will stage \u201C${this.options.reference.rawName}\u201D as an alias of the selected canonical record.`).addDropdown((dropdown) => {
       for (const choice of choices) dropdown.addOption(choice.name, choice.name);
       return dropdown.setValue(this.selectedExistingName).onChange((value) => {
         this.selectedExistingName = value;
@@ -7506,7 +8310,7 @@ var ReferenceRepairModal = class extends import_obsidian7.Modal {
       this.close();
       await this.options.onStaged();
     } catch (error) {
-      new import_obsidian7.Notice(error instanceof Error ? error.message : String(error), 1e4);
+      new import_obsidian6.Notice(error instanceof Error ? error.message : String(error), 1e4);
     } finally {
       button.disabled = false;
     }
@@ -7518,7 +8322,7 @@ var ReferenceRepairModal = class extends import_obsidian7.Modal {
 function openFoodEditor(app, options) {
   new FoodEditorModal(app, options).open();
 }
-var FoodEditorModal = class extends import_obsidian7.Modal {
+var FoodEditorModal = class extends import_obsidian6.Modal {
   constructor(app, options) {
     var _a, _b;
     super(app);
@@ -7552,7 +8356,7 @@ var FoodEditorModal = class extends import_obsidian7.Modal {
     this.modalEl.addClass("examined-human-command-modal");
     this.contentEl.createEl("h2", { text: this.food ? `Edit food \u2014 ${this.food.name}` : "Create food" });
     const textField = (name, initial, assign, description) => {
-      new import_obsidian7.Setting(this.contentEl).setName(name).setDesc(description != null ? description : "").addText((text) => text.setValue(initial).onChange(assign));
+      new import_obsidian6.Setting(this.contentEl).setName(name).setDesc(description != null ? description : "").addText((text) => text.setValue(initial).onChange(assign));
     };
     textField("Canonical food name", this.name, (value) => {
       this.name = value;
@@ -7570,7 +8374,7 @@ var FoodEditorModal = class extends import_obsidian7.Modal {
       ["Cholesterol per 100 g", "cholesterol", false, "mg, optional"]
     ];
     for (const [label, key, , description] of numeric) {
-      new import_obsidian7.Setting(this.contentEl).setName(label).setDesc(description).addText((text) => {
+      new import_obsidian6.Setting(this.contentEl).setName(label).setDesc(description).addText((text) => {
         text.inputEl.type = "number";
         text.inputEl.min = "0";
         text.inputEl.step = "any";
@@ -7579,11 +8383,11 @@ var FoodEditorModal = class extends import_obsidian7.Modal {
         });
       });
     }
-    new import_obsidian7.Setting(this.contentEl).setName("Notes (optional)").addTextArea((text) => text.setValue(this.notes).onChange((value) => {
+    new import_obsidian6.Setting(this.contentEl).setName("Notes (optional)").addTextArea((text) => text.setValue(this.notes).onChange((value) => {
       this.notes = value;
     }));
     if (!this.food) {
-      new import_obsidian7.Setting(this.contentEl).setName("Aliases (optional)").setDesc("Comma-separated alternate spellings to store with this new canonical food.").addText((text) => text.setValue(this.aliases).onChange((value) => {
+      new import_obsidian6.Setting(this.contentEl).setName("Aliases (optional)").setDesc("Comma-separated alternate spellings to store with this new canonical food.").addText((text) => text.setValue(this.aliases).onChange((value) => {
         this.aliases = value;
       }));
     }
@@ -7628,7 +8432,7 @@ var FoodEditorModal = class extends import_obsidian7.Modal {
       this.close();
       await this.options.onStaged();
     } catch (error) {
-      new import_obsidian7.Notice(error instanceof Error ? error.message : String(error), 1e4);
+      new import_obsidian6.Notice(error instanceof Error ? error.message : String(error), 1e4);
     } finally {
       button.disabled = false;
     }
@@ -7640,7 +8444,7 @@ var FoodEditorModal = class extends import_obsidian7.Modal {
 function openEntityEditor(app, options) {
   new EntityEditorModal(app, options).open();
 }
-var EntityEditorModal = class extends import_obsidian7.Modal {
+var EntityEditorModal = class extends import_obsidian6.Modal {
   constructor(app, options) {
     var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j;
     super(app);
@@ -7685,13 +8489,13 @@ var EntityEditorModal = class extends import_obsidian7.Modal {
     this.modalEl.addClass("examined-human-command-modal");
     const label = this.options.kind === "engagement" ? "Engagement" : this.options.kind === "exercise" ? "Exercise" : "Account";
     this.contentEl.createEl("h2", { text: this.options.entity ? `Edit ${label}` : `Create ${label}` });
-    new import_obsidian7.Setting(this.contentEl).setName(`Canonical ${label} name`).addText((text) => text.setValue(this.name).onChange((value) => {
+    new import_obsidian6.Setting(this.contentEl).setName(`Canonical ${label} name`).addText((text) => text.setValue(this.name).onChange((value) => {
       this.name = value;
     }));
     if (this.options.kind === "engagement") this.renderEngagement();
     if (this.options.kind === "exercise") this.renderExercise();
     if (this.options.kind === "account") this.renderAccount();
-    new import_obsidian7.Setting(this.contentEl).setName("Aliases (optional)").setDesc("Comma-separated alternate spellings. Existing aliases remain; this adds the listed aliases.").addText((text) => text.setValue(this.aliases).onChange((value) => {
+    new import_obsidian6.Setting(this.contentEl).setName("Aliases (optional)").setDesc("Comma-separated alternate spellings. Existing aliases remain; this adds the listed aliases.").addText((text) => text.setValue(this.aliases).onChange((value) => {
       this.aliases = value;
     }));
     const actions = this.contentEl.createDiv({ cls: "examined-human-modal-actions" });
@@ -7702,13 +8506,13 @@ var EntityEditorModal = class extends import_obsidian7.Modal {
     });
   }
   renderEngagement() {
-    new import_obsidian7.Setting(this.contentEl).setName("Engagement type").addDropdown((dropdown) => {
+    new import_obsidian6.Setting(this.contentEl).setName("Engagement type").addDropdown((dropdown) => {
       for (const value of this.options.catalog.engagementTypes) dropdown.addOption(value, value);
       return dropdown.setValue(this.type).onChange((value) => {
         this.type = value;
       });
     });
-    new import_obsidian7.Setting(this.contentEl).setName("Status").addDropdown((dropdown) => {
+    new import_obsidian6.Setting(this.contentEl).setName("Status").addDropdown((dropdown) => {
       for (const value of this.options.catalog.engagementStatuses) dropdown.addOption(value, value);
       return dropdown.setValue(this.status).onChange((value) => {
         this.status = value;
@@ -7725,28 +8529,28 @@ var EntityEditorModal = class extends import_obsidian7.Modal {
         this.completionDate = next;
       }, this.completionDate]
     ]) {
-      new import_obsidian7.Setting(this.contentEl).setName(name).addText((text) => {
+      new import_obsidian6.Setting(this.contentEl).setName(name).addText((text) => {
         text.inputEl.type = "date";
         return text.setValue(value).onChange(assign);
       });
     }
-    new import_obsidian7.Setting(this.contentEl).setName("Notes (optional)").addTextArea((text) => text.setValue(this.notes).onChange((value) => {
+    new import_obsidian6.Setting(this.contentEl).setName("Notes (optional)").addTextArea((text) => text.setValue(this.notes).onChange((value) => {
       this.notes = value;
     }));
   }
   renderExercise() {
-    new import_obsidian7.Setting(this.contentEl).setName("Category (optional)").addText((text) => text.setValue(this.category).onChange((value) => {
+    new import_obsidian6.Setting(this.contentEl).setName("Category (optional)").addText((text) => text.setValue(this.category).onChange((value) => {
       this.category = value;
     }));
   }
   renderAccount() {
-    new import_obsidian7.Setting(this.contentEl).setName("Account type (optional)").addText((text) => text.setValue(this.type).onChange((value) => {
+    new import_obsidian6.Setting(this.contentEl).setName("Account type (optional)").addText((text) => text.setValue(this.type).onChange((value) => {
       this.type = value;
     }));
-    new import_obsidian7.Setting(this.contentEl).setName("Currency (optional)").addText((text) => text.setValue(this.currency).onChange((value) => {
+    new import_obsidian6.Setting(this.contentEl).setName("Currency (optional)").addText((text) => text.setValue(this.currency).onChange((value) => {
       this.currency = value;
     }));
-    new import_obsidian7.Setting(this.contentEl).setName("Address (optional)").addText((text) => text.setValue(this.address).onChange((value) => {
+    new import_obsidian6.Setting(this.contentEl).setName("Address (optional)").addText((text) => text.setValue(this.address).onChange((value) => {
       this.address = value;
     }));
   }
@@ -7795,7 +8599,7 @@ var EntityEditorModal = class extends import_obsidian7.Modal {
       this.close();
       await this.options.onStaged();
     } catch (error) {
-      new import_obsidian7.Notice(error instanceof Error ? error.message : String(error), 1e4);
+      new import_obsidian6.Notice(error instanceof Error ? error.message : String(error), 1e4);
     } finally {
       button.disabled = false;
     }
@@ -7806,8 +8610,8 @@ var EntityEditorModal = class extends import_obsidian7.Modal {
 };
 
 // src/SessionDetailsModal.ts
-var import_obsidian8 = require("obsidian");
-var SessionDetailsModal = class extends import_obsidian8.Modal {
+var import_obsidian7 = require("obsidian");
+var SessionDetailsModal = class extends import_obsidian7.Modal {
   constructor(app, event) {
     super(app);
     this.event = event;
@@ -8243,7 +9047,7 @@ function formatDuration(totalMinutes) {
   if (remainder === 0) return `${hours}h`;
   return `${hours}h ${remainder}m`;
 }
-var DailyAssessmentView = class extends import_obsidian9.ItemView {
+var DailyAssessmentView = class extends import_obsidian8.ItemView {
   constructor(leaf, plugin) {
     super(leaf);
     this.plugin = plugin;
@@ -8274,7 +9078,7 @@ var DailyAssessmentView = class extends import_obsidian9.ItemView {
     this.registerEvent(this.app.vault.on("modify", (file) => {
       var _a;
       try {
-        const databaseChanged = (0, import_obsidian9.normalizePath)(file.path) === this.plugin.database.normalizeVaultPath(this.plugin.settings.databasePath);
+        const databaseChanged = (0, import_obsidian8.normalizePath)(file.path) === this.plugin.database.normalizeVaultPath(this.plugin.settings.databasePath);
         const selectedNoteChanged = file.path === ((_a = this.selectedItem) == null ? void 0 : _a.filePath);
         if ((databaseChanged || selectedNoteChanged) && !this.plugin.nativeLogger.isRunning) void this.refresh();
       } catch (e) {
@@ -8300,9 +9104,9 @@ var DailyAssessmentView = class extends import_obsidian9.ItemView {
     this.contentEl.addClass("examined-human-daily-view");
     this.contentEl.createDiv({ cls: "examined-human-loading", text: "Loading Daily Assessment\u2026" });
     try {
-      const today = (0, import_obsidian9.moment)().format("YYYY-MM-DD");
+      const today = (0, import_obsidian8.moment)().format("YYYY-MM-DD");
       const index = await this.plugin.database.dailyNoteIndex(this.plugin.settings.databasePath);
-      const items = await buildDailyNoteList(this.app, index, today, this.plugin.settings.journalFolder);
+      const items = await buildDailyNoteList(this.app, index, today, this.plugin.knownForms());
       if (generation !== this.renderGeneration) return;
       this.items = items;
       if (!this.selectedDate || !items.some((item) => item.date === this.selectedDate)) {
@@ -8314,7 +9118,7 @@ var DailyAssessmentView = class extends import_obsidian9.ItemView {
       this.mealInspection = null;
       if (this.selectedItem && this.selectedItem.status !== "imported") {
         const noteFile = this.app.vault.getAbstractFileByPath(this.selectedItem.filePath);
-        if (noteFile instanceof import_obsidian9.TFile) {
+        if (noteFile instanceof import_obsidian8.TFile) {
           const sourceText = await this.app.vault.read(noteFile);
           const thresholds = {
             mealCalorieLimitKcal: this.plugin.settings.mealCalorieLimitKcal,
@@ -8374,7 +9178,7 @@ var DailyAssessmentView = class extends import_obsidian9.ItemView {
     identity.createEl("h2", { text: "Examined Human \u2014 Daily Assessment" });
     identity.createDiv({
       cls: "examined-human-toolbar-status",
-      text: this.selectedItem ? `${(0, import_obsidian9.moment)(this.selectedItem.date, "YYYY-MM-DD").format("ddd, MMM D, YYYY")} \xB7 ${this.statusLabel(this.selectedItem)}` : "Review journal data and safely import historical notes"
+      text: this.selectedItem ? `${(0, import_obsidian8.moment)(this.selectedItem.date, "YYYY-MM-DD").format("ddd, MMM D, YYYY")} \xB7 ${this.statusLabel(this.selectedItem)}` : "Review journal data and safely import historical notes"
     });
     const actions = header.createDiv({ cls: "examined-human-toolbar-actions" });
     this.actionButton = actions.createEl("button", { cls: "examined-human-toolbar-button mod-cta" });
@@ -8390,6 +9194,17 @@ var DailyAssessmentView = class extends import_obsidian9.ItemView {
         void this.handleImport();
       });
     }
+    const discoverButton = actions.createEl("button", { text: "Discover forms", cls: "examined-human-toolbar-button" });
+    discoverButton.addEventListener("click", () => {
+      discoverButton.disabled = true;
+      discoverButton.setText("Discovering\u2026");
+      void this.plugin.discoverFormsWithNotice().finally(() => {
+        if (discoverButton.isConnected) {
+          discoverButton.disabled = false;
+          discoverButton.setText("Discover forms");
+        }
+      });
+    });
     actions.createEl("button", { text: "Refresh", cls: "examined-human-toolbar-button" }).addEventListener("click", () => {
       void this.plugin.refreshViews();
     });
@@ -8408,8 +9223,8 @@ var DailyAssessmentView = class extends import_obsidian9.ItemView {
         ].join(" "),
         attr: { "aria-label": `${item.date}, ${this.statusLabel(item)}` }
       });
-      button.createSpan({ cls: "examined-human-daily-date-primary", text: (0, import_obsidian9.moment)(item.date, "YYYY-MM-DD").format("MMM D, YYYY") });
-      button.createSpan({ cls: "examined-human-daily-date-secondary", text: (0, import_obsidian9.moment)(item.date, "YYYY-MM-DD").format("dddd") });
+      button.createSpan({ cls: "examined-human-daily-date-primary", text: (0, import_obsidian8.moment)(item.date, "YYYY-MM-DD").format("MMM D, YYYY") });
+      button.createSpan({ cls: "examined-human-daily-date-secondary", text: (0, import_obsidian8.moment)(item.date, "YYYY-MM-DD").format("dddd") });
       button.addEventListener("click", () => {
         if (item.date === this.selectedDate) return;
         this.selectedDate = item.date;
@@ -8492,7 +9307,7 @@ var DailyAssessmentView = class extends import_obsidian9.ItemView {
         onStaged: async () => this.refresh()
       });
     } catch (error) {
-      new import_obsidian9.Notice(error instanceof Error ? error.message : String(error), 1e4);
+      new import_obsidian8.Notice(error instanceof Error ? error.message : String(error), 1e4);
     } finally {
       button.disabled = false;
     }
@@ -8609,7 +9424,7 @@ var DailyAssessmentView = class extends import_obsidian9.ItemView {
     const header = block.createDiv({ cls: "examined-human-daily-output-header" });
     header.createEl("strong", { text: label });
     header.createEl("button", { text: "Copy", cls: "examined-human-toolbar-button" }).addEventListener("click", () => {
-      void navigator.clipboard.writeText(output).then(() => new import_obsidian9.Notice("Copied logger output."));
+      void navigator.clipboard.writeText(output).then(() => new import_obsidian8.Notice("Copied logger output."));
     });
     const textarea = block.createEl("textarea", { cls: "examined-human-daily-output", attr: { readonly: "true", rows: "7" } });
     textarea.value = output;
@@ -8882,12 +9697,12 @@ var DailyAssessmentView = class extends import_obsidian9.ItemView {
     const item = this.selectedItem;
     if (!item || item.status === "imported") return;
     if (item.status === "needs-import" && ((_b = (_a = this.assessment) == null ? void 0 : _a.mealImport) == null ? void 0 : _b.lifecycleState) === "finalized") {
-      new import_obsidian9.Notice(`Meals for historical date ${item.date} were already imported.`, 8e3);
+      new import_obsidian8.Notice(`Meals for historical date ${item.date} were already imported.`, 8e3);
       return;
     }
     const noteFile = this.app.vault.getAbstractFileByPath(item.filePath);
-    if (!(noteFile instanceof import_obsidian9.TFile)) {
-      new import_obsidian9.Notice(`Daily Note not found: ${item.filePath}`, 8e3);
+    if (!(noteFile instanceof import_obsidian8.TFile)) {
+      new import_obsidian8.Notice(`Daily Note not found: ${item.filePath}`, 8e3);
       return;
     }
     try {
@@ -8904,7 +9719,7 @@ var DailyAssessmentView = class extends import_obsidian9.ItemView {
       this.mealInspection = inspection;
       if (!inspection.ready) {
         this.renderDashboard();
-        new import_obsidian9.Notice("Meals validation failed. Review the blockers before importing.", 1e4);
+        new import_obsidian8.Notice("Meals validation failed. Review the blockers before importing.", 1e4);
         return;
       }
       const confirmed = await confirmNativeMealImport(this.app, {
@@ -8917,7 +9732,7 @@ var DailyAssessmentView = class extends import_obsidian9.ItemView {
       const result = await this.plugin.nativeLogger.importMeals({
         databasePath: this.plugin.settings.databasePath,
         noteDate: item.date,
-        todayDate: (0, import_obsidian9.moment)().format("YYYY-MM-DD"),
+        todayDate: (0, import_obsidian8.moment)().format("YYYY-MM-DD"),
         sourceFilePath: item.filePath,
         sourceText,
         inspection
@@ -8928,14 +9743,14 @@ var DailyAssessmentView = class extends import_obsidian9.ItemView {
         ...backupMutationOutput(result)
       ].join("\n");
       await this.refresh();
-      new import_obsidian9.Notice(
+      new import_obsidian8.Notice(
         `${result.replaced ? "Meals replaced" : "Meals imported"} for ${item.date}. ${result.backupPath ? "Backup created." : "No backup was needed for this ephemeral write."}`,
         8e3
       );
     } catch (error) {
       this.loggerOutput = error instanceof Error ? error.message : String(error);
       this.renderDashboard();
-      new import_obsidian9.Notice("Native Meals import did not complete. No unverified write was kept.", 1e4);
+      new import_obsidian8.Notice("Native Meals import did not complete. No unverified write was kept.", 1e4);
     }
   }
   async handleImport() {
@@ -8947,12 +9762,12 @@ var DailyAssessmentView = class extends import_obsidian9.ItemView {
     if (activeButton) activeButton.disabled = true;
     try {
       const noteFile = this.app.vault.getAbstractFileByPath(item.filePath);
-      if (!(noteFile instanceof import_obsidian9.TFile)) throw new Error(`Daily Note not found: ${item.filePath}`);
+      if (!(noteFile instanceof import_obsidian8.TFile)) throw new Error(`Daily Note not found: ${item.filePath}`);
       const sourceText = await this.app.vault.read(noteFile);
       const request = {
         databasePath: this.plugin.settings.databasePath,
         noteDate: item.date,
-        todayDate: (0, import_obsidian9.moment)().format("YYYY-MM-DD"),
+        todayDate: (0, import_obsidian8.moment)().format("YYYY-MM-DD"),
         fileName: item.fileName,
         filePath: item.filePath,
         sourceText,
@@ -8967,7 +9782,7 @@ var DailyAssessmentView = class extends import_obsidian9.ItemView {
       if (item.status === "needs-import" && !inspection.ready) {
         this.loggerOutput = inspection.errors.join("\n\n");
         this.renderDashboard();
-        new import_obsidian9.Notice("Dry run failed. Review and copy the validation errors.", 1e4);
+        new import_obsidian8.Notice("Dry run failed. Review and copy the validation errors.", 1e4);
         return;
       }
       let dryRunOutput = "Native validation completed successfully.";
@@ -9000,6 +9815,7 @@ var DailyAssessmentView = class extends import_obsidian9.ItemView {
         ].join("\n");
       } else {
         const result = await this.plugin.nativeLogger.importHistoricalDaily(request);
+        await this.plugin.markImportedEhFormFileIfComplete(noteFile);
         this.loggerOutput = [
           `Imported ${result.sessionCount} sessions, ${result.transactionCount} transactions, ${result.exerciseCount} exercises, and ${result.foodRowCount} food rows.`,
           `Milestones: ${result.milestoneCount}. Admin events: ${result.adminEventCount}.`,
@@ -9008,16 +9824,16 @@ var DailyAssessmentView = class extends import_obsidian9.ItemView {
       }
       await this.refresh();
       if (item.status === "current-future") {
-        new import_obsidian9.Notice("Current and future planning projections were refreshed.", 8e3);
+        new import_obsidian8.Notice("Current and future planning projections were refreshed.", 8e3);
       } else {
         const imported = ((_c = this.selectedItem) == null ? void 0 : _c.status) === "imported";
-        if (imported) new import_obsidian9.Notice(`${item.date} imported successfully.`, 8e3);
-        else new import_obsidian9.Notice("Import did not complete. Review the logger output.", 1e4);
+        if (imported) new import_obsidian8.Notice(`${item.date} imported successfully.`, 8e3);
+        else new import_obsidian8.Notice("Import did not complete. Review the logger output.", 1e4);
       }
     } catch (error) {
       this.loggerOutput = error instanceof Error ? error.message : String(error);
       this.renderDashboard();
-      new import_obsidian9.Notice("EH Logger could not complete the requested action.", 1e4);
+      new import_obsidian8.Notice("EH Logger could not complete the requested action.", 1e4);
     } finally {
       if (activeButton == null ? void 0 : activeButton.isConnected) {
         activeButton.disabled = false;
@@ -9026,11 +9842,11 @@ var DailyAssessmentView = class extends import_obsidian9.ItemView {
     }
   }
   async planningSyncRequest() {
-    const cutoffDate = (0, import_obsidian9.moment)().format("YYYY-MM-DD");
+    const cutoffDate = (0, import_obsidian8.moment)().format("YYYY-MM-DD");
     const candidates = this.items.filter((candidate) => candidate.status === "current-future" && candidate.date >= cutoffDate);
     const notes = await Promise.all(candidates.map(async (candidate) => {
       const file = this.app.vault.getAbstractFileByPath(candidate.filePath);
-      if (!(file instanceof import_obsidian9.TFile)) throw new Error(`Daily Note not found: ${candidate.filePath}`);
+      if (!(file instanceof import_obsidian8.TFile)) throw new Error(`Daily Note not found: ${candidate.filePath}`);
       return {
         noteDate: candidate.date,
         fileName: candidate.fileName,
@@ -9065,6 +9881,58 @@ var DailyAssessmentView = class extends import_obsidian9.ItemView {
 
 // src/CommandCenterView.ts
 var import_obsidian10 = require("obsidian");
+
+// src/WeeklyActionConfirmationModal.ts
+var import_obsidian9 = require("obsidian");
+function confirmWeeklyAction(app, options) {
+  return new Promise((resolve) => {
+    new WeeklyActionConfirmationModal(app, options, resolve).open();
+  });
+}
+var WeeklyActionConfirmationModal = class extends import_obsidian9.Modal {
+  constructor(app, options, resolveChoice) {
+    super(app);
+    this.options = options;
+    this.resolveChoice = resolveChoice;
+    this.resolved = false;
+  }
+  onOpen() {
+    this.modalEl.addClass("examined-human-daily-confirm-modal");
+    this.contentEl.createEl("h2", { text: this.options.title });
+    this.contentEl.createEl("p", { text: this.options.explanation });
+    const details = this.contentEl.createEl("details", {
+      cls: "examined-human-daily-dry-run-details",
+      attr: { open: "true" }
+    });
+    details.createEl("summary", { text: "Dry-run output" });
+    const output = details.createEl("textarea", {
+      cls: "examined-human-daily-output",
+      attr: { readonly: "true", rows: "12" }
+    });
+    output.value = this.options.dryRunOutput;
+    const warning = this.contentEl.createEl("p", { cls: "examined-human-daily-confirm-warning" });
+    warning.createEl("strong", { text: "Nothing has been changed yet. " });
+    warning.appendText(this.options.warning);
+    const actions = this.contentEl.createDiv({ cls: "modal-button-container" });
+    actions.createEl("button", { text: "Cancel" }).addEventListener("click", () => this.finish(false));
+    actions.createEl("button", {
+      text: this.options.confirmLabel,
+      cls: "mod-cta"
+    }).addEventListener("click", () => this.finish(true));
+  }
+  onClose() {
+    this.contentEl.empty();
+    if (!this.resolved) this.resolveChoice(false);
+  }
+  finish(confirmed) {
+    if (this.resolved) return;
+    this.resolved = true;
+    this.resolveChoice(confirmed);
+    this.close();
+  }
+};
+
+// src/CommandCenterView.ts
 var EXAMINED_HUMAN_COMMAND_CENTER_VIEW_TYPE = "examined-human-command-center";
 function number(value, digits = 1) {
   return value == null ? "\u2014" : new Intl.NumberFormat(void 0, { maximumFractionDigits: digits }).format(value);
@@ -9087,6 +9955,7 @@ var CommandCenterView = class extends import_obsidian10.ItemView {
     this.plugin = plugin;
     this.foods = [];
     this.catalog = null;
+    this.finance = null;
     this.selectedFoodId = null;
     this.selectedEntityId = null;
     this.search = "";
@@ -9121,6 +9990,16 @@ var CommandCenterView = class extends import_obsidian10.ItemView {
       ]);
       this.foods = foods;
       this.catalog = catalog;
+      try {
+        this.finance = await this.plugin.database.financialDashboard(
+          this.plugin.settings.databasePath,
+          null,
+          (0, import_obsidian10.moment)().format("YYYY-MM-DD"),
+          { label: this.plugin.settings.valuationUnitLabel, referenceUnit: this.plugin.settings.valuationReferenceUnit }
+        );
+      } catch (e) {
+        this.finance = null;
+      }
       if (!this.foods.some((food) => food.id === this.selectedFoodId)) this.selectedFoodId = (_b = (_a = this.foods[0]) == null ? void 0 : _a.id) != null ? _b : null;
       this.render();
     } catch (error) {
@@ -9152,6 +10031,7 @@ var CommandCenterView = class extends import_obsidian10.ItemView {
       ["engagements", "Engagements", (_b = (_a = this.catalog) == null ? void 0 : _a.engagements.length) != null ? _b : null],
       ["exercises", "Exercises", (_d = (_c = this.catalog) == null ? void 0 : _c.exercises.length) != null ? _d : null],
       ["accounts", "Accounts", (_f = (_e = this.catalog) == null ? void 0 : _e.accounts.length) != null ? _f : null],
+      ["valuation", "Valuation", null],
       ["batch", "Batch", null]
     ];
     for (const [tab, label, count] of tabDefinitions) {
@@ -9165,6 +10045,10 @@ var CommandCenterView = class extends import_obsidian10.ItemView {
     }
     if (this.activeTab === "batch") {
       this.renderBatch();
+      return;
+    }
+    if (this.activeTab === "valuation") {
+      this.renderValuation();
       return;
     }
     if (this.activeTab !== "foods") {
@@ -9198,6 +10082,10 @@ var CommandCenterView = class extends import_obsidian10.ItemView {
     if (this.activeTab === "foods") {
       actions.createEl("button", { cls: "mod-cta", text: "Add food" }).addEventListener("click", () => {
         openFoodEditor(this.app, { plugin: this.plugin, onStaged: async () => this.refresh() });
+      });
+    } else if (this.activeTab === "valuation") {
+      actions.createEl("button", { cls: "mod-cta", text: "Stage valuation rates" }).addEventListener("click", () => {
+        new ValuationRateStageModal(this.app, this.plugin, async () => this.refresh()).open();
       });
     } else if (this.activeTab !== "batch" && catalog) {
       const kind = this.activeTab === "engagements" ? "engagement" : this.activeTab === "exercises" ? "exercise" : "account";
@@ -9354,6 +10242,50 @@ var CommandCenterView = class extends import_obsidian10.ItemView {
       const commands = input.value.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
       void this.stage(commands);
     });
+  }
+  renderValuation() {
+    var _a;
+    const panel = this.contentEl.createEl("section", { cls: "examined-human-daily-panel examined-human-command-batch" });
+    panel.createEl("h3", { text: "Valuation Rates" });
+    panel.createDiv({
+      cls: "examined-human-daily-section-subtitle",
+      text: `Stage unit | value observations into a Daily Note. ${this.plugin.settings.valuationReferenceUnit} is the reference asset class and is always worth 1 ${this.plugin.settings.valuationUnitLabel}. Imported rates remain effective until a newer rate is imported.`
+    });
+    const finance = this.finance;
+    if (!finance) {
+      panel.createDiv({ cls: "examined-human-daily-empty-inline", text: "Upgrade the database to the current official Schema v1 valuation foundation before auditing rates." });
+      return;
+    }
+    const summary = panel.createDiv({ cls: "examined-human-daily-completeness-grid" });
+    for (const [label, value] of [
+      ["As of", finance.valuation.asOfDate],
+      ["Net worth", `${number(finance.valuation.netWorth, 2)} ${finance.valuation.label}`],
+      ["Valued accounts", String(finance.valuation.valuedAccountCount)],
+      ["Missing rates", String(finance.valuation.missingAccounts.length)]
+    ]) {
+      const card = summary.createDiv({ cls: "examined-human-daily-mini-stat" });
+      card.createSpan({ text: label });
+      card.createEl("strong", { text: value });
+    }
+    const accounts = panel.createEl("section", { cls: "examined-human-daily-panel" });
+    accounts.createEl("h4", { text: "Current account valuation evidence" });
+    if (finance.accounts.length === 0) {
+      accounts.createDiv({ cls: "examined-human-daily-empty-inline", text: "No accounts have been defined yet." });
+      return;
+    }
+    const table = accounts.createEl("table", { cls: "examined-human-domain-table" });
+    const header = table.createEl("thead").createEl("tr");
+    for (const label of ["Account", "Unit", "Balance", "Rate", "Observed", "Value"]) header.createEl("th", { text: label });
+    const body = table.createEl("tbody");
+    for (const account of finance.accounts) {
+      const row = body.createEl("tr");
+      row.createEl("td", { text: account.accountName });
+      row.createEl("td", { text: account.currency });
+      row.createEl("td", { text: `${number(account.balance, 2)} ${account.currency}` });
+      row.createEl("td", { text: account.valuationRate == null ? "Missing" : number(account.valuationRate, 8) });
+      row.createEl("td", { text: account.valuationKind === "reference" ? "Reference unit" : (_a = account.valuationRateDate) != null ? _a : "\u2014" });
+      row.createEl("td", { text: account.valuationAmount == null ? "Excluded" : `${number(account.valuationAmount, 2)} ${finance.valuation.label}` });
+    }
   }
   renderFoodList(container) {
     container.empty();
@@ -9535,6 +10467,66 @@ var FoodAliasMoveModal = class extends import_obsidian10.Modal {
     this.contentEl.empty();
   }
 };
+var ValuationRateStageModal = class extends import_obsidian10.Modal {
+  constructor(app, plugin, onStaged) {
+    super(app);
+    this.plugin = plugin;
+    this.onStaged = onStaged;
+    this.rates = "";
+  }
+  onOpen() {
+    this.modalEl.addClass("examined-human-command-modal");
+    this.contentEl.createEl("h2", { text: "Stage Valuation Rates" });
+    this.contentEl.createEl("p", {
+      text: "Paste one unit | positive value line at a time. The chosen Daily Note will receive one Valuation Rates section; the values become historical evidence only when that note is imported."
+    });
+    const input = this.contentEl.createEl("textarea", {
+      attr: { rows: "10", placeholder: "USD | 1\nIRR | 0.000012\nNASDAQ SHARE | 170" }
+    });
+    input.addEventListener("input", () => {
+      this.rates = input.value;
+    });
+    const actions = this.contentEl.createDiv({ cls: "examined-human-modal-actions" });
+    actions.createEl("button", { text: "Cancel" }).addEventListener("click", () => this.close());
+    actions.createEl("button", { cls: "mod-cta", text: "Choose Daily Note" }).addEventListener("click", () => {
+      void this.stage();
+    });
+  }
+  async stage() {
+    try {
+      const lines = this.rates.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+      if (lines.length === 0) throw new Error("Enter at least one Valuation Rate.");
+      const target = await chooseUnimportedDailyNote(this.plugin, null);
+      if (!target) return;
+      const file = this.app.vault.getAbstractFileByPath(target.filePath);
+      if (!(file instanceof import_obsidian10.TFile)) throw new Error(`Daily Note not found: ${target.filePath}`);
+      const preview = await this.plugin.nativeLogger.previewValuationRateStage({
+        noteDate: target.date,
+        fileName: target.fileName,
+        filePath: target.filePath,
+        sourceText: await this.app.vault.read(file),
+        lines
+      });
+      const confirmed = await confirmWeeklyAction(this.app, {
+        title: "Stage Valuation Rates",
+        explanation: `This adds one Valuation Rates set to ${target.fileName}. The database is unchanged until the Daily Note is imported after its date.`,
+        confirmLabel: "Stage rates",
+        dryRunOutput: preview.lines.join("\n"),
+        warning: "Nothing has changed yet. Unit matching is case-insensitive, and a Daily Note may contain only one valuation rate set."
+      });
+      if (!confirmed) return;
+      await this.plugin.nativeLogger.stageValuationRates(preview);
+      new import_obsidian10.Notice(`Valuation Rates staged in ${target.fileName}.`, 8e3);
+      this.close();
+      await this.onStaged();
+    } catch (error) {
+      new import_obsidian10.Notice(error instanceof Error ? error.message : String(error), 1e4);
+    }
+  }
+  onClose() {
+    this.contentEl.empty();
+  }
+};
 var EntityAliasMoveModal = class extends import_obsidian10.Modal {
   constructor(app, plugin, kind, sourceName, alias, names, onStaged) {
     var _a;
@@ -9662,9 +10654,9 @@ function formatTimeRange(startTime, endTime) {
   if (!startTime && !endTime) return "\u2014";
   return `${startTime != null ? startTime : "\u2014"}\u2013${endTime != null ? endTime : "\u2014"}`;
 }
-function formatAmount(value, currency) {
+function formatAmount(value, currency2) {
   const formatted = new Intl.NumberFormat(void 0, { maximumFractionDigits: 2 }).format(value);
-  return `${formatted} ${currency}`;
+  return `${formatted} ${currency2}`;
 }
 function rangeStart(range, endDate, days) {
   const end = (0, import_obsidian12.moment)(endDate, "YYYY-MM-DD", true);
@@ -10206,9 +11198,9 @@ function formatDashboardDuration(totalMinutes) {
 function formatDashboardNumber(value, maximumFractionDigits = 1) {
   return new Intl.NumberFormat(void 0, { maximumFractionDigits }).format(value);
 }
-function formatDashboardAmount(value, currency) {
+function formatDashboardAmount(value, currency2) {
   const maximumFractionDigits = value !== 0 && Math.abs(value) < 0.01 ? 8 : 2;
-  return `${formatDashboardNumber(value, maximumFractionDigits)} ${currency}`;
+  return `${formatDashboardNumber(value, maximumFractionDigits)} ${currency2}`;
 }
 function formatDashboardPercent(value) {
   return value == null ? "\u2014" : `${formatDashboardNumber(value * 100, 1)}%`;
@@ -10249,6 +11241,104 @@ function renderDashboardBars(container, records) {
     if (record.detail) row.createDiv({ cls: "examined-human-domain-bar-detail", text: record.detail });
   }
 }
+function svgElement(parent, name, attributes = {}) {
+  return parent.createSvg(name, { attr: attributes });
+}
+function renderDashboardLine(container, records, ariaLabel) {
+  const values = records.map((record) => record.value).filter((value) => value != null && Number.isFinite(value));
+  if (values.length === 0) {
+    container.createDiv({ cls: "examined-human-domain-empty", text: "No valued balance history is available in this period." });
+    return;
+  }
+  const width = 760;
+  const height = 250;
+  const padding = { top: 18, right: 18, bottom: 38, left: 68 };
+  const plotWidth = width - padding.left - padding.right;
+  const plotHeight = height - padding.top - padding.bottom;
+  let minimum = Math.min(...values);
+  let maximum = Math.max(...values);
+  if (minimum === maximum) {
+    const breathingRoom = Math.max(Math.abs(minimum) * 0.05, 1);
+    minimum -= breathingRoom;
+    maximum += breathingRoom;
+  }
+  const x = (index) => padding.left + (records.length === 1 ? plotWidth / 2 : index / (records.length - 1) * plotWidth);
+  const y = (value) => padding.top + (maximum - value) / (maximum - minimum) * plotHeight;
+  const svg = svgElement(container, "svg", {
+    class: "examined-human-domain-line-chart",
+    viewBox: `0 0 ${width} ${height}`,
+    role: "img",
+    "aria-label": ariaLabel
+  });
+  svgElement(svg, "line", {
+    class: "examined-human-domain-line-axis",
+    x1: String(padding.left),
+    y1: String(padding.top + plotHeight),
+    x2: String(width - padding.right),
+    y2: String(padding.top + plotHeight)
+  });
+  if (minimum <= 0 && maximum >= 0) {
+    svgElement(svg, "line", {
+      class: "examined-human-domain-line-zero",
+      x1: String(padding.left),
+      y1: String(y(0)),
+      x2: String(width - padding.right),
+      y2: String(y(0))
+    });
+  }
+  let segment = [];
+  const flushSegment = () => {
+    if (segment.length === 0) return;
+    svgElement(svg, "polyline", {
+      class: "examined-human-domain-line-series",
+      points: segment.join(" ")
+    });
+    segment = [];
+  };
+  records.forEach((record, index) => {
+    if (record.value == null || !Number.isFinite(record.value)) {
+      flushSegment();
+      return;
+    }
+    segment.push(`${x(index)},${y(record.value)}`);
+  });
+  flushSegment();
+  records.forEach((record, index) => {
+    if (record.value == null || !Number.isFinite(record.value)) return;
+    const point = svgElement(svg, "circle", {
+      class: "examined-human-domain-line-point",
+      cx: String(x(index)),
+      cy: String(y(record.value)),
+      r: records.length <= 60 ? "3.2" : "2.2",
+      tabindex: "0",
+      "aria-label": `${record.ariaLabel}: ${record.displayValue}`
+    });
+    const title = svgElement(point, "title");
+    title.textContent = `${record.ariaLabel}: ${record.displayValue}`;
+  });
+  const axisLabels = [
+    { x: padding.left - 8, y: padding.top + 4, text: formatDashboardNumber(maximum, 2), anchor: "end" },
+    { x: padding.left - 8, y: padding.top + plotHeight, text: formatDashboardNumber(minimum, 2), anchor: "end" }
+  ];
+  const dateIndexes = [.../* @__PURE__ */ new Set([0, Math.floor((records.length - 1) / 2), records.length - 1])];
+  for (const index of dateIndexes) {
+    axisLabels.push({
+      x: x(index),
+      y: height - 12,
+      text: records[index].label,
+      anchor: index === 0 ? "start" : index === records.length - 1 ? "end" : "middle"
+    });
+  }
+  for (const label of axisLabels) {
+    const text = svgElement(svg, "text", {
+      class: "examined-human-domain-line-label",
+      x: String(label.x),
+      y: String(label.y),
+      "text-anchor": label.anchor
+    });
+    text.textContent = label.text;
+  }
+}
 function renderDashboardTrend(container, records) {
   if (records.length === 0) {
     container.createDiv({ cls: "examined-human-domain-empty", text: "No trend data was recorded in this period." });
@@ -10277,6 +11367,12 @@ var DashboardViewBase = class extends import_obsidian13.ItemView {
     this.selectedRange = "days";
     this.startDate = null;
     this.endDate = "";
+    /**
+     * Most dashboards use today as their right-hand boundary. A dashboard that
+     * presents historical "as of" facts can opt into a fixed boundary without
+     * changing the shared range semantics.
+     */
+    this.endDateOverride = null;
     this.renderGeneration = 0;
     this.fingerprintTimer = null;
     this.lastFingerprint = null;
@@ -10305,8 +11401,9 @@ var DashboardViewBase = class extends import_obsidian13.ItemView {
     this.contentEl.empty();
   }
   async refresh() {
+    var _a;
     const generation = ++this.renderGeneration;
-    this.endDate = (0, import_obsidian13.moment)().format("YYYY-MM-DD");
+    this.endDate = (_a = this.endDateOverride) != null ? _a : (0, import_obsidian13.moment)().format("YYYY-MM-DD");
     this.startDate = dashboardRangeStart(this.selectedRange, this.endDate, this.plugin.settings.defaultDashboardDays);
     this.contentEl.empty();
     this.contentEl.addClass("examined-human-domain-view");
@@ -10554,36 +11651,48 @@ var ExerciseDashboardView = class extends DashboardViewBase {
 };
 
 // src/FinancialDashboardView.ts
+var import_obsidian16 = require("obsidian");
+
+// src/budget-note-index.ts
 var import_obsidian15 = require("obsidian");
+function budgetNoteCandidates(app) {
+  return app.vault.getMarkdownFiles().map((file) => ({ fileName: file.name, filePath: file.path })).sort((left, right) => left.filePath.localeCompare(right.filePath));
+}
+async function readBudgetNote(app, candidate) {
+  const file = app.vault.getAbstractFileByPath(candidate.filePath);
+  if (!(file instanceof import_obsidian15.TFile)) throw new Error(`Budget note was not found: ${candidate.filePath}`);
+  const sourceText = await app.vault.read(file);
+  if (!hasBudgetForm(sourceText)) throw new Error(`${candidate.filePath} does not contain an EH Budget Form.`);
+  return { ...candidate, sourceText };
+}
+
+// src/FinancialDashboardView.ts
 var EXAMINED_HUMAN_FINANCIAL_DASHBOARD_VIEW_TYPE = "examined-human-financial-dashboard";
-function buildFlowBuckets(records) {
-  var _a;
-  if (records.length === 0) return [];
-  const first = (0, import_obsidian15.moment)(records[0].date, "YYYY-MM-DD", true);
-  const last = (0, import_obsidian15.moment)(records[records.length - 1].date, "YYYY-MM-DD", true);
-  const unit = last.diff(first, "days") <= 31 ? "day" : last.diff(first, "days") <= 180 ? "week" : "month";
-  const buckets = /* @__PURE__ */ new Map();
-  for (const record of records) {
-    const date = (0, import_obsidian15.moment)(record.date, "YYYY-MM-DD", true).startOf(unit);
-    const key = date.format("YYYY-MM-DD");
-    const bucket = (_a = buckets.get(key)) != null ? _a : {
-      key,
-      label: unit === "month" ? date.format("MMM YY") : date.format("MMM D"),
-      ariaLabel: unit === "week" ? `Week of ${date.format("MMMM D, YYYY")}` : date.format("MMMM D, YYYY"),
-      inflow: 0,
-      outflow: 0
-    };
-    bucket.inflow += record.inflow;
-    bucket.outflow += record.outflow;
-    buckets.set(key, bucket);
-  }
-  return [...buckets.values()].slice(-16);
+function sampledBalanceHistory(records) {
+  if (records.length <= 120) return records;
+  const step = records.length <= 730 ? 7 : 30;
+  const sampled = [records[0]];
+  for (let index = step; index < records.length - 1; index += step) sampled.push(records[index]);
+  if (records.length > 1) sampled.push(records[records.length - 1]);
+  return sampled;
+}
+function formattedEntryAmount(value) {
+  return value > 0 ? `+${value}` : String(value);
+}
+function chooseBudgetNote(app, candidates) {
+  return new Promise((resolve) => new BudgetNotePickerModal(app, candidates, resolve).open());
+}
+function chooseBalanceEntry(app, account, kind) {
+  return new Promise((resolve) => new BalanceEntryModal(app, account, kind, resolve).open());
+}
+function chooseDailyNote(app, targets) {
+  return new Promise((resolve) => new FinanceDailyNotePickerModal(app, targets, resolve).open());
 }
 var FinancialDashboardView = class extends DashboardViewBase {
   constructor(leaf, plugin) {
     super(leaf, plugin);
-    this.selectedCurrency = "all";
     this.selectedAccountId = null;
+    this.displayMode = "valuation";
   }
   getViewType() {
     return EXAMINED_HUMAN_FINANCIAL_DASHBOARD_VIEW_TYPE;
@@ -10598,142 +11707,593 @@ var FinancialDashboardView = class extends DashboardViewBase {
     return "Finance";
   }
   loadDashboard(startDate, endDate) {
-    return this.plugin.database.financialDashboard(this.plugin.settings.databasePath, startDate, endDate);
+    return this.plugin.database.financialDashboard(this.plugin.settings.databasePath, startDate, endDate, {
+      label: this.plugin.settings.valuationUnitLabel,
+      referenceUnit: this.plugin.settings.valuationReferenceUnit,
+      selectedAccountId: this.selectedAccountId
+    });
   }
   renderDashboard(result) {
-    const availableCurrencies = result.currencies.map((item) => item.currency);
-    if (this.selectedCurrency !== "all" && !availableCurrencies.includes(this.selectedCurrency)) {
-      this.selectedCurrency = "all";
-    }
-    this.renderToolbar(`${this.periodLabel()} \xB7 Recorded flow, not account balances`, (controls) => {
-      const select = controls.createEl("select", {
-        cls: "dropdown",
-        attr: { "aria-label": "Financial dashboard currency filter" }
+    this.selectedAccountId = result.explorer.accountId;
+    if (this.selectedAccountId == null) this.displayMode = "valuation";
+    const accounts = [...result.accounts].sort((left, right) => left.accountName.localeCompare(right.accountName));
+    this.renderToolbar(`${this.periodLabel()} \xB7 Ledger balances through ${formatDashboardDate(result.endDate)}`, (controls) => {
+      const asOf = controls.createEl("input", {
+        type: "date",
+        cls: "examined-human-dashboard-date-input",
+        attr: { "aria-label": "Financial dashboard as-of date" }
       });
-      const all = select.createEl("option", { value: "all", text: "All currencies" });
-      all.selected = this.selectedCurrency === "all";
-      for (const currency of availableCurrencies) {
-        const option = select.createEl("option", { value: currency, text: currency });
-        option.selected = currency === this.selectedCurrency;
+      asOf.value = result.endDate;
+      asOf.addEventListener("change", () => {
+        const candidate = asOf.value;
+        if (!(0, import_obsidian16.moment)(candidate, "YYYY-MM-DD", true).isValid()) {
+          asOf.value = result.endDate;
+          return;
+        }
+        this.endDateOverride = candidate;
+        void this.refresh();
+      });
+      const accountSelect = controls.createEl("select", { cls: "dropdown", attr: { "aria-label": "Financial account" } });
+      accountSelect.createEl("option", { value: "all", text: "All accounts" }).selected = this.selectedAccountId == null;
+      for (const account of accounts) {
+        accountSelect.createEl("option", { value: String(account.accountId), text: account.accountName }).selected = account.accountId === this.selectedAccountId;
       }
-      select.addEventListener("change", () => {
-        this.selectedCurrency = select.value;
+      accountSelect.addEventListener("change", () => {
+        this.selectedAccountId = accountSelect.value === "all" ? null : Number(accountSelect.value);
+        if (this.selectedAccountId == null) this.displayMode = "valuation";
+        void this.refresh();
+      });
+      const displaySelect = controls.createEl("select", { cls: "dropdown", attr: { "aria-label": "Financial amount display unit" } });
+      const nativeOption = displaySelect.createEl("option", {
+        value: "native",
+        text: result.explorer.nativeCurrency ? `Native \xB7 ${result.explorer.nativeCurrency}` : "Native units"
+      });
+      nativeOption.disabled = this.selectedAccountId == null;
+      nativeOption.selected = this.displayMode === "native" && this.selectedAccountId != null;
+      displaySelect.createEl("option", { value: "valuation", text: `Valuation \xB7 ${result.valuation.label}` }).selected = this.displayMode === "valuation";
+      displaySelect.addEventListener("change", () => {
+        this.displayMode = displaySelect.value === "native" && this.selectedAccountId != null ? "native" : "valuation";
         this.contentEl.empty();
         this.renderDashboard(result);
+      });
+      controls.createEl("button", { cls: "examined-human-toolbar-button", text: "Import Budget Form" }).addEventListener("click", () => {
+        void this.importBudgetForm();
       });
     });
-    const currencies = this.filteredCurrencies(result.currencies);
-    const currencyGrid = this.contentEl.createDiv({ cls: "examined-human-domain-currency-grid" });
-    for (const currency of currencies) this.renderCurrencyCard(currencyGrid, currency);
-    if (currencies.length === 0) {
-      currencyGrid.createDiv({ cls: "examined-human-domain-empty", text: "No transactions were recorded in this period." });
-    }
-    const panels = this.contentEl.createDiv({ cls: "examined-human-domain-panel-grid" });
-    for (const currency of currencies) this.renderFlowTrend(panels, result, currency.currency);
-    this.renderEngagementSpending(panels, result);
-    this.renderAccountFlow(panels, result);
+    const panels = this.contentEl.createDiv({ cls: "examined-human-domain-panel-grid examined-human-finance-stack" });
+    this.renderValuation(panels, result);
+    this.renderAccountExplorer(panels, result);
+    this.renderBudget(panels, result);
     this.renderRecentTransactions(panels, result);
   }
-  filteredCurrencies(currencies) {
-    return this.selectedCurrency === "all" ? currencies : currencies.filter((currency) => currency.currency === this.selectedCurrency);
-  }
-  renderCurrencyCard(container, record) {
-    const card = container.createEl("section", { cls: "examined-human-domain-currency-card" });
-    const header = card.createDiv({ cls: "examined-human-domain-currency-heading" });
-    header.createEl("h3", { text: record.currency });
-    header.createSpan({ text: `${record.transactionCount} transactions` });
-    const values = card.createDiv({ cls: "examined-human-domain-currency-values" });
-    const inflow = values.createDiv();
-    inflow.createSpan({ text: "Inflow" });
-    inflow.createEl("strong", { text: formatDashboardAmount(record.inflow, record.currency) });
-    const outflow = values.createDiv();
-    outflow.createSpan({ text: "Outflow" });
-    outflow.createEl("strong", { text: formatDashboardAmount(record.outflow, record.currency) });
-    const net = values.createDiv({ cls: record.net >= 0 ? "is-positive" : "is-negative" });
-    net.createSpan({ text: "Net flow" });
-    net.createEl("strong", { text: formatDashboardAmount(record.net, record.currency) });
-  }
-  renderFlowTrend(container, result, currency) {
-    const records = result.dailyFlow.filter((record) => record.currency === currency);
-    const buckets = buildFlowBuckets(records);
-    const panel = createDashboardPanel(container, `${currency} cash flow`, "Outflow bars; inflow remains in the exact summary card");
-    const trend = buckets.map((bucket) => ({
-      label: bucket.label,
-      value: bucket.outflow,
-      displayValue: formatDashboardAmount(bucket.outflow, currency),
-      ariaLabel: `${bucket.ariaLabel}, ${formatDashboardAmount(bucket.outflow, currency)} outflow and ${formatDashboardAmount(bucket.inflow, currency)} inflow`
-    }));
-    renderDashboardTrend(panel, trend);
-  }
-  renderEngagementSpending(container, result) {
-    const records = result.engagements.filter((record) => this.selectedCurrency === "all" || record.currency === this.selectedCurrency).sort((a, b) => b.outflow - a.outflow).slice(0, 12);
-    const panel = createDashboardPanel(container, "Engagement outflow", "Only transactions with a resolved engagement owner");
-    renderDashboardBars(panel, records.map((record) => ({
-      label: record.engagementName,
-      value: record.outflow,
-      displayValue: formatDashboardAmount(record.outflow, record.currency),
-      detail: `${record.transactionCount} transactions \xB7 net ${formatDashboardAmount(record.net, record.currency)}`
-    })));
-  }
-  renderAccountFlow(container, result) {
-    const records = result.accounts.filter((record) => this.selectedCurrency === "all" || record.currency === this.selectedCurrency).sort((left, right) => right.transactionCount - left.transactionCount || left.accountName.localeCompare(right.accountName)).slice(0, 12);
-    const panel = createDashboardPanel(container, "Most used accounts", "Transaction frequency in the selected period; this is not an account balance");
-    if (records.length === 0) {
-      panel.createDiv({ cls: "examined-human-domain-empty", text: "No accounts were used in this period." });
+  renderBudget(container, result) {
+    var _a;
+    const panel = createDashboardPanel(container, "Budget for selected date", "The imported Budget Form whose period contains the selected date. Reimport the same period to update it.", true);
+    const plan = result.activeBudget;
+    if (!plan) {
+      panel.createDiv({ cls: "examined-human-domain-empty", text: "No Budget Form has been imported yet. Keep one anywhere in the vault, then use Import Budget Form." });
       return;
     }
-    const list = panel.createDiv({ cls: "examined-human-domain-bars" });
-    for (const record of records) {
-      const row = list.createEl("button", {
-        cls: `examined-human-domain-bar-row examined-human-domain-bar-button${this.selectedAccountId === record.accountId ? " is-selected" : ""}`,
-        attr: { type: "button", "aria-pressed": String(this.selectedAccountId === record.accountId) }
-      });
+    panel.createEl("p", { text: `${formatDashboardDate(plan.periodStart)} \u2013 ${formatDashboardDate(plan.periodEnd)} \xB7 ${plan.sourceFileName}` });
+    const targets = plan.targets;
+    const targetList = panel.createDiv({ cls: "examined-human-domain-bars" });
+    if (targets.length === 0) targetList.createDiv({ cls: "examined-human-domain-empty", text: "No budget targets for the selected currency." });
+    for (const target of targets) {
+      const row = targetList.createDiv({ cls: "examined-human-domain-bar-row" });
       const heading = row.createDiv({ cls: "examined-human-domain-bar-heading" });
-      heading.createSpan({ text: record.accountName });
-      heading.createEl("strong", { text: `${record.transactionCount} transaction${record.transactionCount === 1 ? "" : "s"}` });
-      const track = row.createDiv({ cls: "examined-human-domain-bar-track" });
-      const fill = track.createDiv({ cls: "examined-human-domain-bar-fill" });
-      const max = Math.max(...records.map((item) => item.transactionCount), 1);
-      fill.style.width = `${Math.max(2, record.transactionCount / max * 100)}%`;
-      row.createDiv({ cls: "examined-human-domain-bar-detail", text: `${record.currency} \xB7 ${humanizeDashboardCode(record.accountType)} \xB7 net ${formatDashboardAmount(record.net, record.currency)}` });
-      row.addEventListener("click", () => {
-        this.selectedAccountId = this.selectedAccountId === record.accountId ? null : record.accountId;
-        this.contentEl.empty();
-        this.renderDashboard(result);
+      heading.createSpan({ text: target.engagementName });
+      heading.createEl("strong", { text: formatDashboardAmount(target.amount, target.currency) });
+      row.createDiv({
+        cls: `examined-human-domain-bar-detail ${target.actualAmount >= 0 ? "is-positive" : "is-negative"}`,
+        text: `Actual ${formatDashboardAmount(target.actualAmount, target.currency)} \xB7 variance ${formatDashboardAmount(target.variance, target.currency)}`
       });
     }
+    const expected = plan.expectedMovements;
+    if (expected.length > 0) {
+      const details = panel.createEl("details");
+      details.createEl("summary", { text: `Expected movements (${expected.filter((movement) => !movement.isMatched).length} unmatched)` });
+      const table = details.createEl("table", { cls: "examined-human-domain-table" });
+      const head = table.createEl("thead").createEl("tr");
+      for (const label of ["Due", "Account", "Engagement", "Description", "Expected", "Status"]) head.createEl("th", { text: label });
+      const body = table.createEl("tbody");
+      for (const movement of expected) {
+        const row = body.createEl("tr");
+        row.createEl("td", { text: formatDashboardDate(movement.dueDate) });
+        row.createEl("td", { text: movement.accountName });
+        row.createEl("td", { text: movement.engagementName });
+        row.createEl("td", { text: (_a = movement.description) != null ? _a : "\u2014" });
+        row.createEl("td", { cls: movement.amount >= 0 ? "is-positive" : "is-negative", text: formatDashboardAmount(movement.amount, movement.currency) });
+        row.createEl("td", { text: movement.isMatched ? "Matched" : "Expected" });
+      }
+    }
+  }
+  renderValuation(container, result) {
+    const valuation = result.valuation;
+    const panel = createDashboardPanel(
+      container,
+      "Valuation",
+      `As of ${formatDashboardDate(valuation.asOfDate)} \xB7 reference asset class: ${valuation.referenceUnit}`,
+      true
+    );
+    const grid = panel.createDiv({ cls: "examined-human-domain-metrics examined-human-finance-summary" });
+    createDashboardMetric(grid, `Net worth \xB7 ${valuation.label}`, formatDashboardAmount(valuation.netWorth, valuation.label), `${valuation.valuedAccountCount} valued account${valuation.valuedAccountCount === 1 ? "" : "s"}`, valuation.netWorth >= 0 ? "positive" : "negative");
+    createDashboardMetric(grid, "Assets", formatDashboardAmount(valuation.assetTotal, valuation.label), "Positive valued balances", "positive");
+    createDashboardMetric(grid, "Liabilities", formatDashboardAmount(valuation.liabilityTotal, valuation.label), "Negative valued balances", "negative");
+    if (valuation.missingAccounts.length === 0) return;
+    const missing = panel.createEl("details", { cls: "examined-human-daily-dry-run-details" });
+    missing.createEl("summary", { text: `${valuation.missingAccounts.length} account${valuation.missingAccounts.length === 1 ? "" : "s"} excluded: missing valuation rate` });
+    for (const account of valuation.missingAccounts) {
+      missing.createDiv({ text: `${account.accountName} \xB7 ${formatDashboardAmount(account.balance, account.unit)}` });
+    }
+  }
+  renderAccountExplorer(container, result) {
+    const explorer = result.explorer;
+    const valued = this.displayMode === "valuation" || explorer.accountId == null;
+    const unit = valued ? result.valuation.label : explorer.nativeCurrency;
+    const balance = valued ? explorer.valuationBalance : explorer.nativeBalance;
+    const inflow = valued ? explorer.valuationInflow : explorer.nativeInflow;
+    const outflow = valued ? explorer.valuationOutflow : explorer.nativeOutflow;
+    const panel = createDashboardPanel(
+      container,
+      explorer.accountId == null ? "All accounts" : explorer.accountName,
+      `${this.periodLabel()} \xB7 ${valued ? `valued in ${result.valuation.label}` : `shown in ${unit}`}`,
+      true
+    );
+    const metrics = panel.createDiv({ cls: "examined-human-domain-metrics examined-human-finance-explorer-metrics" });
+    createDashboardMetric(metrics, "Balance now", balance == null ? "Missing valuation rate" : formatDashboardAmount(balance, unit), `As of ${formatDashboardDate(result.endDate)}`, balance == null ? "warning" : balance >= 0 ? "positive" : "negative");
+    createDashboardMetric(metrics, "Inflow", formatDashboardAmount(inflow != null ? inflow : 0, unit), this.periodLabel(), "positive");
+    createDashboardMetric(metrics, "Outflow", formatDashboardAmount(outflow != null ? outflow : 0, unit), this.periodLabel(), "negative");
+    if (valued && (explorer.missingCurrentValuationAccountCount > 0 || explorer.missingFlowValuationTransactionCount > 0)) {
+      panel.createDiv({
+        cls: "examined-human-domain-warning examined-human-finance-inline-warning",
+        text: `${explorer.missingCurrentValuationAccountCount} current account balance${explorer.missingCurrentValuationAccountCount === 1 ? "" : "s"} and ${explorer.missingFlowValuationTransactionCount} period transaction${explorer.missingFlowValuationTransactionCount === 1 ? "" : "s"} are omitted from converted values because no point-in-time valuation rate exists.`
+      });
+    }
+    const selectedAccount = result.accounts.find((account) => account.accountId === explorer.accountId);
+    if (selectedAccount) {
+      const actions = panel.createDiv({ cls: "examined-human-modal-actions examined-human-finance-account-actions" });
+      actions.createEl("button", { text: "Set opening balance" }).addEventListener("click", () => {
+        void this.stageBalanceEntry(selectedAccount, "opening");
+      });
+      actions.createEl("button", { text: "Reconcile balance" }).addEventListener("click", () => {
+        void this.stageBalanceEntry(selectedAccount, "reconciliation");
+      });
+    }
+    const historySection = panel.createDiv({ cls: "examined-human-finance-section" });
+    historySection.createEl("h4", { text: explorer.accountId == null ? "Net worth over time" : "Account balance over time" });
+    const sampled = sampledBalanceHistory(explorer.balanceHistory);
+    const lineRecords = sampled.map((record) => {
+      const value = valued ? record.valuationBalance : record.nativeBalance;
+      return {
+        label: (0, import_obsidian16.moment)(record.date, "YYYY-MM-DD", true).format(sampled.length > 120 ? "MMM YYYY" : "MMM D"),
+        value,
+        displayValue: value == null ? "Missing valuation rate" : formatDashboardAmount(value, unit),
+        ariaLabel: formatDashboardDate(record.date)
+      };
+    });
+    renderDashboardLine(historySection, lineRecords, `${explorer.accountName} balance history in ${unit}`);
+    if (explorer.balanceHistory.length > sampled.length) {
+      historySection.createDiv({ cls: "examined-human-domain-bar-detail", text: `Exact daily calculations retained; ${explorer.balanceHistory.length} days sampled to ${sampled.length} chart points for readability.` });
+    }
+    const engagementSection = panel.createDiv({ cls: "examined-human-finance-section" });
+    engagementSection.createEl("h4", { text: "Money by engagement" });
+    this.renderEngagementFlows(engagementSection, explorer.engagements, valued, unit);
+  }
+  renderEngagementFlows(container, records, valued, unit) {
+    var _a, _b;
+    const visible = records.filter((record) => {
+      var _a2, _b2;
+      const inflow = valued ? record.valuationInflow : (_a2 = record.nativeInflow) != null ? _a2 : 0;
+      const outflow = valued ? record.valuationOutflow : (_b2 = record.nativeOutflow) != null ? _b2 : 0;
+      return inflow !== 0 || outflow !== 0;
+    }).slice(0, 16);
+    if (visible.length === 0) {
+      container.createDiv({ cls: "examined-human-domain-empty", text: "No resolved personal cash flow was recorded for this selection." });
+      return;
+    }
+    const maximum = Math.max(...visible.flatMap((record) => {
+      var _a2, _b2;
+      return [
+        valued ? record.valuationInflow : (_a2 = record.nativeInflow) != null ? _a2 : 0,
+        valued ? record.valuationOutflow : (_b2 = record.nativeOutflow) != null ? _b2 : 0
+      ];
+    }), 1);
+    const list = container.createDiv({ cls: "examined-human-finance-engagements" });
+    for (const record of visible) {
+      const inflow = valued ? record.valuationInflow : (_a = record.nativeInflow) != null ? _a : 0;
+      const outflow = valued ? record.valuationOutflow : (_b = record.nativeOutflow) != null ? _b : 0;
+      const row = list.createDiv({ cls: "examined-human-finance-engagement-row" });
+      row.createDiv({ cls: "examined-human-finance-engagement-name", text: record.engagementName });
+      const inLine = row.createDiv({ cls: "examined-human-finance-flow-line is-inflow" });
+      inLine.createSpan({ text: "In" });
+      const inTrack = inLine.createDiv({ cls: "examined-human-finance-flow-track" });
+      inTrack.createDiv({ cls: "examined-human-finance-flow-fill", attr: { style: `width:${inflow / maximum * 100}%` } });
+      inLine.createEl("strong", { text: formatDashboardAmount(inflow, unit) });
+      const outLine = row.createDiv({ cls: "examined-human-finance-flow-line is-outflow" });
+      outLine.createSpan({ text: "Out" });
+      const outTrack = outLine.createDiv({ cls: "examined-human-finance-flow-track" });
+      outTrack.createDiv({ cls: "examined-human-finance-flow-fill", attr: { style: `width:${outflow / maximum * 100}%` } });
+      outLine.createEl("strong", { text: formatDashboardAmount(outflow, unit) });
+    }
+    if (records.length > visible.length) container.createDiv({ cls: "examined-human-domain-bar-detail", text: `Showing the 16 most active engagements of ${records.length}.` });
   }
   renderRecentTransactions(container, result) {
     var _a, _b;
-    const records = result.recentTransactions.filter((record) => this.selectedAccountId == null || record.accountId === this.selectedAccountId).filter((record) => this.selectedCurrency === "all" || record.currency === this.selectedCurrency);
+    const records = result.recentTransactions;
     const selectedAccount = result.accounts.find((account) => account.accountId === this.selectedAccountId);
-    const title = selectedAccount ? `${selectedAccount.accountName} activity` : "Recent transactions";
-    const subtitle = selectedAccount ? `${selectedAccount.currency} \xB7 ${humanizeDashboardCode(selectedAccount.accountType)} \xB7 newest recorded activity` : "Newest recorded activity in the selected period";
-    const panel = createDashboardPanel(container, title, subtitle, true);
+    const panel = createDashboardPanel(
+      container,
+      selectedAccount ? `${selectedAccount.accountName} activity` : "Recent transactions",
+      selectedAccount ? `${selectedAccount.currency} \xB7 newest recorded activity` : "Newest recorded activity in the selected period",
+      true
+    );
     if (records.length === 0) {
       panel.createDiv({ cls: "examined-human-domain-empty", text: "No transactions were recorded in this period." });
       return;
     }
     const table = panel.createEl("table", { cls: "examined-human-domain-table" });
     const head = table.createEl("thead").createEl("tr");
-    for (const label of ["Date", "Account", "Engagement", "Description", "Amount"]) head.createEl("th", { text: label });
+    for (const label of ["Date", "Account", "Engagement", "Description", "Kind", "Amount"]) head.createEl("th", { text: label });
     const body = table.createEl("tbody");
     for (const record of records) {
       const row = body.createEl("tr");
       row.createEl("td", { text: formatDashboardDate(record.date) });
       row.createEl("td", { text: record.accountName });
-      row.createEl("td", { text: (_a = record.engagementName) != null ? _a : "Unresolved" });
+      row.createEl("td", { text: (_a = record.engagementName) != null ? _a : "Unresolved legacy row" });
       row.createEl("td", { text: (_b = record.description) != null ? _b : "\u2014" });
-      row.createEl("td", {
-        cls: record.amount >= 0 ? "is-positive" : "is-negative",
-        text: formatDashboardAmount(record.amount, record.currency)
+      row.createEl("td", { text: humanizeDashboardCode(record.kind) });
+      row.createEl("td", { cls: record.amount >= 0 ? "is-positive" : "is-negative", text: formatDashboardAmount(record.amount, record.currency) });
+    }
+  }
+  async importBudgetForm() {
+    try {
+      const choice = await chooseBudgetNote(this.app, budgetNoteCandidates(this.app));
+      if (!choice) return;
+      const candidate = await readBudgetNote(this.app, choice);
+      const request = { databasePath: this.plugin.settings.databasePath, fileName: candidate.fileName, filePath: candidate.filePath, sourceText: candidate.sourceText };
+      const preview = await this.plugin.nativeLogger.inspectBudget(request);
+      const confirmed = await confirmWeeklyAction(this.app, {
+        title: "Import Budget Form",
+        explanation: preview.updatedExistingBudget ? "This updates the stored budget with the same start and end dates. The note remains untouched in your vault." : "This adds a dated Budget Form to the database.",
+        confirmLabel: preview.updatedExistingBudget ? "Update budget" : "Import budget",
+        dryRunOutput: `Source: ${candidate.filePath}
+Period: ${preview.periodStart} through ${preview.periodEnd}
+Budget targets: ${preview.targetCount}
+Expected movements: ${preview.expectedMovementCount}`,
+        warning: "Nothing has changed yet. Expected movements are planning records only and never create transactions or reminders."
       });
+      if (!confirmed) return;
+      const result = await this.plugin.nativeLogger.importBudget(request);
+      new import_obsidian16.Notice(`Imported Budget Form for ${result.periodStart} through ${result.periodEnd}. ${result.backupPath ? `Backup: ${result.backupPath}` : ""}`, 1e4);
+      await this.plugin.refreshViews();
+    } catch (error) {
+      new import_obsidian16.Notice(`Budget Form was not imported: ${error instanceof Error ? error.message : String(error)}`, 12e3);
+    }
+  }
+  async stageBalanceEntry(account, kind) {
+    try {
+      const entry = await chooseBalanceEntry(this.app, account, kind);
+      if (!entry) return;
+      const amount = kind === "opening" ? entry.actualBalance : entry.actualBalance - account.balance;
+      if (!Number.isFinite(amount)) throw new Error("The balance adjustment is not a finite number.");
+      if (kind === "reconciliation" && amount === 0) {
+        new import_obsidian16.Notice("The recorded and observed balances already match; no reconciliation entry was staged.");
+        return;
+      }
+      const today = (0, import_obsidian16.moment)().format("YYYY-MM-DD");
+      const index = await this.plugin.database.dailyNoteIndex(this.plugin.settings.databasePath);
+      const targets = (await buildDailyNoteList(this.app, index, today, this.plugin.knownForms())).filter((note) => note.status !== "imported" && note.date >= today);
+      if (targets.length === 0) throw new Error("Create an unimported current or future Daily Note before staging this entry.");
+      const target = await chooseDailyNote(this.app, targets);
+      if (!target) return;
+      const file = this.app.vault.getAbstractFileByPath(target.filePath);
+      if (!(file instanceof import_obsidian16.TFile)) throw new Error(`Daily Note was not found: ${target.filePath}`);
+      const sourceText = await this.app.vault.read(file);
+      const marker = kind === "opening" ? "[EH opening balance]" : "[EH reconciliation]";
+      const description = entry.reason ? `${marker} ${entry.reason}` : marker;
+      const line = `${formattedEntryAmount(amount)} | ${account.accountName} | Finance | ${description}`;
+      const preview = await this.plugin.nativeLogger.previewFinanceEntryStage({ noteDate: target.date, fileName: target.fileName, filePath: target.filePath, sourceText, line });
+      const confirmed = await confirmWeeklyAction(this.app, {
+        title: kind === "opening" ? "Stage opening balance" : "Stage reconciliation",
+        explanation: `This writes one normal Transaction line into ${target.fileName}; the database changes only when that Daily Note is imported.`,
+        confirmLabel: "Stage transaction line",
+        dryRunOutput: preview.line,
+        warning: "Nothing has been changed yet. The Daily Note importer will validate the account and Finance engagement later."
+      });
+      if (!confirmed) return;
+      await this.plugin.nativeLogger.stageFinanceEntry(preview);
+      new import_obsidian16.Notice(`Staged ${kind === "opening" ? "opening balance" : "reconciliation"} in ${target.fileName}. Import that Daily Note to update the ledger.`, 1e4);
+    } catch (error) {
+      new import_obsidian16.Notice(`Financial entry was not staged: ${error instanceof Error ? error.message : String(error)}`, 12e3);
     }
   }
 };
+var BudgetNotePickerModal = class extends import_obsidian16.Modal {
+  constructor(app, candidates, resolveChoice) {
+    super(app);
+    this.candidates = candidates;
+    this.resolveChoice = resolveChoice;
+  }
+  onOpen() {
+    this.contentEl.createEl("h2", { text: "Choose EH Budget Form" });
+    if (this.candidates.length === 0) {
+      this.contentEl.createEl("p", { text: "This vault has no Markdown notes." });
+      this.contentEl.createEl("button", { text: "Close" }).addEventListener("click", () => {
+        this.resolveChoice(null);
+        this.close();
+      });
+      return;
+    }
+    this.contentEl.createEl("p", { text: "Type part of a filename or path. Only the note you choose is read and checked for an EH Budget Form." });
+    const select = this.contentEl.createEl("select");
+    const query = this.contentEl.createEl("input", { type: "text", placeholder: "Example: 2026-09-05 or September budget" });
+    const renderCandidates = () => {
+      const needle = query.value.trim().toLocaleLowerCase();
+      const matches = this.candidates.filter((candidate) => candidate.filePath.toLocaleLowerCase().includes(needle)).slice(0, 100);
+      select.empty();
+      for (const candidate of matches) select.createEl("option", { value: candidate.filePath, text: candidate.filePath });
+    };
+    query.addEventListener("input", renderCandidates);
+    renderCandidates();
+    const actions = this.contentEl.createDiv({ cls: "modal-button-container" });
+    actions.createEl("button", { text: "Cancel" }).addEventListener("click", () => {
+      this.resolveChoice(null);
+      this.close();
+    });
+    actions.createEl("button", { cls: "mod-cta", text: "Preview budget" }).addEventListener("click", () => {
+      var _a;
+      this.resolveChoice((_a = this.candidates.find((candidate) => candidate.filePath === select.value)) != null ? _a : null);
+      this.close();
+    });
+  }
+  onClose() {
+    this.contentEl.empty();
+  }
+};
+var BalanceEntryModal = class extends import_obsidian16.Modal {
+  constructor(app, account, kind, resolveChoice) {
+    super(app);
+    this.account = account;
+    this.kind = kind;
+    this.resolveChoice = resolveChoice;
+  }
+  onOpen() {
+    const isOpening = this.kind === "opening";
+    this.contentEl.createEl("h2", { text: isOpening ? `Set opening balance \u2014 ${this.account.accountName}` : `Reconcile \u2014 ${this.account.accountName}` });
+    this.contentEl.createEl("p", { text: isOpening ? "Use this once to establish the account balance before you began logging transactions. It stages a marked normal transaction." : `Recorded ledger balance: ${formatDashboardAmount(this.account.balance, this.account.currency)}. Enter the balance you actually observe; the difference becomes a marked normal transaction.` });
+    this.actualInput = this.contentEl.createEl("input", { type: "number", attr: { step: "any", inputmode: "decimal", "aria-label": "Observed account balance" } });
+    this.actualInput.placeholder = `Observed balance (${this.account.currency})`;
+    this.reasonInput = this.contentEl.createEl("input", { type: "text", attr: { "aria-label": "Optional reconciliation reason" } });
+    this.reasonInput.placeholder = isOpening ? "Optional context" : "Optional reason";
+    const actions = this.contentEl.createDiv({ cls: "modal-button-container" });
+    actions.createEl("button", { text: "Cancel" }).addEventListener("click", () => {
+      this.resolveChoice(null);
+      this.close();
+    });
+    actions.createEl("button", { cls: "mod-cta", text: "Choose Daily Note" }).addEventListener("click", () => {
+      const actualBalance = Number(this.actualInput.value);
+      if (!Number.isFinite(actualBalance)) {
+        new import_obsidian16.Notice("Enter a valid observed balance.");
+        return;
+      }
+      this.resolveChoice({ kind: this.kind, actualBalance, reason: this.reasonInput.value.trim() });
+      this.close();
+    });
+  }
+  onClose() {
+    this.contentEl.empty();
+  }
+};
+var FinanceDailyNotePickerModal = class extends import_obsidian16.Modal {
+  constructor(app, targets, resolveChoice) {
+    super(app);
+    this.targets = targets;
+    this.resolveChoice = resolveChoice;
+  }
+  onOpen() {
+    this.contentEl.createEl("h2", { text: "Choose current or future Daily Note" });
+    this.contentEl.createEl("p", { text: "The adjustment will become a normal Transaction line. It will affect the database only when this unimported note is validated and imported." });
+    const select = this.contentEl.createEl("select");
+    for (const target of this.targets) select.createEl("option", { value: target.filePath, text: `${target.date} \xB7 ${target.fileName}` });
+    const actions = this.contentEl.createDiv({ cls: "modal-button-container" });
+    actions.createEl("button", { text: "Cancel" }).addEventListener("click", () => {
+      this.resolveChoice(null);
+      this.close();
+    });
+    actions.createEl("button", { cls: "mod-cta", text: "Continue" }).addEventListener("click", () => {
+      var _a;
+      this.resolveChoice((_a = this.targets.find((target) => target.filePath === select.value)) != null ? _a : null);
+      this.close();
+    });
+  }
+  onClose() {
+    this.contentEl.empty();
+  }
+};
+
+// src/journal-folder.ts
+var DEFAULT_JOURNAL_FOLDER = "Oss Ahmad Journal";
+function normalizeJournalFolder(value) {
+  const forwardSlashes = value.trim().replace(/\\/g, "/");
+  if (forwardSlashes.startsWith("/") || /^[A-Za-z]:\//.test(forwardSlashes) || /^[A-Za-z][A-Za-z0-9+.-]*:/.test(forwardSlashes)) {
+    throw new Error("Journal folder must be relative to the vault root. Absolute paths are not supported.");
+  }
+  const parts = forwardSlashes.split("/").filter((part) => part && part !== ".");
+  if (parts.some((part) => part === "..")) {
+    throw new Error('Journal folder cannot leave the vault. Remove ".." segments.');
+  }
+  return parts.join("/");
+}
+function pathIsInJournalFolder(filePath, journalFolder) {
+  const folder = normalizeJournalFolder(journalFolder);
+  const normalizedPath = filePath.replace(/\\/g, "/").replace(/^\/+/, "");
+  return folder === "" || normalizedPath.startsWith(`${folder}/`);
+}
+
+// src/form-discovery.ts
+var import_obsidian17 = require("obsidian");
+
+// src/form-status.ts
+function ehFormFrontmatterEntry(frontmatter) {
+  var _a;
+  return (_a = Object.entries(frontmatter).find(([key]) => key.trim().toLocaleLowerCase() === "eh form")) != null ? _a : null;
+}
+function ehFormFrontmatterStatus(frontmatter) {
+  const entry = ehFormFrontmatterEntry(frontmatter);
+  if (!entry) return "missing";
+  const value = entry[1];
+  if (value === true) return "unimported";
+  const normalized = String(value).trim().toLocaleLowerCase();
+  if (normalized === "true" || normalized === "unimported") return "unimported";
+  if (normalized === "imported") return "imported";
+  return "excluded";
+}
+function shouldDiscoverEhFormFile(status, mode, isInJournalFolder) {
+  if (status === "imported" || status === "excluded") return false;
+  if (mode === "tagged-vault") return status === "unimported";
+  return isInJournalFolder;
+}
+function fileHasCompletedImportableForms(forms, filePath, importedDailyNotes, importedWeeklyPlans) {
+  const tracked = forms.filter((form) => form.kind !== "budget");
+  return tracked.length > 0 && tracked.every((form) => form.kind === "daily" ? importedDailyNotes.some((note) => note.date === form.date && note.filePath === filePath) : importedWeeklyPlans.some((plan) => plan.weekStartDate === form.startDate && plan.sourceFilePath === filePath));
+}
+
+// src/form-discovery.ts
+var HEADING = /^####\s+EH\s+(Daily|Weekly|Budget)\s+Form\s*$/gmi;
+var END = /^####\s+END\s*$/gmi;
+var EMPTY_FORM_DISCOVERY_CACHE = { version: 1, entries: {} };
+function validIsoDate(value) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const parsed = /* @__PURE__ */ new Date(`${value}T00:00:00Z`);
+  return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
+}
+function labeledDate(formText, label) {
+  var _a, _b, _c;
+  const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const value = (_c = (_b = (_a = new RegExp(`^${escaped}:\\s*(.*?)\\s*$`, "im").exec(formText)) == null ? void 0 : _a[1]) == null ? void 0 : _b.trim()) != null ? _c : "";
+  return validIsoDate(value) ? value : null;
+}
+function plusDays(date, days) {
+  const parsed = /* @__PURE__ */ new Date(`${date}T00:00:00Z`);
+  parsed.setUTCDate(parsed.getUTCDate() + days);
+  return parsed.toISOString().slice(0, 10);
+}
+function formDates(kind, formText) {
+  if (kind === "daily") {
+    const date = labeledDate(formText, "date");
+    if (!date) throw new Error("EH Daily Form requires a valid date: YYYY-MM-DD field.");
+    return { date, startDate: null, endDate: null };
+  }
+  if (kind === "weekly") {
+    const startDate2 = labeledDate(formText, "start date");
+    const endDate2 = labeledDate(formText, "end date");
+    if (!startDate2 || !endDate2) throw new Error("EH Weekly Form requires valid start date: and end date: YYYY-MM-DD fields.");
+    if (startDate2 && endDate2 && plusDays(startDate2, 6) !== endDate2) {
+      throw new Error(`Weekly Form declares ${startDate2} through ${endDate2}; end date must be start date + 6 days.`);
+    }
+    return { date: null, startDate: startDate2, endDate: endDate2 };
+  }
+  const startDate = labeledDate(formText, "period start");
+  const endDate = labeledDate(formText, "period end");
+  if (!startDate || !endDate) throw new Error("EH Budget Form requires valid period start: and period end: YYYY-MM-DD fields.");
+  return {
+    date: null,
+    startDate,
+    endDate
+  };
+}
+function formsInText(file, sourceText) {
+  const forms = [];
+  HEADING.lastIndex = 0;
+  let heading;
+  while ((heading = HEADING.exec(sourceText)) != null) {
+    const kind = heading[1].toLowerCase();
+    END.lastIndex = heading.index + heading[0].length;
+    const end = END.exec(sourceText);
+    if (!end || end.index == null) throw new Error(`${file.path}: ${heading[0]} has no matching #### END marker.`);
+    const formText = sourceText.slice(heading.index, end.index + end[0].length);
+    const dates = formDates(kind, formText);
+    forms.push({ kind, ...dates, fileName: file.name, filePath: file.path, formText });
+    HEADING.lastIndex = end.index + end[0].length;
+  }
+  return forms;
+}
+function discoveryStatus(app, file) {
+  var _a, _b;
+  const frontmatter = (_b = (_a = app.metadataCache.getFileCache(file)) == null ? void 0 : _a.frontmatter) != null ? _b : {};
+  return ehFormFrontmatterStatus(frontmatter);
+}
+function cacheEntry(file, forms) {
+  return {
+    mtime: file.stat.mtime,
+    size: file.stat.size,
+    forms: forms.map(({ formText: _formText, fileName: _fileName, filePath: _filePath, ...form }) => form)
+  };
+}
+function restore(file, entry) {
+  return entry.forms.map((form) => ({ ...form, fileName: file.name, filePath: file.path }));
+}
+function sanitizeFormDiscoveryCache(value) {
+  if (!value || typeof value !== "object") return { ...EMPTY_FORM_DISCOVERY_CACHE, entries: {} };
+  const rawEntries = value.entries;
+  if (!rawEntries || typeof rawEntries !== "object") return { ...EMPTY_FORM_DISCOVERY_CACHE, entries: {} };
+  const entries3 = {};
+  for (const [path, raw] of Object.entries(rawEntries)) {
+    if (!raw || typeof raw !== "object") continue;
+    const entry = raw;
+    if (!Number.isFinite(entry.mtime) || !Number.isFinite(entry.size) || !Array.isArray(entry.forms)) continue;
+    const forms = entry.forms.filter((form) => !!form && typeof form === "object" && ["daily", "weekly", "budget"].includes(form.kind)).map((form) => ({
+      kind: form.kind,
+      date: typeof form.date === "string" ? form.date : null,
+      startDate: typeof form.startDate === "string" ? form.startDate : null,
+      endDate: typeof form.endDate === "string" ? form.endDate : null
+    }));
+    entries3[path] = { mtime: Number(entry.mtime), size: Number(entry.size), forms };
+  }
+  return { version: 1, entries: entries3 };
+}
+async function discoverEhForms(app, mode, journalFolder, existingCache) {
+  const candidates = app.vault.getMarkdownFiles().filter((file) => shouldDiscoverEhFormFile(
+    discoveryStatus(app, file),
+    mode,
+    pathIsInJournalFolder(file.path, journalFolder)
+  ));
+  const candidatePaths = new Set(candidates.map((file) => file.path));
+  const entries3 = {};
+  const forms = [];
+  let scannedFileCount = 0;
+  let reusedFileCount = 0;
+  for (const file of candidates) {
+    const cached = existingCache.entries[file.path];
+    if (cached && cached.mtime === file.stat.mtime && cached.size === file.stat.size) {
+      entries3[file.path] = cached;
+      forms.push(...restore(file, cached));
+      reusedFileCount += 1;
+      continue;
+    }
+    const discovered = formsInText(file, await app.vault.cachedRead(file));
+    entries3[file.path] = cacheEntry(file, discovered);
+    forms.push(...restore(file, entries3[file.path]));
+    scannedFileCount += 1;
+  }
+  for (const path of Object.keys(existingCache.entries)) {
+    if (!candidatePaths.has(path)) delete entries3[path];
+  }
+  return { forms, cache: { version: 1, entries: entries3 }, scannedFileCount, reusedFileCount };
+}
+function cachedEhForms(app, cache) {
+  const forms = [];
+  for (const [path, entry] of Object.entries(cache.entries)) {
+    const file = app.vault.getAbstractFileByPath(path);
+    if (!(file instanceof import_obsidian17.TFile)) continue;
+    if (file.stat.mtime !== entry.mtime || file.stat.size !== entry.size) continue;
+    forms.push(...restore(file, entry));
+  }
+  return forms;
+}
 
 // src/NutritionDashboardView.ts
-var import_obsidian16 = require("obsidian");
+var import_obsidian18 = require("obsidian");
 var EXAMINED_HUMAN_NUTRITION_DASHBOARD_VIEW_TYPE = "examined-human-nutrition-dashboard";
 function average(values) {
   const available = values.filter((value) => value != null && Number.isFinite(value));
@@ -10814,7 +12374,7 @@ var NutritionDashboardView = class extends DashboardViewBase {
     renderDashboardTrend(panel, records.map((day) => {
       var _a, _b;
       return {
-        label: (0, import_obsidian16.moment)(day.date, "YYYY-MM-DD", true).format("MMM D"),
+        label: (0, import_obsidian18.moment)(day.date, "YYYY-MM-DD", true).format("MMM D"),
         value: (_a = day.calories) != null ? _a : 0,
         displayValue: `${formatDashboardNumber((_b = day.calories) != null ? _b : 0, 0)}`,
         ariaLabel: `${formatDashboardDate(day.date)}, calories`
@@ -10827,7 +12387,7 @@ var NutritionDashboardView = class extends DashboardViewBase {
     renderDashboardTrend(panel, records.map((day) => {
       var _a, _b;
       return {
-        label: (0, import_obsidian16.moment)(day.date, "YYYY-MM-DD", true).format("MMM D"),
+        label: (0, import_obsidian18.moment)(day.date, "YYYY-MM-DD", true).format("MMM D"),
         value: (_a = day.proteinG) != null ? _a : 0,
         displayValue: `${formatDashboardNumber((_b = day.proteinG) != null ? _b : 0, 0)} g`,
         ariaLabel: `${formatDashboardDate(day.date)}, protein`
@@ -10877,7 +12437,7 @@ var NutritionDashboardView = class extends DashboardViewBase {
 };
 
 // src/TimelineView.ts
-var import_obsidian17 = require("obsidian");
+var import_obsidian19 = require("obsidian");
 var EXAMINED_HUMAN_CALENDAR_VIEW_TYPE = "examined-human";
 var INITIAL_DAYS_EACH_SIDE = 45;
 var WINDOW_SHIFT_DAYS = 28;
@@ -10886,12 +12446,12 @@ var HEADER_HEIGHT = 58;
 var BASE_PX_PER_MINUTE = 1.15;
 var ZOOM_LEVELS = [0.7, 0.85, 1, 1.25, 1.5, 2];
 var FINGERPRINT_INTERVAL_MS4 = 1e4;
-var TimelineView = class extends import_obsidian17.ItemView {
+var TimelineView = class extends import_obsidian19.ItemView {
   constructor(leaf, plugin) {
     super(leaf);
     this.plugin = plugin;
-    this.rangeStart = (0, import_obsidian17.moment)().startOf("day").subtract(INITIAL_DAYS_EACH_SIDE, "days");
-    this.rangeEnd = (0, import_obsidian17.moment)().startOf("day").add(INITIAL_DAYS_EACH_SIDE, "days");
+    this.rangeStart = (0, import_obsidian19.moment)().startOf("day").subtract(INITIAL_DAYS_EACH_SIDE, "days");
+    this.rangeEnd = (0, import_obsidian19.moment)().startOf("day").add(INITIAL_DAYS_EACH_SIDE, "days");
     this.zoomIndex = 2;
     this.scrollEl = null;
     this.statusEl = null;
@@ -10917,14 +12477,14 @@ var TimelineView = class extends import_obsidian17.ItemView {
     this.contentEl.addClass("examined-human-view");
     await this.renderCalendar({
       viewport: {
-        centerDate: (0, import_obsidian17.moment)().format("YYYY-MM-DD"),
+        centerDate: (0, import_obsidian19.moment)().format("YYYY-MM-DD"),
         scrollMinute: this.plugin.settings.initialScrollHour * 60
       }
     });
     this.registerEvent(this.app.vault.on("modify", (file) => {
       const configuredPath = this.plugin.settings.databasePath;
       try {
-        if ((0, import_obsidian17.normalizePath)(file.path) === this.plugin.database.normalizeVaultPath(configuredPath)) void this.refresh();
+        if ((0, import_obsidian19.normalizePath)(file.path) === this.plugin.database.normalizeVaultPath(configuredPath)) void this.refresh();
       } catch (e) {
       }
     }));
@@ -10939,7 +12499,7 @@ var TimelineView = class extends import_obsidian17.ItemView {
     const viewWindow = this.contentEl.ownerDocument.defaultView;
     if (viewWindow) {
       this.registerDomEvent(viewWindow, "resize", () => {
-        if (!import_obsidian17.Platform.isMobile) return;
+        if (!import_obsidian19.Platform.isMobile) return;
         if (this.resizeTimer != null) window.clearTimeout(this.resizeTimer);
         this.resizeTimer = window.setTimeout(() => {
           void this.refresh();
@@ -10960,7 +12520,7 @@ var TimelineView = class extends import_obsidian17.ItemView {
     return BASE_PX_PER_MINUTE * ZOOM_LEVELS[this.zoomIndex];
   }
   get dayWidth() {
-    if (import_obsidian17.Platform.isMobile) {
+    if (import_obsidian19.Platform.isMobile) {
       return this.plugin.settings.mobileDayColumnWidth;
     }
     return this.plugin.settings.dayColumnWidth;
@@ -10979,7 +12539,7 @@ var TimelineView = class extends import_obsidian17.ItemView {
         this.plugin.settings.databasePath,
         this.rangeStart.format("YYYY-MM-DD"),
         this.rangeEnd.format("YYYY-MM-DD"),
-        (0, import_obsidian17.moment)().format("YYYY-MM-DD")
+        (0, import_obsidian19.moment)().format("YYYY-MM-DD")
       );
     } catch (error) {
       if (generation !== this.renderGeneration) return;
@@ -11006,8 +12566,8 @@ var TimelineView = class extends import_obsidian17.ItemView {
     window.requestAnimationFrame(() => {
       var _a2, _b2;
       if (!this.scrollEl) return;
-      const centerDate = (_a2 = viewport == null ? void 0 : viewport.centerDate) != null ? _a2 : (0, import_obsidian17.moment)().format("YYYY-MM-DD");
-      const centerIndex = (0, import_obsidian17.moment)(centerDate, "YYYY-MM-DD", true).diff(this.rangeStart, "days");
+      const centerDate = (_a2 = viewport == null ? void 0 : viewport.centerDate) != null ? _a2 : (0, import_obsidian19.moment)().format("YYYY-MM-DD");
+      const centerIndex = (0, import_obsidian19.moment)(centerDate, "YYYY-MM-DD", true).diff(this.rangeStart, "days");
       const desiredLeft = GUTTER_WIDTH + centerIndex * this.dayWidth - (this.scrollEl.clientWidth - this.dayWidth) / 2;
       this.scrollEl.scrollLeft = Math.max(0, desiredLeft);
       this.scrollEl.scrollTop = Math.max(0, ((_b2 = viewport == null ? void 0 : viewport.scrollMinute) != null ? _b2 : this.plugin.settings.initialScrollHour * 60) * this.pxPerMinute);
@@ -11050,7 +12610,7 @@ var TimelineView = class extends import_obsidian17.ItemView {
     warning.setAttribute("title", messages.join("\n"));
     if (chorMessages.length > 0 && !this.warningNoticeShown) {
       this.warningNoticeShown = true;
-      new import_obsidian17.Notice(`Examined Human found ${chorMessages.length} session${chorMessages.length === 1 ? "" : "s"} with type "chor". Correct the data in EH.db.`, 1e4);
+      new import_obsidian19.Notice(`Examined Human found ${chorMessages.length} session${chorMessages.length === 1 ? "" : "s"} with type "chor". Correct the data in EH.db.`, 1e4);
     }
   }
   renderGrid(eventsByDate, dayStates) {
@@ -11067,7 +12627,7 @@ var TimelineView = class extends import_obsidian17.ItemView {
     grid.style.gridTemplateRows = `${HEADER_HEIGHT}px ${1440 * this.pxPerMinute}px`;
     const corner = grid.createDiv({ cls: "examined-human-grid-corner" });
     corner.setText("Time");
-    const today = (0, import_obsidian17.moment)().format("YYYY-MM-DD");
+    const today = (0, import_obsidian19.moment)().format("YYYY-MM-DD");
     for (let index = 0; index < days.length; index++) {
       const day = days[index];
       const date = day.format("YYYY-MM-DD");
@@ -11129,7 +12689,7 @@ var TimelineView = class extends import_obsidian17.ItemView {
         column.appendChild(eventElement);
       }
       if (relation === "today") {
-        const now = (0, import_obsidian17.moment)();
+        const now = (0, import_obsidian19.moment)();
         const nowLine = column.createDiv({ cls: "examined-human-now-line" });
         nowLine.style.top = `${(now.hours() * 60 + now.minutes()) * this.pxPerMinute}px`;
       }
@@ -11153,7 +12713,7 @@ var TimelineView = class extends import_obsidian17.ItemView {
     };
   }
   async goToToday() {
-    const today = (0, import_obsidian17.moment)().startOf("day");
+    const today = (0, import_obsidian19.moment)().startOf("day");
     this.rangeStart = today.clone().subtract(INITIAL_DAYS_EACH_SIDE, "days");
     this.rangeEnd = today.clone().add(INITIAL_DAYS_EACH_SIDE, "days");
     await this.renderCalendar({
@@ -11201,102 +12761,39 @@ var TimelineView = class extends import_obsidian17.ItemView {
 };
 
 // src/WeeklyAssessmentView.ts
-var import_obsidian19 = require("obsidian");
-
-// src/WeeklyActionConfirmationModal.ts
-var import_obsidian18 = require("obsidian");
-function confirmWeeklyAction(app, options) {
-  return new Promise((resolve) => {
-    new WeeklyActionConfirmationModal(app, options, resolve).open();
-  });
-}
-var WeeklyActionConfirmationModal = class extends import_obsidian18.Modal {
-  constructor(app, options, resolveChoice) {
-    super(app);
-    this.options = options;
-    this.resolveChoice = resolveChoice;
-    this.resolved = false;
-  }
-  onOpen() {
-    this.modalEl.addClass("examined-human-daily-confirm-modal");
-    this.contentEl.createEl("h2", { text: this.options.title });
-    this.contentEl.createEl("p", { text: this.options.explanation });
-    const details = this.contentEl.createEl("details", {
-      cls: "examined-human-daily-dry-run-details",
-      attr: { open: "true" }
-    });
-    details.createEl("summary", { text: "Dry-run output" });
-    const output = details.createEl("textarea", {
-      cls: "examined-human-daily-output",
-      attr: { readonly: "true", rows: "12" }
-    });
-    output.value = this.options.dryRunOutput;
-    const warning = this.contentEl.createEl("p", { cls: "examined-human-daily-confirm-warning" });
-    warning.createEl("strong", { text: "Nothing has been changed yet. " });
-    warning.appendText(this.options.warning);
-    const actions = this.contentEl.createDiv({ cls: "modal-button-container" });
-    actions.createEl("button", { text: "Cancel" }).addEventListener("click", () => this.finish(false));
-    actions.createEl("button", {
-      text: this.options.confirmLabel,
-      cls: "mod-cta"
-    }).addEventListener("click", () => this.finish(true));
-  }
-  onClose() {
-    this.contentEl.empty();
-    if (!this.resolved) this.resolveChoice(false);
-  }
-  finish(confirmed) {
-    if (this.resolved) return;
-    this.resolved = true;
-    this.resolveChoice(confirmed);
-    this.close();
-  }
-};
+var import_obsidian20 = require("obsidian");
 
 // src/weekly-note-index.ts
-var WEEKLY_NOTE_PATTERN = /^\d{4}-W\d{1,2}\.md$/i;
-var WEEK_START_PATTERN = /^week start:\s*["']?(\d{4}-\d{2}-\d{2})["']?\s*$/mi;
 function temporalState(startDate, endDate, todayDate, imported) {
   if (imported) return "imported";
   if (endDate < todayDate) return "overdue";
   if (startDate > todayDate) return "future";
   return "current";
 }
-function parseWeekStart2(content) {
-  const match = WEEK_START_PATTERN.exec(content);
-  if (!match) return null;
-  const parsed = /* @__PURE__ */ new Date(`${match[1]}T00:00:00Z`);
-  return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === match[1] ? match[1] : null;
-}
 function weekEnd(startDate) {
   const parsed = /* @__PURE__ */ new Date(`${startDate}T00:00:00Z`);
   parsed.setUTCDate(parsed.getUTCDate() + 6);
   return parsed.toISOString().slice(0, 10);
 }
-async function buildWeeklyNoteList(app, index, todayDate) {
+async function buildWeeklyNoteList(_app, index, todayDate, discoveredForms = []) {
   const importedByStart = new Map(index.importedPlans.map((plan) => [plan.weekStartDate, plan]));
-  const weeklyFiles = app.vault.getMarkdownFiles().filter((file) => WEEKLY_NOTE_PATTERN.test(file.name));
-  const scanned = await Promise.all(weeklyFiles.map(async (file) => {
-    const content = await app.vault.cachedRead(file);
-    const startDate = parseWeekStart2(content);
-    if (!startDate) return null;
+  const scanned = discoveredForms.filter((form) => form.kind === "weekly" && form.startDate != null && form.endDate != null).map((form) => {
+    const startDate = form.startDate;
     const imported = importedByStart.has(startDate);
-    const endDate = weekEnd(startDate);
     return {
       weekStartDate: startDate,
-      weekEndDate: endDate,
-      weekLabel: file.basename,
-      fileName: file.name,
-      filePath: file.path,
+      weekEndDate: form.endDate,
+      weekLabel: form.fileName.replace(/\.md$/i, ""),
+      fileName: form.fileName,
+      filePath: form.filePath,
       status: imported ? "imported" : "pending",
-      temporalState: temporalState(startDate, endDate, todayDate, imported)
+      temporalState: temporalState(startDate, form.endDate, todayDate, imported)
     };
-  }));
+  });
   const byStart = /* @__PURE__ */ new Map();
   for (const item of scanned) {
-    if (!item) continue;
     if (byStart.has(item.weekStartDate)) {
-      throw new Error(`More than one weekly note declares ${item.weekStartDate}.`);
+      throw new Error(`Two EH Weekly Forms declare ${item.weekStartDate}: ${byStart.get(item.weekStartDate).filePath} and ${item.filePath}.`);
     }
     byStart.set(item.weekStartDate, item);
   }
@@ -11313,13 +12810,21 @@ async function buildWeeklyNoteList(app, index, todayDate) {
       temporalState: "imported"
     });
   }
-  return [...byStart.values()].sort((left, right) => right.weekStartDate.localeCompare(left.weekStartDate));
+  const ordered = [...byStart.values()].sort((left, right) => left.weekStartDate.localeCompare(right.weekStartDate));
+  for (let index2 = 1; index2 < ordered.length; index2 += 1) {
+    const previous = ordered[index2 - 1];
+    const current = ordered[index2];
+    if (current.weekStartDate <= previous.weekEndDate) {
+      throw new Error(`EH Weekly Forms overlap: ${previous.filePath} (${previous.weekStartDate}\u2013${previous.weekEndDate}) and ${current.filePath} (${current.weekStartDate}\u2013${current.weekEndDate}).`);
+    }
+  }
+  return ordered.reverse();
 }
 
 // src/WeeklyAssessmentView.ts
 var EXAMINED_HUMAN_WEEKLY_ASSESSMENT_VIEW_TYPE = "examined-human-weekly-assessment";
 var FINGERPRINT_INTERVAL_MS5 = 1e4;
-var WEEKLY_NOTE_PATTERN2 = /^\d{4}-W\d{1,2}\.md$/i;
+var WEEKLY_NOTE_PATTERN = /^\d{4}-W\d{1,2}\.md$/i;
 function formatDuration3(totalMinutes) {
   const minutes = Math.max(0, Math.round(totalMinutes));
   const hours = Math.floor(minutes / 60);
@@ -11329,8 +12834,8 @@ function formatDuration3(totalMinutes) {
   return `${hours}h ${remainder}m`;
 }
 function formatWeekRange(startDate, endDate) {
-  const start = (0, import_obsidian19.moment)(startDate, "YYYY-MM-DD", true);
-  const end = (0, import_obsidian19.moment)(endDate, "YYYY-MM-DD", true);
+  const start = (0, import_obsidian20.moment)(startDate, "YYYY-MM-DD", true);
+  const end = (0, import_obsidian20.moment)(endDate, "YYYY-MM-DD", true);
   if (!start.isValid() || !end.isValid()) return `${startDate} \u2013 ${endDate}`;
   if (start.year() === end.year() && start.month() === end.month()) {
     return `${start.format("MMM D")}\u2013${end.format("D, YYYY")}`;
@@ -11364,7 +12869,7 @@ function planningOutput(result) {
     `Missing sources marked deleted: ${result.deletedSourceCount}`
   ].join("\n");
 }
-var WeeklyAssessmentView = class extends import_obsidian19.ItemView {
+var WeeklyAssessmentView = class extends import_obsidian20.ItemView {
   constructor(leaf, plugin) {
     super(leaf);
     this.plugin = plugin;
@@ -11372,6 +12877,7 @@ var WeeklyAssessmentView = class extends import_obsidian19.ItemView {
     this.items = [];
     this.selectedItem = null;
     this.assessment = null;
+    this.financeBriefing = null;
     this.loggerOutput = null;
     this.renderGeneration = 0;
     this.fingerprintTimer = null;
@@ -11393,22 +12899,22 @@ var WeeklyAssessmentView = class extends import_obsidian19.ItemView {
     this.registerEvent(this.app.vault.on("modify", (file) => {
       var _a;
       try {
-        const databaseChanged = (0, import_obsidian19.normalizePath)(file.path) === this.plugin.database.normalizeVaultPath(this.plugin.settings.databasePath);
+        const databaseChanged = (0, import_obsidian20.normalizePath)(file.path) === this.plugin.database.normalizeVaultPath(this.plugin.settings.databasePath);
         const selectedNoteChanged = file.path === ((_a = this.selectedItem) == null ? void 0 : _a.filePath);
         if ((databaseChanged || selectedNoteChanged) && !this.plugin.nativeLogger.isRunning) void this.refresh();
       } catch (e) {
       }
     }));
     this.registerEvent(this.app.vault.on("create", (file) => {
-      if (WEEKLY_NOTE_PATTERN2.test(file.name)) void this.refresh();
+      if (WEEKLY_NOTE_PATTERN.test(file.name)) void this.refresh();
     }));
     this.registerEvent(this.app.vault.on("delete", (file) => {
-      if (WEEKLY_NOTE_PATTERN2.test(file.name)) void this.refresh();
+      if (WEEKLY_NOTE_PATTERN.test(file.name)) void this.refresh();
     }));
     this.registerEvent(this.app.vault.on("rename", (file, oldPath) => {
       var _a;
       const oldName = (_a = oldPath.split("/").pop()) != null ? _a : "";
-      if (WEEKLY_NOTE_PATTERN2.test(file.name) || WEEKLY_NOTE_PATTERN2.test(oldName)) void this.refresh();
+      if (WEEKLY_NOTE_PATTERN.test(file.name) || WEEKLY_NOTE_PATTERN.test(oldName)) void this.refresh();
     }));
     try {
       this.lastFingerprint = await this.plugin.database.fingerprint(this.plugin.settings.databasePath);
@@ -11430,9 +12936,9 @@ var WeeklyAssessmentView = class extends import_obsidian19.ItemView {
     this.contentEl.addClass("examined-human-weekly-view");
     this.contentEl.createDiv({ cls: "examined-human-loading", text: "Loading Weekly Assessment\u2026" });
     try {
-      const today = (0, import_obsidian19.moment)().format("YYYY-MM-DD");
+      const today = (0, import_obsidian20.moment)().format("YYYY-MM-DD");
       const index = await this.plugin.database.weeklyPlanIndex(this.plugin.settings.databasePath);
-      const items = await buildWeeklyNoteList(this.app, index, today);
+      const items = await buildWeeklyNoteList(this.app, index, today, this.plugin.knownForms());
       if (generation !== this.renderGeneration) return;
       this.items = items;
       if (!this.selectedWeekStart || !items.some((item) => item.weekStartDate === this.selectedWeekStart)) {
@@ -11443,6 +12949,21 @@ var WeeklyAssessmentView = class extends import_obsidian19.ItemView {
         this.plugin.settings.databasePath,
         this.selectedItem.weekStartDate
       ) : null;
+      this.financeBriefing = null;
+      if (this.assessment) {
+        try {
+          this.financeBriefing = await this.plugin.database.financialDashboard(
+            this.plugin.settings.databasePath,
+            this.assessment.weekStartDate,
+            this.assessment.weekEndDate,
+            {
+              label: this.plugin.settings.valuationUnitLabel,
+              referenceUnit: this.plugin.settings.valuationReferenceUnit
+            }
+          );
+        } catch (e) {
+        }
+      }
       if (generation !== this.renderGeneration) return;
       this.renderDashboard();
     } catch (error) {
@@ -11476,12 +12997,13 @@ var WeeklyAssessmentView = class extends import_obsidian19.ItemView {
     }
     this.renderDirection(main, this.assessment);
     this.renderSummary(main, this.assessment.commitments);
+    this.renderFinanceBriefing(main);
     this.renderCommitments(main, this.assessment);
   }
   renderHeader() {
     var _a;
     const item = this.selectedItem;
-    const today = (0, import_obsidian19.moment)().format("YYYY-MM-DD");
+    const today = (0, import_obsidian20.moment)().format("YYYY-MM-DD");
     const header = this.contentEl.createDiv({ cls: "examined-human-toolbar examined-human-weekly-toolbar" });
     const identity = header.createDiv({ cls: "examined-human-toolbar-identity" });
     identity.createEl("h2", { text: "Examined Human \u2014 Weekly Assessment" });
@@ -11502,13 +13024,13 @@ var WeeklyAssessmentView = class extends import_obsidian19.ItemView {
     });
     const submitDate = () => {
       const value = dateInput.value.trim();
-      if (!(0, import_obsidian19.moment)(value, "YYYY-MM-DD", true).isValid()) {
-        new import_obsidian19.Notice("Enter a date as YYYY-MM-DD.", 5e3);
+      if (!(0, import_obsidian20.moment)(value, "YYYY-MM-DD", true).isValid()) {
+        new import_obsidian20.Notice("Enter a date as YYYY-MM-DD.", 5e3);
         return;
       }
       const match = this.items.find((candidate) => candidate.weekStartDate <= value && candidate.weekEndDate >= value);
       if (!match) {
-        new import_obsidian19.Notice("No weekly note contains that date.", 6e3);
+        new import_obsidian20.Notice("No weekly note contains that date.", 6e3);
         return;
       }
       this.selectedWeekStart = match.weekStartDate;
@@ -11538,6 +13060,17 @@ var WeeklyAssessmentView = class extends import_obsidian19.ItemView {
       this.actionButton.setText("Already imported");
       this.actionButton.disabled = true;
     }
+    const discoverButton = controls.createEl("button", { text: "Discover forms", cls: "examined-human-toolbar-button" });
+    discoverButton.addEventListener("click", () => {
+      discoverButton.disabled = true;
+      discoverButton.setText("Discovering\u2026");
+      void this.plugin.discoverFormsWithNotice().finally(() => {
+        if (discoverButton.isConnected) {
+          discoverButton.disabled = false;
+          discoverButton.setText("Discover forms");
+        }
+      });
+    });
     controls.createEl("button", { text: "Refresh", cls: "examined-human-toolbar-button" }).addEventListener("click", () => {
       void this.plugin.refreshViews();
     });
@@ -11586,7 +13119,7 @@ var WeeklyAssessmentView = class extends import_obsidian19.ItemView {
         cls: "examined-human-daily-validation-note",
         text: "Importing validates and records the weekly plan. It does not write Daily Notes."
       });
-    } else if (item.weekEndDate >= (0, import_obsidian19.moment)().format("YYYY-MM-DD")) {
+    } else if (item.weekEndDate >= (0, import_obsidian20.moment)().format("YYYY-MM-DD")) {
       badge.addClass("is-ready");
       badge.setText("Ready to sync");
       section.createDiv({
@@ -11612,7 +13145,7 @@ var WeeklyAssessmentView = class extends import_obsidian19.ItemView {
     const header = block.createDiv({ cls: "examined-human-daily-output-header" });
     header.createEl("strong", { text: label });
     header.createEl("button", { text: "Copy", cls: "examined-human-toolbar-button" }).addEventListener("click", () => {
-      void navigator.clipboard.writeText(output).then(() => new import_obsidian19.Notice("Copied logger output."));
+      void navigator.clipboard.writeText(output).then(() => new import_obsidian20.Notice("Copied logger output."));
     });
     const textarea = block.createEl("textarea", {
       cls: "examined-human-daily-output",
@@ -11656,6 +13189,26 @@ var WeeklyAssessmentView = class extends import_obsidian19.ItemView {
       card.createDiv({ cls: "examined-human-weekly-eyebrow", text: label });
       card.createDiv({ cls: "examined-human-weekly-summary-value", text: value });
     }
+  }
+  renderFinanceBriefing(container) {
+    const finance = this.financeBriefing;
+    if (!finance) return;
+    const section = container.createEl("section", { cls: "examined-human-weekly-direction" });
+    section.createEl("h3", { text: "Weekly finance briefing" });
+    const subtitle = section.createDiv({ cls: "examined-human-weekly-chart-subtitle" });
+    const budget = finance.activeBudget;
+    subtitle.setText(budget ? `Active budget: ${formatDashboardDate(budget.periodStart)} \u2013 ${formatDashboardDate(budget.periodEnd)} \xB7 transfers and balance adjustments are excluded from cash flow.` : "No active Budget Form. Cash flow excludes conservative internal transfers and marked balance adjustments.");
+    const grid = section.createDiv({ cls: "examined-human-weekly-direction-grid" });
+    for (const currency2 of finance.currencies) {
+      const card = grid.createDiv({ cls: "examined-human-weekly-direction-card" });
+      card.createDiv({ cls: "examined-human-weekly-eyebrow", text: `${currency2.currency} cash flow` });
+      card.createDiv({ cls: "examined-human-weekly-direction-value", text: formatDashboardAmount(currency2.net, currency2.currency) });
+      card.createDiv({ text: `Inflow ${formatDashboardAmount(currency2.inflow, currency2.currency)} \xB7 outflow ${formatDashboardAmount(currency2.outflow, currency2.currency)}` });
+    }
+    if (finance.currencies.length === 0) grid.createDiv({ cls: "examined-human-weekly-empty", text: "No personal cash-flow entries were recorded in this week." });
+    if (!budget) return;
+    const unmatched = budget.expectedMovements.filter((movement) => !movement.isMatched).length;
+    section.createDiv({ cls: "examined-human-daily-validation-note", text: `${budget.targets.length} budget target${budget.targets.length === 1 ? "" : "s"} \xB7 ${unmatched} expected movement${unmatched === 1 ? "" : "s"} unmatched` });
   }
   renderCommitments(container, result) {
     const section = container.createEl("section", { cls: "examined-human-weekly-commitments" });
@@ -11719,11 +13272,11 @@ var WeeklyAssessmentView = class extends import_obsidian19.ItemView {
     }
     try {
       if (item.status === "pending") await this.importSelectedWeek(item);
-      else if (item.weekEndDate >= (0, import_obsidian19.moment)().format("YYYY-MM-DD")) await this.syncSelectedWeek(item);
+      else if (item.weekEndDate >= (0, import_obsidian20.moment)().format("YYYY-MM-DD")) await this.syncSelectedWeek(item);
     } catch (error) {
       this.loggerOutput = error instanceof Error ? error.message : String(error);
       this.renderDashboard();
-      new import_obsidian19.Notice("EH Logger could not complete the weekly action.", 1e4);
+      new import_obsidian20.Notice("EH Logger could not complete the weekly action.", 1e4);
     } finally {
       if (activeButton == null ? void 0 : activeButton.isConnected) {
         activeButton.disabled = false;
@@ -11734,7 +13287,7 @@ var WeeklyAssessmentView = class extends import_obsidian19.ItemView {
   async importSelectedWeek(item) {
     var _a;
     const file = this.app.vault.getAbstractFileByPath(item.filePath);
-    if (!(file instanceof import_obsidian19.TFile)) throw new Error(`Weekly note not found: ${item.filePath}`);
+    if (!(file instanceof import_obsidian20.TFile)) throw new Error(`Weekly note not found: ${item.filePath}`);
     const request = {
       databasePath: this.plugin.settings.databasePath,
       weekStartDate: item.weekStartDate,
@@ -11754,9 +13307,10 @@ var WeeklyAssessmentView = class extends import_obsidian19.ItemView {
     if (!confirmed) return;
     (_a = this.actionButton) == null ? void 0 : _a.setText("Importing\u2026");
     const live = await this.plugin.nativeLogger.importWeekly(request);
+    await this.plugin.markImportedEhFormFileIfComplete(file);
     this.loggerOutput = [weeklyImportOutput(live), ...backupMutationOutput(live)].join("\n");
     await this.plugin.refreshViews();
-    new import_obsidian19.Notice(`${item.weekLabel} imported successfully.`, 8e3);
+    new import_obsidian20.Notice(`${item.weekLabel} imported successfully.`, 8e3);
   }
   async syncSelectedWeek(item) {
     var _a, _b, _c;
@@ -11788,13 +13342,13 @@ ${planningOutput(futureLive)}
 ${backupMutationOutput(futureLive).join("\n")}`
     ].join("\n\n");
     await this.plugin.refreshViews();
-    new import_obsidian19.Notice(`${item.weekLabel} was written to Daily Notes and future projections were refreshed.`, 1e4);
+    new import_obsidian20.Notice(`${item.weekLabel} was written to Daily Notes and future projections were refreshed.`, 1e4);
   }
   async weeklyDailyNoteRequest(item) {
-    const todayDate = (0, import_obsidian19.moment)().format("YYYY-MM-DD");
+    const todayDate = (0, import_obsidian20.moment)().format("YYYY-MM-DD");
     const first = item.weekStartDate > todayDate ? item.weekStartDate : todayDate;
     const dates = [];
-    for (let date = (0, import_obsidian19.moment)(first, "YYYY-MM-DD"); date.format("YYYY-MM-DD") <= item.weekEndDate; date = date.clone().add(1, "day")) {
+    for (let date = (0, import_obsidian20.moment)(first, "YYYY-MM-DD"); date.format("YYYY-MM-DD") <= item.weekEndDate; date = date.clone().add(1, "day")) {
       dates.push(date.format("YYYY-MM-DD"));
     }
     const notes = await Promise.all(dates.map(async (date) => {
@@ -11816,18 +13370,18 @@ ${backupMutationOutput(futureLive).join("\n")}`
     };
   }
   async planningSyncRequest() {
-    const cutoffDate = (0, import_obsidian19.moment)().format("YYYY-MM-DD");
+    const cutoffDate = (0, import_obsidian20.moment)().format("YYYY-MM-DD");
     const index = await this.plugin.database.dailyNoteIndex(this.plugin.settings.databasePath);
     const items = await buildDailyNoteList(
       this.app,
       index,
       cutoffDate,
-      this.plugin.settings.journalFolder
+      this.plugin.knownForms()
     );
     const candidates = items.filter((item) => item.status === "current-future" && item.date >= cutoffDate);
     const notes = await Promise.all(candidates.map(async (item) => {
       const file = this.app.vault.getAbstractFileByPath(item.filePath);
-      if (!(file instanceof import_obsidian19.TFile)) throw new Error(`Daily Note not found: ${item.filePath}`);
+      if (!(file instanceof import_obsidian20.TFile)) throw new Error(`Daily Note not found: ${item.filePath}`);
       return {
         noteDate: item.date,
         fileName: item.fileName,
@@ -11860,10 +13414,12 @@ ${backupMutationOutput(futureLive).join("\n")}`
 };
 
 // src/settings.ts
-var import_obsidian20 = require("obsidian");
+var import_obsidian21 = require("obsidian");
 var DEFAULT_SETTINGS = {
   databasePath: "EH.db",
   journalFolder: DEFAULT_JOURNAL_FOLDER,
+  formDiscoveryMode: "tagged-vault",
+  formDiscoveryCache: { version: 1, entries: {} },
   mealCalorieLimitKcal: 0,
   dailyCalorieLimitKcal: 1850,
   minimumProteinG: 0,
@@ -11873,9 +13429,11 @@ var DEFAULT_SETTINGS = {
   dayColumnWidth: 180,
   mobileDayColumnWidth: 160,
   defaultDashboardDays: 14,
+  valuationUnitLabel: "EHM",
+  valuationReferenceUnit: "USD",
   sessionColors: { ...DEFAULT_SESSION_COLORS }
 };
-var ExaminedHumanSettingTab = class extends import_obsidian20.PluginSettingTab {
+var ExaminedHumanSettingTab = class extends import_obsidian21.PluginSettingTab {
   constructor(app, plugin) {
     super(app, plugin);
     this.plugin = plugin;
@@ -11883,12 +13441,12 @@ var ExaminedHumanSettingTab = class extends import_obsidian20.PluginSettingTab {
   display() {
     const { containerEl } = this;
     containerEl.empty();
-    new import_obsidian20.Setting(containerEl).setName("Database").setHeading();
+    new import_obsidian21.Setting(containerEl).setName("Database").setHeading();
     containerEl.createEl("p", {
       text: "Dashboard queries remain read-only. Official Data Schema v1 creation and confirmed imports use a separate guarded writer with backups and integrity checks.",
       cls: "setting-item-description"
     });
-    new import_obsidian20.Setting(containerEl).setName("Database path").setDesc("Path relative to the vault root, for example EH.db or data/EH.db. Absolute paths are not supported.").addText((text) => text.setPlaceholder("EH.db").setValue(this.plugin.settings.databasePath).onChange(async (value) => {
+    new import_obsidian21.Setting(containerEl).setName("Database path").setDesc("Path relative to the vault root, for example EH.db or data/EH.db. Absolute paths are not supported.").addText((text) => text.setPlaceholder("EH.db").setValue(this.plugin.settings.databasePath).onChange(async (value) => {
       this.plugin.settings.databasePath = value.trim();
       await this.plugin.saveSettings();
     })).addButton((button) => button.setButtonText("Test connection").onClick(async () => {
@@ -11896,9 +13454,9 @@ var ExaminedHumanSettingTab = class extends import_obsidian20.PluginSettingTab {
       try {
         const result = await this.plugin.database.inspect(this.plugin.settings.databasePath);
         const range = result.firstDate && result.lastDate ? `${result.firstDate} to ${result.lastDate}` : "no dated sessions";
-        new import_obsidian20.Notice(`Examined Human database OK: ${result.sessionCount} sessions across ${result.distinctDays} days (${range}).`, 8e3);
+        new import_obsidian21.Notice(`Examined Human database OK: ${result.sessionCount} sessions across ${result.distinctDays} days (${range}).`, 8e3);
       } catch (error) {
-        new import_obsidian20.Notice(`Examined Human database error: ${error instanceof Error ? error.message : String(error)}`, 1e4);
+        new import_obsidian21.Notice(`Examined Human database error: ${error instanceof Error ? error.message : String(error)}`, 1e4);
       } finally {
         button.setDisabled(false);
       }
@@ -11906,41 +13464,60 @@ var ExaminedHumanSettingTab = class extends import_obsidian20.PluginSettingTab {
       button.setDisabled(true);
       try {
         const result = await this.plugin.nativeLogger.createDatabase(this.plugin.settings.databasePath);
-        new import_obsidian20.Notice(`Created an empty Examined Human Data Schema v${result.schemaVersion} database at ${result.databasePath}.`, 9e3);
+        new import_obsidian21.Notice(`Created an empty Examined Human Data Schema v${result.schemaVersion} database at ${result.databasePath}.`, 9e3);
         await this.plugin.refreshViews();
       } catch (error) {
-        new import_obsidian20.Notice(`Examined Human database creation failed: ${error instanceof Error ? error.message : String(error)}`, 1e4);
+        new import_obsidian21.Notice(`Examined Human database creation failed: ${error instanceof Error ? error.message : String(error)}`, 1e4);
       } finally {
         button.setDisabled(false);
       }
     }));
-    new import_obsidian20.Setting(containerEl).setName("Upgrade legacy database to Schema v1").setDesc("One-time 0.9.3 upgrade for the Food Dictionary. It preserves existing meal rows, adds canonical foods and food aliases, resets retired migration metadata to official Data Schema v1, and creates a verified backup.").addButton((button) => button.setButtonText("Preview upgrade").onClick(async () => {
+    new import_obsidian21.Setting(containerEl).setName("Valuation").setHeading();
+    containerEl.createEl("p", {
+      text: "Valuation Rates are user-entered dated observations. The Finance Dashboard carries each known rate forward until a newer one is imported; it never fetches market data.",
+      cls: "setting-item-description"
+    });
+    new import_obsidian21.Setting(containerEl).setName("Valuation display label").setDesc("Label displayed beside total valued assets and liabilities. It can be EHM, USD, Satoshi, or any other text.").addText((text) => text.setPlaceholder("EHM").setValue(this.plugin.settings.valuationUnitLabel).onChange(async (value) => {
+      this.plugin.settings.valuationUnitLabel = value.trim() || DEFAULT_SETTINGS.valuationUnitLabel;
+      await this.plugin.saveSettings();
+      await this.plugin.refreshViews();
+    }));
+    new import_obsidian21.Setting(containerEl).setName("Reference asset class").setDesc("Exact account unit that is automatically worth 1 valuation unit. Default: USD. Matching ignores case and extra spaces.").addText((text) => text.setPlaceholder("USD").setValue(this.plugin.settings.valuationReferenceUnit).onChange(async (value) => {
+      this.plugin.settings.valuationReferenceUnit = value.trim() || DEFAULT_SETTINGS.valuationReferenceUnit;
+      await this.plugin.saveSettings();
+      await this.plugin.refreshViews();
+    }));
+    new import_obsidian21.Setting(containerEl).setName("Upgrade legacy database to Schema v1").setDesc("One-time pre-1.0 upgrade for the Food Dictionary, Finance, and Valuation foundations. It preserves existing meal rows, adds canonical foods/aliases, budget tables, and valuation history, resets retired migration metadata to official Data Schema v1, and creates a verified backup.").addButton((button) => button.setButtonText("Preview upgrade").onClick(async () => {
       button.setDisabled(true);
       try {
         const preview = await this.plugin.nativeLogger.inspectSchemaV1Upgrade(this.plugin.settings.databasePath);
         const confirmed = await confirmWeeklyAction(this.app, {
           title: "Upgrade to official Data Schema v1",
-          explanation: "This one-time upgrade adds the Food Dictionary. It keeps existing meal rows unchanged, but replaces the retired schema migration history with one official Schema v1 record.",
+          explanation: "This one-time upgrade adds the Food Dictionary, Finance, and Valuation foundations. It keeps existing meal rows unchanged, but replaces retired schema migration history with one official Schema v1 record.",
           confirmLabel: "Upgrade database",
           dryRunOutput: `Current SQLite schema marker: v${preview.currentSchemaVersion}
 Target official schema marker: v${preview.targetSchemaVersion}
 Retired migration records to replace: ${preview.migrationEntryCount}
-New tables: foods, food_aliases
-New daily_meals links: food_id, amount_g, nutrient snapshots`,
+Food Dictionary needed: ${preview.needsFoodDictionary ? "yes" : "already present"}
+Finance foundation needed: ${preview.needsFinanceFoundation ? "yes" : "already present"}
+Mutable dated budgets needed: ${preview.needsMutableBudgets ? "yes" : "already present"}
+Valuation history needed: ${preview.needsValuationHistory ? "yes" : "already present"}
+New tables when needed: foods, food_aliases, budget_plans, budget_targets, expected_financial_movements, valuation_rate_sets, valuation_rates
+New daily_meals links when needed: food_id, amount_g, nutrient snapshots`,
           warning: "A backup, transaction, integrity checks, and post-write verification will run before the upgraded database becomes the source of truth."
         });
         if (!confirmed) return;
         const result = await this.plugin.nativeLogger.upgradeToOfficialSchemaV1(this.plugin.settings.databasePath);
-        new import_obsidian20.Notice(`Upgraded ${result.databasePath} to official Data Schema v1. ${result.backupPath ? `Backup: ${result.backupPath}` : ""}`, 12e3);
+        new import_obsidian21.Notice(`Upgraded ${result.databasePath} to official Data Schema v1. ${result.backupPath ? `Backup: ${result.backupPath}` : ""}`, 12e3);
         await this.plugin.refreshViews();
         this.display();
       } catch (error) {
-        new import_obsidian20.Notice(`Database upgrade was not performed: ${error instanceof Error ? error.message : String(error)}`, 12e3);
+        new import_obsidian21.Notice(`Database upgrade was not performed: ${error instanceof Error ? error.message : String(error)}`, 12e3);
       } finally {
         button.setDisabled(false);
       }
     }));
-    new import_obsidian20.Setting(containerEl).setName("Backup retention limit").setDesc("Maximum number of newest EH-created database backups to keep. Use 0 to keep every backup. Cleanup runs only after a successful verified database write and never removes unrelated files.").addText((text) => {
+    new import_obsidian21.Setting(containerEl).setName("Backup retention limit").setDesc("Maximum number of newest EH-created database backups to keep. Use 0 to keep every backup. Cleanup runs only after a successful verified database write and never removes unrelated files.").addText((text) => {
       text.inputEl.type = "number";
       text.inputEl.min = "0";
       text.inputEl.step = "1";
@@ -11953,25 +13530,29 @@ New daily_meals links: food_id, amount_g, nutrient snapshots`,
         await this.plugin.saveSettings();
       });
     });
-    new import_obsidian20.Setting(containerEl).setName("Journal notes").setHeading();
+    new import_obsidian21.Setting(containerEl).setName("Journal notes").setHeading();
     containerEl.createEl("p", {
       text: "Examined Human recursively scans the selected vault folder for Daily Notes. The currently supported canonical filename format is YYYY-MM-DD.md.",
       cls: "setting-item-description"
     });
-    new import_obsidian20.Setting(containerEl).setName("Journal folder").setDesc("Vault-relative base folder containing Daily Notes, including any year or daily subfolders. Leave blank to scan the entire vault.").addText((text) => text.setPlaceholder(DEFAULT_JOURNAL_FOLDER).setValue(this.plugin.settings.journalFolder).onChange(async (value) => {
+    new import_obsidian21.Setting(containerEl).setName("Journal folder").setDesc("Vault-relative base folder containing Daily Notes, including any year or daily subfolders. Leave blank to scan the entire vault.").addText((text) => text.setPlaceholder(DEFAULT_JOURNAL_FOLDER).setValue(this.plugin.settings.journalFolder).onChange(async (value) => {
       try {
         this.plugin.settings.journalFolder = normalizeJournalFolder(value);
         await this.plugin.saveSettings();
       } catch (error) {
-        new import_obsidian20.Notice(error instanceof Error ? error.message : String(error), 8e3);
+        new import_obsidian21.Notice(error instanceof Error ? error.message : String(error), 8e3);
       }
     }));
-    new import_obsidian20.Setting(containerEl).setName("Nutrition evaluation").setHeading();
+    new import_obsidian21.Setting(containerEl).setName("Form discovery").setDesc("Default: scan only Markdown notes whose YAML frontmatter contains EH form: true or unimported (case-insensitive). Imported and false markers are skipped. Journal folder mode also scans unmarked notes in that folder and can take noticeably longer in a large vault.").addDropdown((dropdown) => dropdown.addOption("tagged-vault", "Only unimported EH Form notes").addOption("journal-folder", "Every note in Journal folder").setValue(this.plugin.settings.formDiscoveryMode).onChange(async (value) => {
+      this.plugin.settings.formDiscoveryMode = value === "journal-folder" ? "journal-folder" : "tagged-vault";
+      await this.plugin.saveSettings();
+    }));
+    new import_obsidian21.Setting(containerEl).setName("Nutrition evaluation").setHeading();
     containerEl.createEl("p", {
       text: "These limits are used by the native Meals inspector. Zero disables that automatic rule. When both daily calories and minimum protein are zero, the EH Form dieted value is trusted.",
       cls: "setting-item-description"
     });
-    new import_obsidian20.Setting(containerEl).setName("Meal calorie limit").setDesc("Calories above this limit make Breakfast, Lunch, or Dinner leisure. Snacks never count directly. Set to 0 to use only is_leisure from the note.").addText((text) => {
+    new import_obsidian21.Setting(containerEl).setName("Meal calorie limit").setDesc("Calories above this limit make Breakfast, Lunch, or Dinner leisure. Snacks never count directly. Set to 0 to use only is_leisure from the note.").addText((text) => {
       text.inputEl.type = "number";
       text.inputEl.min = "0";
       text.inputEl.step = "1";
@@ -11983,7 +13564,7 @@ New daily_meals links: food_id, amount_g, nutrient snapshots`,
         await this.plugin.saveSettings();
       });
     });
-    new import_obsidian20.Setting(containerEl).setName("Daily calorie limit").setDesc("The complete daily total includes snacks. Exceeding a positive limit makes the day count at least two leisure meals and participates in automatic dieted evaluation. Set to 0 to disable.").addText((text) => {
+    new import_obsidian21.Setting(containerEl).setName("Daily calorie limit").setDesc("The complete daily total includes snacks. Exceeding a positive limit makes the day count at least two leisure meals and participates in automatic dieted evaluation. Set to 0 to disable.").addText((text) => {
       text.inputEl.type = "number";
       text.inputEl.min = "0";
       text.inputEl.step = "1";
@@ -11995,7 +13576,7 @@ New daily_meals links: food_id, amount_g, nutrient snapshots`,
         await this.plugin.saveSettings();
       });
     });
-    new import_obsidian20.Setting(containerEl).setName("Minimum daily protein").setDesc("A positive gram target participates in automatic dieted evaluation. Set to 0 to ignore protein and trust the remaining enabled rules or the EH Form value.").addText((text) => {
+    new import_obsidian21.Setting(containerEl).setName("Minimum daily protein").setDesc("A positive gram target participates in automatic dieted evaluation. Set to 0 to ignore protein and trust the remaining enabled rules or the EH Form value.").addText((text) => {
       text.inputEl.type = "number";
       text.inputEl.min = "0";
       text.inputEl.step = "0.1";
@@ -12007,15 +13588,15 @@ New daily_meals links: food_id, amount_g, nutrient snapshots`,
         await this.plugin.saveSettings();
       });
     });
-    new import_obsidian20.Setting(containerEl).setName("Native logger").setHeading();
+    new import_obsidian21.Setting(containerEl).setName("Native logger").setHeading();
     containerEl.createEl("p", {
       text: "Daily validation and import, current/future projections, weekly-plan import, and weekly Daily Note writing run inside Obsidian on desktop and mobile. Python is not required.",
       cls: "setting-item-description"
     });
-    new import_obsidian20.Setting(containerEl).setName("Command Center").setDesc("Audit the Food Library and stage corrections into unimported Daily Notes. Contextual validation fixes use the current unimported note automatically; Command Center changes let you choose a current or future note.").addButton((button) => button.setButtonText("Open Command Center").onClick(() => {
+    new import_obsidian21.Setting(containerEl).setName("Command Center").setDesc("Audit the Food Library and stage corrections into unimported Daily Notes. Contextual validation fixes use the current unimported note automatically; Command Center changes let you choose a current or future note.").addButton((button) => button.setButtonText("Open Command Center").onClick(() => {
       void this.plugin.activateCommandCenterView();
     }));
-    new import_obsidian20.Setting(containerEl).setName("Default dashboard period").setDesc("Number of inclusive days used by Finance, Nutrition, Exercise, and other analytical dashboards when they open. Use All time inside a dashboard for the complete history.").addText((text) => {
+    new import_obsidian21.Setting(containerEl).setName("Default dashboard period").setDesc("Number of inclusive days used by Finance, Nutrition, Exercise, and other analytical dashboards when they open. Use All time inside a dashboard for the complete history.").addText((text) => {
       text.inputEl.type = "number";
       text.inputEl.min = "1";
       text.inputEl.step = "1";
@@ -12027,33 +13608,33 @@ New daily_meals links: food_id, amount_g, nutrient snapshots`,
         await this.plugin.saveSettings();
       });
     });
-    new import_obsidian20.Setting(containerEl).setName("Hidden dashboard warnings").setDesc(`${this.plugin.settings.dismissedWarningKeys.length} warning type${this.plugin.settings.dismissedWarningKeys.length === 1 ? "" : "s"} hidden with \u201CDon't show again\u201D. Import blockers and safety confirmations cannot be hidden.`).addButton((button) => button.setButtonText("Show all warnings").setDisabled(this.plugin.settings.dismissedWarningKeys.length === 0).onClick(async () => {
+    new import_obsidian21.Setting(containerEl).setName("Hidden dashboard warnings").setDesc(`${this.plugin.settings.dismissedWarningKeys.length} warning type${this.plugin.settings.dismissedWarningKeys.length === 1 ? "" : "s"} hidden with \u201CDon't show again\u201D. Import blockers and safety confirmations cannot be hidden.`).addButton((button) => button.setButtonText("Show all warnings").setDisabled(this.plugin.settings.dismissedWarningKeys.length === 0).onClick(async () => {
       this.plugin.settings.dismissedWarningKeys = [];
       await this.plugin.saveSettings();
       await this.plugin.refreshViews();
       this.display();
     }));
-    new import_obsidian20.Setting(containerEl).setName("Initial hour").setDesc("Vertical position used when the calendar opens or jumps to today.").addSlider((slider) => slider.setLimits(0, 23, 1).setDynamicTooltip().setValue(this.plugin.settings.initialScrollHour).onChange(async (value) => {
+    new import_obsidian21.Setting(containerEl).setName("Initial hour").setDesc("Vertical position used when the calendar opens or jumps to today.").addSlider((slider) => slider.setLimits(0, 23, 1).setDynamicTooltip().setValue(this.plugin.settings.initialScrollHour).onChange(async (value) => {
       this.plugin.settings.initialScrollHour = value;
       await this.plugin.saveSettings();
     }));
-    new import_obsidian20.Setting(containerEl).setName("Desktop day width").setDesc("Width of each calendar day while scrolling horizontally on desktop.").addSlider((slider) => slider.setLimits(120, 280, 10).setDynamicTooltip().setValue(this.plugin.settings.dayColumnWidth).onChange(async (value) => {
+    new import_obsidian21.Setting(containerEl).setName("Desktop day width").setDesc("Width of each calendar day while scrolling horizontally on desktop.").addSlider((slider) => slider.setLimits(120, 280, 10).setDynamicTooltip().setValue(this.plugin.settings.dayColumnWidth).onChange(async (value) => {
       this.plugin.settings.dayColumnWidth = value;
       await this.plugin.saveSettings();
       await this.plugin.refreshViews();
     }));
-    new import_obsidian20.Setting(containerEl).setName("Mobile day width").setDesc("Width of each calendar day while scrolling horizontally on mobile.").addSlider((slider) => slider.setLimits(120, 280, 10).setDynamicTooltip().setValue(this.plugin.settings.mobileDayColumnWidth).onChange(async (value) => {
+    new import_obsidian21.Setting(containerEl).setName("Mobile day width").setDesc("Width of each calendar day while scrolling horizontally on mobile.").addSlider((slider) => slider.setLimits(120, 280, 10).setDynamicTooltip().setValue(this.plugin.settings.mobileDayColumnWidth).onChange(async (value) => {
       this.plugin.settings.mobileDayColumnWidth = value;
       await this.plugin.saveSettings();
       await this.plugin.refreshViews();
     }));
-    new import_obsidian20.Setting(containerEl).setName("Session colors").setHeading();
+    new import_obsidian21.Setting(containerEl).setName("Session colors").setHeading();
     containerEl.createEl("p", {
       text: "Colors are keyed by the canonical session_types.code referenced by sessions.session_type_id. Unknown values render in gray.",
       cls: "setting-item-description"
     });
     for (const type of SESSION_TYPES) {
-      new import_obsidian20.Setting(containerEl).setName(type).addColorPicker((picker) => {
+      new import_obsidian21.Setting(containerEl).setName(type).addColorPicker((picker) => {
         var _a;
         return picker.setValue((_a = this.plugin.settings.sessionColors[type]) != null ? _a : DEFAULT_SESSION_COLORS[type]).onChange(async (value) => {
           this.plugin.settings.sessionColors[type] = value;
@@ -12081,7 +13662,10 @@ function storedJournalFolder(value) {
     return DEFAULT_SETTINGS.journalFolder;
   }
 }
-var ExaminedHumanPlugin = class extends import_obsidian21.Plugin {
+function storedText(value, fallback) {
+  return typeof value === "string" && value.trim() ? value.trim() : fallback;
+}
+var ExaminedHumanPlugin = class extends import_obsidian22.Plugin {
   constructor() {
     super(...arguments);
     this.settings = DEFAULT_SETTINGS;
@@ -12111,6 +13695,27 @@ var ExaminedHumanPlugin = class extends import_obsidian21.Plugin {
       name: "Daily Assessment",
       callback: () => {
         void this.activateDailyAssessmentView();
+      }
+    });
+    this.addCommand({
+      id: "import-daily-form-from-active-file",
+      name: "Import Daily Form from Active File",
+      callback: () => {
+        void this.importActiveForm("daily");
+      }
+    });
+    this.addCommand({
+      id: "import-weekly-form-from-active-file",
+      name: "Import Weekly Form from Active File",
+      callback: () => {
+        void this.importActiveForm("weekly");
+      }
+    });
+    this.addCommand({
+      id: "import-budget-form-from-active-file",
+      name: "Import Budget Form from Active File",
+      callback: () => {
+        void this.importActiveForm("budget");
       }
     });
     this.addCommand({
@@ -12189,6 +13794,8 @@ var ExaminedHumanPlugin = class extends import_obsidian21.Plugin {
       },
       backupRetentionLimit: Number.isSafeInteger(stored == null ? void 0 : stored.backupRetentionLimit) && Number(stored == null ? void 0 : stored.backupRetentionLimit) >= 0 ? Number(stored == null ? void 0 : stored.backupRetentionLimit) : DEFAULT_SETTINGS.backupRetentionLimit,
       journalFolder: storedJournalFolder(stored == null ? void 0 : stored.journalFolder),
+      formDiscoveryMode: (stored == null ? void 0 : stored.formDiscoveryMode) === "journal-folder" ? "journal-folder" : "tagged-vault",
+      formDiscoveryCache: sanitizeFormDiscoveryCache(stored == null ? void 0 : stored.formDiscoveryCache),
       dayColumnWidth: boundedInteger(stored == null ? void 0 : stored.dayColumnWidth, DEFAULT_SETTINGS.dayColumnWidth, 120, 280),
       mobileDayColumnWidth: boundedInteger(
         stored == null ? void 0 : stored.mobileDayColumnWidth,
@@ -12202,12 +13809,187 @@ var ExaminedHumanPlugin = class extends import_obsidian21.Plugin {
         1,
         3650
       ),
+      valuationUnitLabel: storedText(stored == null ? void 0 : stored.valuationUnitLabel, DEFAULT_SETTINGS.valuationUnitLabel),
+      valuationReferenceUnit: storedText(stored == null ? void 0 : stored.valuationReferenceUnit, DEFAULT_SETTINGS.valuationReferenceUnit),
       dismissedWarningKeys: sanitizeDismissedWarningKeys(stored == null ? void 0 : stored.dismissedWarningKeys)
     };
     if (hadLegacyPythonSetting) await this.saveData(this.settings);
   }
   async saveSettings() {
     await this.saveData(this.settings);
+  }
+  knownForms() {
+    return cachedEhForms(this.app, this.settings.formDiscoveryCache);
+  }
+  async discoverForms() {
+    const result = await discoverEhForms(
+      this.app,
+      this.settings.formDiscoveryMode,
+      this.settings.journalFolder,
+      this.settings.formDiscoveryCache
+    );
+    this.settings.formDiscoveryCache = result.cache;
+    await this.saveSettings();
+    return result;
+  }
+  async discoverFormsWithNotice() {
+    try {
+      const result = await this.discoverForms();
+      new import_obsidian22.Notice(`Found ${result.forms.length} EH Form${result.forms.length === 1 ? "" : "s"}; scanned ${result.scannedFileCount} changed file${result.scannedFileCount === 1 ? "" : "s"} and reused ${result.reusedFileCount} cached file${result.reusedFileCount === 1 ? "" : "s"}.`, 8e3);
+      await this.refreshViews();
+    } catch (error) {
+      new import_obsidian22.Notice(`EH Form discovery stopped: ${error instanceof Error ? error.message : String(error)}`, 12e3);
+    }
+  }
+  async markImportedEhFormFileIfComplete(file) {
+    try {
+      const sourceText = await this.app.vault.read(file);
+      const forms = formsInText(file, sourceText);
+      const [dailyIndex, weeklyIndex] = await Promise.all([
+        this.database.dailyNoteIndex(this.settings.databasePath),
+        this.database.weeklyPlanIndex(this.settings.databasePath)
+      ]);
+      const complete = fileHasCompletedImportableForms(
+        forms,
+        file.path,
+        dailyIndex.importedNotes,
+        weeklyIndex.importedPlans
+      );
+      if (!complete) return false;
+      let markerAccepted = false;
+      await this.app.fileManager.processFrontMatter(file, (frontmatter) => {
+        var _a;
+        if (ehFormFrontmatterStatus(frontmatter) === "excluded") return;
+        const entry = ehFormFrontmatterEntry(frontmatter);
+        frontmatter[(_a = entry == null ? void 0 : entry[0]) != null ? _a : "EH form"] = "imported";
+        markerAccepted = true;
+      });
+      if (!markerAccepted) return false;
+      delete this.settings.formDiscoveryCache.entries[file.path];
+      await this.saveSettings();
+      return true;
+    } catch (error) {
+      new import_obsidian22.Notice(
+        `The form import succeeded, but its EH form status could not be updated: ${error instanceof Error ? error.message : String(error)}`,
+        12e3
+      );
+      return false;
+    }
+  }
+  async activeForm(kind) {
+    const file = this.app.workspace.getActiveFile();
+    if (!(file instanceof import_obsidian22.TFile)) throw new Error("Open a Markdown note that contains the form you want to import.");
+    const sourceText = await this.app.vault.read(file);
+    const matches = formsInText(file, sourceText).filter((form) => form.kind === kind);
+    if (matches.length === 0) throw new Error(`The active note contains no EH ${kind === "daily" ? "Daily" : kind === "weekly" ? "Weekly" : "Budget"} Form.`);
+    if (matches.length > 1) throw new Error(`The active note contains ${matches.length} EH ${kind} forms. Keep one form of each kind per note before importing.`);
+    return { file, sourceText, form: matches[0] };
+  }
+  async importActiveForm(kind) {
+    try {
+      const { file, sourceText, form } = await this.activeForm(kind);
+      if (kind === "weekly") {
+        const preview = await this.nativeLogger.inspectWeekly({
+          databasePath: this.settings.databasePath,
+          weekStartDate: form.startDate,
+          fileName: file.name,
+          filePath: file.path,
+          sourceText
+        });
+        const confirmed = await confirmWeeklyAction(this.app, {
+          title: `Import Weekly Form starting ${preview.weekStart}`,
+          explanation: "This records the weekly direction, schedule, and commitments. Reimporting the same start date updates that weekly plan.",
+          confirmLabel: "Import week",
+          dryRunOutput: `Source: ${file.path}
+Week: ${preview.weekStart}
+Commitments: ${preview.commitmentCount}
+Planned sessions: ${preview.sessionCount}
+Planned time: ${preview.plannedMinutes} minutes`,
+          warning: "Nothing has changed yet. This does not write daily-note sessions; use Sync week in Weekly Assessment when you are ready."
+        });
+        if (!confirmed) return;
+        await this.nativeLogger.importWeekly({ databasePath: this.settings.databasePath, weekStartDate: form.startDate, fileName: file.name, filePath: file.path, sourceText });
+        await this.markImportedEhFormFileIfComplete(file);
+        new import_obsidian22.Notice(`Imported Weekly Form starting ${preview.weekStart}.`, 8e3);
+      } else if (kind === "budget") {
+        const preview = await this.nativeLogger.inspectBudget({ databasePath: this.settings.databasePath, fileName: file.name, filePath: file.path, sourceText });
+        const confirmed = await confirmWeeklyAction(this.app, {
+          title: "Import Budget Form",
+          explanation: preview.updatedExistingBudget ? "This updates the stored Budget Form with the same start and end dates." : "This adds this dated Budget Form to the database.",
+          confirmLabel: preview.updatedExistingBudget ? "Update budget" : "Import budget",
+          dryRunOutput: `Source: ${file.path}
+Period: ${preview.periodStart} through ${preview.periodEnd}
+Budget targets: ${preview.targetCount}
+Expected movements: ${preview.expectedMovementCount}`,
+          warning: "Nothing has changed yet. Expected movements are planning evidence only; they never create transactions or reminders."
+        });
+        if (!confirmed) return;
+        await this.nativeLogger.importBudget({ databasePath: this.settings.databasePath, fileName: file.name, filePath: file.path, sourceText });
+        new import_obsidian22.Notice(`Imported Budget Form for ${preview.periodStart} through ${preview.periodEnd}.`, 8e3);
+      } else {
+        const today = (0, import_obsidian22.moment)().format("YYYY-MM-DD");
+        const request = {
+          databasePath: this.settings.databasePath,
+          noteDate: form.date,
+          todayDate: today,
+          fileName: file.name,
+          filePath: file.path,
+          sourceText,
+          nutritionThresholds: {
+            mealCalorieLimitKcal: this.settings.mealCalorieLimitKcal,
+            dailyCalorieLimitKcal: this.settings.dailyCalorieLimitKcal,
+            minimumProteinG: this.settings.minimumProteinG
+          }
+        };
+        const inspection = await this.nativeLogger.inspectDaily(request);
+        if (form.date >= today) {
+          const byDate = /* @__PURE__ */ new Map();
+          for (const known of this.knownForms()) {
+            if (known.kind !== "daily" || !known.date || known.date < today) continue;
+            const knownFile = this.app.vault.getAbstractFileByPath(known.filePath);
+            if (!(knownFile instanceof import_obsidian22.TFile)) continue;
+            byDate.set(known.date, {
+              noteDate: known.date,
+              fileName: knownFile.name,
+              filePath: knownFile.path,
+              sourceText: await this.app.vault.read(knownFile)
+            });
+          }
+          byDate.set(form.date, { noteDate: form.date, fileName: file.name, filePath: file.path, sourceText });
+          const planningRequest = { databasePath: this.settings.databasePath, cutoffDate: today, notes: [...byDate.values()] };
+          const preview = await this.nativeLogger.previewPlanning(planningRequest);
+          const confirmed2 = await confirmDailyImport(this.app, {
+            title: `Sync current and future plans from ${form.date}`,
+            explanation: "This replaces ephemeral planning projections for all discovered current and future EH Daily Forms. It does not create canonical sessions or a database backup.",
+            confirmLabel: "Sync future plans",
+            inspection,
+            dryRunOutput: `${preview.noteCount} current/future note${preview.noteCount === 1 ? "" : "s"} inspected.
+${preview.sessionCount} planned session${preview.sessionCount === 1 ? "" : "s"} projected.
+${preview.warningCount} warning${preview.warningCount === 1 ? "" : "s"}.
+${preview.deletedSourceCount} missing source${preview.deletedSourceCount === 1 ? "" : "s"} would be marked deleted.`
+          });
+          if (!confirmed2) return;
+          await this.nativeLogger.syncPlanning(planningRequest);
+          new import_obsidian22.Notice("Current and future planning projections were refreshed.", 8e3);
+          return;
+        }
+        const confirmed = await confirmDailyImport(this.app, {
+          title: `Import ${form.date}`,
+          explanation: "The native validation passed. This writes the immutable historical Daily receipt for this date.",
+          confirmLabel: "Import date",
+          inspection,
+          dryRunOutput: `Source: ${file.path}
+Native validation completed successfully.`
+        });
+        if (!confirmed) return;
+        await this.nativeLogger.importHistoricalDaily(request);
+        await this.markImportedEhFormFileIfComplete(file);
+        new import_obsidian22.Notice(`${form.date} imported successfully.`, 8e3);
+      }
+      await this.refreshViews();
+    } catch (error) {
+      new import_obsidian22.Notice(`EH Form import did not complete: ${error instanceof Error ? error.message : String(error)}`, 12e3);
+    }
   }
   async activateView() {
     const { workspace } = this.app;

@@ -13,7 +13,7 @@ export interface AdminEventStagePreview extends Omit<AdminEventStageInput, 'sour
   updatedText: string;
 }
 
-const EH_FORM_HEADING = /^####\s+EH\s+Form\s*$/mi;
+const EH_FORM_HEADING = /^####\s+EH\s+Daily\s+Form\s*$/mi;
 const EH_FORM_END = /^####\s+END\s*$/gmi;
 const ADMIN_EVENTS_HEADING = /^#####\s+Admin\s+Events\s*$/gmi;
 const SECTION_HEADING = /^#####\s+/gmi;
@@ -25,10 +25,10 @@ function lineEndingFor(text: string): string {
 
 function formBounds(text: string): { start: number; end: number } {
   const form = EH_FORM_HEADING.exec(text);
-  if (!form || form.index == null) throw new Error('This note has no #### EH Form block to receive an Admin Event.');
+  if (!form || form.index == null) throw new Error('This note has no #### EH Daily Form block to receive an Admin Event.');
   EH_FORM_END.lastIndex = form.index + form[0].length;
   const end = EH_FORM_END.exec(text);
-  if (!end || end.index == null) throw new Error('This note has an EH Form but no matching #### END marker.');
+  if (!end || end.index == null) throw new Error('This note has an EH Daily Form but no matching #### END marker.');
   return { start: form.index, end: end.index };
 }
 

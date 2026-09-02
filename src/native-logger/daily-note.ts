@@ -3,6 +3,7 @@ import { inspectMeals, type MealInspection, type NutritionThresholds } from './m
 import { mealComponentMatchesInspection, queryMealComponentState, writeMealInspection } from './meal-import.ts';
 import {
   assertSchemaV1,
+  assertValuationHistorySchema,
   ensureAlias,
   lastInsertId,
   moveAlias,
@@ -16,6 +17,12 @@ import {
   type ResolvedEntity,
   type ResolvedTaxonomy,
 } from './database-utils.ts';
+import {
+  parseValuationRateEntries,
+  writeHistoricalValuationRates,
+  normalizeValuationUnit,
+  type ParsedValuationRate,
+} from './valuation-rates.ts';
 
 export interface NativeDailyNoteInput {
   noteDate: string;
@@ -36,6 +43,7 @@ export interface DashboardCompleteness {
   meal_count: number;
   milestone_count: number;
   admin_event_count: number;
+  valuation_rate_count: number;
 }
 
 export interface DashboardPreviewSession {
@@ -90,6 +98,7 @@ export interface NativeDailyInspection {
     sessions: DashboardPreviewSession[];
     transactions: DashboardPreviewTransaction[];
     exercises: DashboardPreviewExercise[];
+    valuationRates: Array<{ unit: string; value: number }>;
   };
   mealInspection: MealInspection;
 }
@@ -103,6 +112,7 @@ export interface NativeDailyImportResult {
   milestoneCount: number;
   foodRowCount: number;
   adminEventCount: number;
+  valuationRateCount: number;
   rowCount: number;
 }
 
@@ -174,6 +184,7 @@ interface ParsedDailyNote {
   transactions: ParsedTransaction[];
   exercises: ParsedExercise[];
   milestones: ParsedMilestone[];
+  valuationRates: ParsedValuationRate[];
   stoicism: { score: string | null; notes: string | null };
   adminEvents: AdminEvent[];
   mealInspection: MealInspection;
@@ -286,15 +297,25 @@ function splitFields(line: string, expected?: number): string[] {
   return line.split(delimiter).map((part) => part.trim());
 }
 
-function sectionsFromForm(sourceText: string): Map<string, string> {
+function dailyFormBody(sourceText: string, expectedDate: string): string {
   const text = sourceText.replace(FEEDBACK_PATTERN, '\n');
-  const form = /^####\s+EH\s+Form\s*$/mi.exec(text);
-  if (!form) throw new Error('The note does not contain an EH Form heading.');
+  const form = /^####\s+EH\s+Daily\s+Form\s*$/mi.exec(text);
+  if (!form) throw new Error('The note does not contain an EH Daily Form heading.');
   const formStart = form.index + form[0].length;
   const afterForm = text.slice(formStart);
   const end = /^####\s+END\s*$/mi.exec(afterForm);
   if (!end) throw new Error('The note does not contain a #### END marker.');
   const body = afterForm.slice(0, end.index);
+  const declared = /^date:\s*(.*?)\s*$/im.exec(body)?.[1]?.trim() ?? '';
+  requireIsoDate(declared, 'EH Daily Form date');
+  if (declared !== expectedDate) {
+    throw new Error(`EH Daily Form declares ${declared}, but this import targets ${expectedDate}.`);
+  }
+  return body;
+}
+
+function sectionsFromForm(sourceText: string, expectedDate: string): Map<string, string> {
+  const body = dailyFormBody(sourceText, expectedDate);
   const headings = [...body.matchAll(/^#####(?!#)\s+(.+?)\s*$/gm)];
   const result = new Map<string, string>();
   headings.forEach((heading, index) => {
@@ -473,8 +494,9 @@ function metricMap(section: string | undefined, errors: string[]): Record<string
   return metrics;
 }
 
-function parseDaily(db: Database, sourceText: string, thresholds: NutritionThresholds, errors: string[]): ParsedDailyNote {
-  const sections = sectionsFromForm(sourceText);
+function parseDaily(db: Database, sourceText: string, noteDate: string, thresholds: NutritionThresholds, errors: string[]): ParsedDailyNote {
+  const formBody = dailyFormBody(sourceText, noteDate);
+  const sections = sectionsFromForm(sourceText, noteDate);
   const metrics = metricMap(sections.get('daily metrics'), errors);
   const sessions: ParsedSession[] = entries(sections.get('sessions')).map((line, index) => {
     const parts = splitFields(line, 4);
@@ -500,6 +522,7 @@ function parseDaily(db: Database, sourceText: string, thresholds: NutritionThres
       resolvedEngagement: null,
     };
   });
+  const valuationRates = parseValuationRateEntries(entries(sections.get('valuation rates')), errors);
   const exercises: ParsedExercise[] = entries(sections.get('exercise details')).map((line, index) => {
     const parts = splitFields(line, 3);
     if (parts.length !== 3) errors.push(`Invalid exercise row '${line}'; expected exercise | [sets] | notes.`);
@@ -525,9 +548,9 @@ function parseDaily(db: Database, sourceText: string, thresholds: NutritionThres
     return { command: parts[0] ?? '', args: parts.slice(1), raw: line };
   });
   return {
-    metrics, sessions, transactions, exercises, milestones,
+    metrics, sessions, transactions, exercises, milestones, valuationRates,
     stoicism: { score, notes }, adminEvents,
-    mealInspection: inspectMeals(db, sourceText, thresholds),
+    mealInspection: inspectMeals(db, formBody, thresholds),
   };
 }
 
@@ -656,7 +679,7 @@ function applyAdminEvents(db: Database, parsed: ParsedDailyNote, noteDate: strin
         if (args.length === 3) {
           db.run('INSERT INTO accounts (name, type, address) VALUES (?, ?, ?)', args);
         } else {
-          db.run('INSERT INTO accounts (name, type, currency, address) VALUES (?, ?, ?, ?)', [args[0], args[1] || null, args[2] || null, args[3] || null]);
+          db.run('INSERT INTO accounts (name, type, currency, address) VALUES (?, ?, ?, ?)', [args[0], args[1] || null, args[2] ? normalizeValuationUnit(args[2]) : null, args[3] || null]);
         }
       } else if (event.command === 'ACCOUNT_ALIAS' || event.command === 'ACCOUNT_ALIAS_ADD') {
         const account = resolveEntity(db, args[0], 'accounts');
@@ -690,7 +713,7 @@ function applyAdminEvents(db: Database, parsed: ParsedDailyNote, noteDate: strin
       } else if (event.command === 'ACCOUNT_SET_CURRENCY') {
         const account = resolveEntity(db, args[0], 'accounts');
         if (!account) throw new Error(`Unknown account: ${args[0]}`);
-        db.run('UPDATE accounts SET currency = ? WHERE id = ?', [args[1] || null, account.id]);
+        db.run('UPDATE accounts SET currency = ? WHERE id = ?', [args[1] ? normalizeValuationUnit(args[1]) : null, account.id]);
       } else if (event.command === 'ACCOUNT_SET_ADDRESS') {
         const account = resolveEntity(db, args[0], 'accounts');
         if (!account) throw new Error(`Unknown account: ${args[0]}`);
@@ -775,6 +798,13 @@ function applyAdminEvents(db: Database, parsed: ParsedDailyNote, noteDate: strin
 }
 
 function validateFacts(db: Database, parsed: ParsedDailyNote, errors: string[], warnings: string[]): void {
+  if (parsed.valuationRates.length > 0) {
+    try {
+      assertValuationHistorySchema(db);
+    } catch (error) {
+      errors.push(error instanceof Error ? error.message : String(error));
+    }
+  }
   for (const metric of ['mood', 'energy', 'stress']) {
     const value = parsed.metrics[metric];
     if (value != null && (typeof value !== 'number' || value < -2 || value > 2)) {
@@ -880,6 +910,7 @@ function inspectionFor(
       meal_count: parsed.mealInspection.foodRowCount,
       milestone_count: parsed.milestones.length,
       admin_event_count: parsed.adminEvents.length,
+      valuation_rate_count: parsed.valuationRates.length,
     },
     preview: {
       daily_metrics: Object.fromEntries(METRIC_FIELDS.map((field) => [field, parsed.metrics[field] ?? null])),
@@ -911,6 +942,7 @@ function inspectionFor(
         sets: exercise.sets.map((set, index) => ({ set_number: index + 1, ...set })),
         notes: exercise.notes || null,
       })),
+      valuationRates: parsed.valuationRates.map((rate) => ({ unit: rate.unitLabel, value: rate.value })),
     },
     mealInspection: parsed.mealInspection,
   };
@@ -924,11 +956,16 @@ function prepareDaily(db: Database, input: NativeDailyNoteInput): PreparedDailyN
   const warnings: string[] = [];
   let parsed: ParsedDailyNote;
   try {
-    parsed = parseDaily(db, input.sourceText, input.nutritionThresholds, errors);
+    parsed = parseDaily(db, input.sourceText, input.noteDate, input.nutritionThresholds, errors);
   } catch (error) {
-    const mealInspection = inspectMeals(db, input.sourceText, input.nutritionThresholds);
+    let mealInspection: MealInspection;
+    try {
+      mealInspection = inspectMeals(db, dailyFormBody(input.sourceText, input.noteDate), input.nutritionThresholds);
+    } catch {
+      mealInspection = inspectMeals(db, '', input.nutritionThresholds);
+    }
     parsed = {
-      metrics: {}, sessions: [], transactions: [], exercises: [], milestones: [],
+      metrics: {}, sessions: [], transactions: [], exercises: [], milestones: [], valuationRates: [],
       stoicism: { score: null, notes: null }, adminEvents: [], mealInspection,
     };
     errors.push(error instanceof Error ? error.message : String(error));
@@ -937,7 +974,7 @@ function prepareDaily(db: Database, input: NativeDailyNoteInput): PreparedDailyN
   if (imported) errors.push(`${input.noteDate} is already represented by a canonical imported note.`);
   if (errors.length === 0) applyAdminEvents(db, parsed, input.noteDate, errors);
   if (errors.length === 0) {
-    parsed.mealInspection = inspectMeals(db, input.sourceText, input.nutritionThresholds);
+    parsed.mealInspection = inspectMeals(db, dailyFormBody(input.sourceText, input.noteDate), input.nutritionThresholds);
     errors.push(...parsed.mealInspection.errors);
     warnings.push(...parsed.mealInspection.warnings);
   }
@@ -1040,6 +1077,7 @@ export function writeHistoricalDailyNote(db: Database, input: NativeDailyNoteInp
       transaction.resolvedEngagement!.id, transaction.description || null,
     ]);
   }
+  const valuationRateCount = writeHistoricalValuationRates(db, input, parsed.valuationRates);
 
   const exerciseSessionIndex = parsed.sessions.findIndex((session) => session.sessionType?.code === 'exercise');
   let exerciseSetCount = 0;
@@ -1103,13 +1141,14 @@ export function writeHistoricalDailyNote(db: Database, input: NativeDailyNoteInp
   if (source) db.run('DELETE FROM planned_sessions WHERE source_note_id = ?', [Number(source.id)]);
 
   const rowCount = 1 + parsed.sessions.length + parsed.transactions.length + parsed.exercises.length
-    + exerciseSetCount + parsed.milestones.length * 2 + parsed.mealInspection.foodRowCount;
+    + exerciseSetCount + parsed.milestones.length * 2 + parsed.mealInspection.foodRowCount + valuationRateCount;
   insertComponent(db, input, 'full_note', rowCount);
   insertComponent(db, input, 'daily_metrics', 1);
   insertComponent(db, input, 'sessions', parsed.sessions.length);
   insertComponent(db, input, 'transactions', parsed.transactions.length);
   insertComponent(db, input, 'exercises', parsed.exercises.length + exerciseSetCount);
   insertComponent(db, input, 'milestones', parsed.milestones.length * 2);
+  insertComponent(db, input, 'valuation_rates', valuationRateCount);
 
   return {
     noteDate: input.noteDate,
@@ -1120,6 +1159,7 @@ export function writeHistoricalDailyNote(db: Database, input: NativeDailyNoteInp
     milestoneCount: parsed.milestones.length,
     foodRowCount: parsed.mealInspection.foodRowCount,
     adminEventCount: parsed.adminEvents.length,
+    valuationRateCount,
     rowCount,
   };
 }
@@ -1140,7 +1180,7 @@ export function reconcileImportedMilestones(
     throw new Error(`${input.noteDate} must be represented by exactly one imported note before milestone reconciliation.`);
   }
   const errors: string[] = [];
-  const parsed = parseDaily(db, input.sourceText, input.nutritionThresholds, errors);
+  const parsed = parseDaily(db, input.sourceText, input.noteDate, input.nutritionThresholds, errors);
   if (errors.length > 0) throw new Error(errors.join('\n\n'));
   let createdMilestones = 0;
   let linkedMilestones = 0;

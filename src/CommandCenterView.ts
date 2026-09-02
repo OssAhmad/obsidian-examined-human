@@ -1,17 +1,19 @@
-import { ItemView, Modal, Notice, Setting, WorkspaceLeaf } from 'obsidian';
+import { ItemView, Modal, moment, Notice, Setting, TFile, WorkspaceLeaf } from 'obsidian';
 import { openEntityEditor, openFoodEditor } from './CommandForms.ts';
-import { stageAdminCommands } from './command-staging.ts';
+import { chooseUnimportedDailyNote, stageAdminCommands } from './command-staging.ts';
+import { confirmWeeklyAction } from './WeeklyActionConfirmationModal.ts';
 import type {
   CommandAccountRecord,
   CommandCatalog,
   CommandEngagementRecord,
   CommandExerciseRecord,
   FoodLibraryRecord,
+  FinancialDashboardQueryResult,
 } from './examined-human-query.ts';
 import type ExaminedHumanPlugin from './main.ts';
 
 export const EXAMINED_HUMAN_COMMAND_CENTER_VIEW_TYPE = 'examined-human-command-center';
-type CommandCenterTab = 'foods' | 'engagements' | 'exercises' | 'accounts' | 'batch';
+type CommandCenterTab = 'foods' | 'engagements' | 'exercises' | 'accounts' | 'valuation' | 'batch';
 
 function number(value: number | null, digits = 1): string {
   return value == null ? '—' : new Intl.NumberFormat(undefined, { maximumFractionDigits: digits }).format(value);
@@ -33,6 +35,7 @@ function nutritionAt(food: FoodLibraryRecord, grams: number): Array<[string, str
 export class CommandCenterView extends ItemView {
   private foods: FoodLibraryRecord[] = [];
   private catalog: CommandCatalog | null = null;
+  private finance: FinancialDashboardQueryResult | null = null;
   private selectedFoodId: number | null = null;
   private selectedEntityId: number | null = null;
   private search = '';
@@ -65,6 +68,16 @@ export class CommandCenterView extends ItemView {
       ]);
       this.foods = foods;
       this.catalog = catalog;
+      try {
+        this.finance = await this.plugin.database.financialDashboard(
+          this.plugin.settings.databasePath,
+          null,
+          moment().format('YYYY-MM-DD'),
+          { label: this.plugin.settings.valuationUnitLabel, referenceUnit: this.plugin.settings.valuationReferenceUnit },
+        );
+      } catch {
+        this.finance = null;
+      }
       if (!this.foods.some((food) => food.id === this.selectedFoodId)) this.selectedFoodId = this.foods[0]?.id ?? null;
       this.render();
     } catch (error) {
@@ -95,6 +108,7 @@ export class CommandCenterView extends ItemView {
       ['engagements', 'Engagements', this.catalog?.engagements.length ?? null],
       ['exercises', 'Exercises', this.catalog?.exercises.length ?? null],
       ['accounts', 'Accounts', this.catalog?.accounts.length ?? null],
+      ['valuation', 'Valuation', null],
       ['batch', 'Batch', null],
     ];
     for (const [tab, label, count] of tabDefinitions) {
@@ -104,6 +118,10 @@ export class CommandCenterView extends ItemView {
 
     if (this.activeTab === 'batch') {
       this.renderBatch();
+      return;
+    }
+    if (this.activeTab === 'valuation') {
+      this.renderValuation();
       return;
     }
     if (this.activeTab !== 'foods') {
@@ -133,6 +151,10 @@ export class CommandCenterView extends ItemView {
     if (this.activeTab === 'foods') {
       actions.createEl('button', { cls: 'mod-cta', text: 'Add food' }).addEventListener('click', () => {
         openFoodEditor(this.app, { plugin: this.plugin, onStaged: async () => this.refresh() });
+      });
+    } else if (this.activeTab === 'valuation') {
+      actions.createEl('button', { cls: 'mod-cta', text: 'Stage valuation rates' }).addEventListener('click', () => {
+        new ValuationRateStageModal(this.app, this.plugin, async () => this.refresh()).open();
       });
     } else if (this.activeTab !== 'batch' && catalog) {
       const kind = this.activeTab === 'engagements' ? 'engagement' : this.activeTab === 'exercises' ? 'exercise' : 'account';
@@ -296,6 +318,48 @@ export class CommandCenterView extends ItemView {
       const commands = input.value.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
       void this.stage(commands);
     });
+  }
+
+  private renderValuation(): void {
+    const panel = this.contentEl.createEl('section', { cls: 'examined-human-daily-panel examined-human-command-batch' });
+    panel.createEl('h3', { text: 'Valuation Rates' });
+    panel.createDiv({
+      cls: 'examined-human-daily-section-subtitle',
+      text: `Stage unit | value observations into a Daily Note. ${this.plugin.settings.valuationReferenceUnit} is the reference asset class and is always worth 1 ${this.plugin.settings.valuationUnitLabel}. Imported rates remain effective until a newer rate is imported.`,
+    });
+    const finance = this.finance;
+    if (!finance) {
+      panel.createDiv({ cls: 'examined-human-daily-empty-inline', text: 'Upgrade the database to the current official Schema v1 valuation foundation before auditing rates.' });
+      return;
+    }
+    const summary = panel.createDiv({ cls: 'examined-human-daily-completeness-grid' });
+    for (const [label, value] of [
+      ['As of', finance.valuation.asOfDate],
+      ['Net worth', `${number(finance.valuation.netWorth, 2)} ${finance.valuation.label}`],
+      ['Valued accounts', String(finance.valuation.valuedAccountCount)],
+      ['Missing rates', String(finance.valuation.missingAccounts.length)],
+    ]) {
+      const card = summary.createDiv({ cls: 'examined-human-daily-mini-stat' });
+      card.createSpan({ text: label }); card.createEl('strong', { text: value });
+    }
+    const accounts = panel.createEl('section', { cls: 'examined-human-daily-panel' });
+    accounts.createEl('h4', { text: 'Current account valuation evidence' });
+    if (finance.accounts.length === 0) {
+      accounts.createDiv({ cls: 'examined-human-daily-empty-inline', text: 'No accounts have been defined yet.' });
+      return;
+    }
+    const table = accounts.createEl('table', { cls: 'examined-human-domain-table' });
+    const header = table.createEl('thead').createEl('tr');
+    for (const label of ['Account', 'Unit', 'Balance', 'Rate', 'Observed', 'Value']) header.createEl('th', { text: label });
+    const body = table.createEl('tbody');
+    for (const account of finance.accounts) {
+      const row = body.createEl('tr');
+      row.createEl('td', { text: account.accountName }); row.createEl('td', { text: account.currency });
+      row.createEl('td', { text: `${number(account.balance, 2)} ${account.currency}` });
+      row.createEl('td', { text: account.valuationRate == null ? 'Missing' : number(account.valuationRate, 8) });
+      row.createEl('td', { text: account.valuationKind === 'reference' ? 'Reference unit' : account.valuationRateDate ?? '—' });
+      row.createEl('td', { text: account.valuationAmount == null ? 'Excluded' : `${number(account.valuationAmount, 2)} ${finance.valuation.label}` });
+    }
   }
 
   private renderFoodList(container: HTMLElement): void {
@@ -463,6 +527,61 @@ class FoodAliasMoveModal extends Modal {
       this.close(); await this.onStaged();
     } catch (error) { new Notice(error instanceof Error ? error.message : String(error), 10_000); }
   }
+  onClose(): void { this.contentEl.empty(); }
+}
+
+class ValuationRateStageModal extends Modal {
+  private rates = '';
+
+  constructor(
+    app: import('obsidian').App,
+    private plugin: ExaminedHumanPlugin,
+    private onStaged: () => Promise<void>,
+  ) { super(app); }
+
+  onOpen(): void {
+    this.modalEl.addClass('examined-human-command-modal');
+    this.contentEl.createEl('h2', { text: 'Stage Valuation Rates' });
+    this.contentEl.createEl('p', {
+      text: 'Paste one unit | positive value line at a time. The chosen Daily Note will receive one Valuation Rates section; the values become historical evidence only when that note is imported.',
+    });
+    const input = this.contentEl.createEl('textarea', {
+      attr: { rows: '10', placeholder: 'USD | 1\nIRR | 0.000012\nNASDAQ SHARE | 170' },
+    });
+    input.addEventListener('input', () => { this.rates = input.value; });
+    const actions = this.contentEl.createDiv({ cls: 'examined-human-modal-actions' });
+    actions.createEl('button', { text: 'Cancel' }).addEventListener('click', () => this.close());
+    actions.createEl('button', { cls: 'mod-cta', text: 'Choose Daily Note' }).addEventListener('click', () => { void this.stage(); });
+  }
+
+  private async stage(): Promise<void> {
+    try {
+      const lines = this.rates.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+      if (lines.length === 0) throw new Error('Enter at least one Valuation Rate.');
+      const target = await chooseUnimportedDailyNote(this.plugin, null);
+      if (!target) return;
+      const file = this.app.vault.getAbstractFileByPath(target.filePath);
+      if (!(file instanceof TFile)) throw new Error(`Daily Note not found: ${target.filePath}`);
+      const preview = await this.plugin.nativeLogger.previewValuationRateStage({
+        noteDate: target.date, fileName: target.fileName, filePath: target.filePath,
+        sourceText: await this.app.vault.read(file), lines,
+      });
+      const confirmed = await confirmWeeklyAction(this.app, {
+        title: 'Stage Valuation Rates',
+        explanation: `This adds one Valuation Rates set to ${target.fileName}. The database is unchanged until the Daily Note is imported after its date.`,
+        confirmLabel: 'Stage rates', dryRunOutput: preview.lines.join('\n'),
+        warning: 'Nothing has changed yet. Unit matching is case-insensitive, and a Daily Note may contain only one valuation rate set.',
+      });
+      if (!confirmed) return;
+      await this.plugin.nativeLogger.stageValuationRates(preview);
+      new Notice(`Valuation Rates staged in ${target.fileName}.`, 8000);
+      this.close();
+      await this.onStaged();
+    } catch (error) {
+      new Notice(error instanceof Error ? error.message : String(error), 10_000);
+    }
+  }
+
   onClose(): void { this.contentEl.empty(); }
 }
 

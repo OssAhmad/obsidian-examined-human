@@ -1,8 +1,6 @@
-import { App, moment } from 'obsidian';
+import type { App } from 'obsidian';
 import type { DailyNoteIndexQueryResult, DailyNoteSourceRecord } from './examined-human-query.ts';
-import { DEFAULT_JOURNAL_FOLDER, pathIsInJournalFolder } from './journal-folder.ts';
-
-const EH_FORM_PATTERN = /^####\s+EH\s+Form\s*$/mi;
+import type { DiscoveredEhForm } from './form-discovery.ts';
 
 export type DailyNoteStatus = 'needs-import' | 'current-future' | 'imported';
 export type NoteTemporalState = 'overdue' | 'current' | 'future' | 'imported';
@@ -17,48 +15,39 @@ export interface DailyNoteListItem {
   sourceState: DailyNoteSourceRecord | null;
 }
 
-function parseDailyFilename(fileName: string): string | null {
-  if (!fileName.endsWith('.md')) return null;
-  const label = fileName.slice(0, -3);
-  const parsed = moment(label, ['YYYY-MM-DD', 'MMM D, YYYY', 'MMM DD, YYYY'], true);
-  return parsed.isValid() ? parsed.format('YYYY-MM-DD') : null;
-}
-
 export async function buildDailyNoteList(
-  app: App,
+  _app: App,
   index: DailyNoteIndexQueryResult,
   todayDate: string,
-  journalFolder = DEFAULT_JOURNAL_FOLDER,
+  discoveredForms: Array<Omit<DiscoveredEhForm, 'formText'>> = [],
 ): Promise<DailyNoteListItem[]> {
   const importedByDate = new Map(index.importedNotes.map((note) => [note.date, note]));
   const sourceByDate = new Map(index.noteSources.map((source) => [source.date, source]));
   const earliestImported = index.importedNotes.length > 0
     ? index.importedNotes[index.importedNotes.length - 1].date
     : null;
-  const unimportedCandidates = app.vault.getMarkdownFiles()
-    .filter((file) => pathIsInJournalFolder(file.path, journalFolder))
-    .map((file) => ({ file, date: parseDailyFilename(file.name) }))
-    .filter((candidate): candidate is { file: typeof candidate.file; date: string } => (
-      candidate.date != null
-      && !importedByDate.has(candidate.date)
-      && (earliestImported == null || candidate.date >= earliestImported)
+  const unimportedCandidates = discoveredForms
+    .filter((form): form is Omit<DiscoveredEhForm, 'formText'> & { date: string } => (
+      form.kind === 'daily'
+      && form.date != null
+      && !importedByDate.has(form.date)
+      && (earliestImported == null || form.date >= earliestImported)
     ));
-
-  const inspectedCandidates = await Promise.all(unimportedCandidates.map(async ({ file, date }) => {
-    const content = await app.vault.cachedRead(file);
-    if (!EH_FORM_PATTERN.test(content)) return null;
-    return {
-      date,
-      fileName: file.name,
-      filePath: file.path,
-      status: date < todayDate ? 'needs-import' : 'current-future',
-      temporalState: date < todayDate ? 'overdue' : date === todayDate ? 'current' : 'future',
-      importedAt: null,
-      sourceState: sourceByDate.get(date) ?? null,
-    } satisfies DailyNoteListItem;
+  const unimported = unimportedCandidates.map((form) => ({
+    date: form.date,
+    fileName: form.fileName,
+    filePath: form.filePath,
+    status: form.date < todayDate ? 'needs-import' as const : 'current-future' as const,
+    temporalState: form.date < todayDate ? 'overdue' as const : form.date === todayDate ? 'current' as const : 'future' as const,
+    importedAt: null,
+    sourceState: sourceByDate.get(form.date) ?? null,
   }));
-  const unimported = inspectedCandidates.filter((item) => item != null);
-
+  const byDate = new Map<string, DailyNoteListItem>();
+  for (const item of unimported) {
+    const existing = byDate.get(item.date);
+    if (existing) throw new Error(`Two EH Daily Forms declare ${item.date}: ${existing.filePath} and ${item.filePath}.`);
+    byDate.set(item.date, item);
+  }
   const imported = index.importedNotes.slice(0, 50).map((note) => ({
     date: note.date,
     fileName: note.fileName,
@@ -68,6 +57,6 @@ export async function buildDailyNoteList(
     importedAt: note.importedAt,
     sourceState: sourceByDate.get(note.date) ?? null,
   }));
-  return [...unimported, ...imported]
+  return [...byDate.values(), ...imported]
     .sort((left, right) => right.date.localeCompare(left.date));
 }

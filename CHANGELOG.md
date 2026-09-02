@@ -2,7 +2,7 @@
 
 ## [Unreleased]
 
-## [0.9.3] - 2026-08-31
+## [0.9.4] - 2026-09-02
 
 ### Added
 
@@ -14,16 +14,29 @@
 - Added Daily Assessment’s grouped unresolved-reference panel for contextual Food, Engagement, Exercise, and Account corrections staged into the active unimported Daily Note
 - Expanded the Command Dashboard with Engagement, Exercise, Account, and Batch tabs; lifecycle, canonical metadata, aliases, and bulk Admin Event lines are all staged through Daily Notes
 - Added `EXERCISE_UPDATE` and `EXERCISE_RENAME` Admin Events for canonical exercise maintenance
+- Added mutable, non-overlapping Budget Forms with signed engagement targets, dated expected movements, active-budget selection by date, and exact-period reimport
+- Added user-entered historical Valuation Rates with case-insensitive asset units, independently carried-forward partial rate histories, a configurable reference asset class, and as-of-date net-worth valuation
+- Added Finance account selection, native-unit/reference-unit display modes, per-account and all-account balance histories, period inflow/outflow, and engagement flow analysis
+- Added `Examined Human: Import Daily Form from Active File`, `Examined Human: Import Weekly Form from Active File`, and `Examined Human: Import Budget Form from Active File` commands
+- Added cached vault form discovery for `EH form: true` and `EH form: unimported`, with an opt-in Journal-folder fallback for unmarked notes
+- Added Command Dashboard staging for Valuation Rate rows, opening balances, and balance reconciliation into an existing Daily Form
 
 ### Changed
 
 - Replaced retired database naming and migration history with official Data Schema v1; new databases start at SQLite user version 1 with one Schema v1 migration record
 - Rejected legacy hand-entered `food | calories | protein` note rows instead of accepting unlinked nutrition data
 - Removed the Engagement Dashboard’s direct completion shortcut; engagement lifecycle commands now live in the Command Dashboard
+- Made Weekly Forms and Budget Forms mutable plans: matching weeks and exact matching budget periods replace their stored rows, while finalized historical Daily Forms remain immutable receipts
+- Reworked Finance around current balances and selected-period inflow/outflow instead of opening-balance decomposition and static currency panels
+- Marked fully imported Daily/Weekly form files as `EH form: imported`; Budget import and future-note synchronization leave the marker unchanged
+- Made one discovered Markdown file capable of contributing any combination of Daily, Weekly, and Budget Forms, ordered by each form's declared date
 
 ### Fixed
 
 - Guaranteed a line break after every plugin-staged Admin Event so a following `#### END` marker cannot become part of the command line
+- Kept Valuation Rate staging inside the template's existing `##### Valuation Rates` `ENTRIES:` block and guaranteed a trailing line break
+- Prevented duplicate Daily dates, duplicate Weekly starts, overlapping Weekly ranges, and overlapping Budget periods from being silently accepted
+- Preserved complete account and engagement labels in the redesigned Finance and Command Dashboard layouts
 
 ## [0.9.2] - 2026-08-30
 

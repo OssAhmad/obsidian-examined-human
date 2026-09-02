@@ -9,7 +9,7 @@ export interface StageCommandsOptions {
   preferredTarget?: DailyNoteListItem | null;
 }
 
-async function chooseTarget(
+export async function chooseUnimportedDailyNote(
   plugin: ExaminedHumanPlugin,
   preferredTarget: DailyNoteListItem | null | undefined,
 ): Promise<DailyNoteListItem | null> {
@@ -20,7 +20,7 @@ async function chooseTarget(
     plugin.app,
     index,
     today,
-    plugin.settings.journalFolder,
+    plugin.knownForms(),
   )).filter((item) => item.status !== 'imported');
   if (candidates.length === 0) {
     new Notice('There are no unimported EH Daily Notes available to receive this command.');
@@ -33,7 +33,7 @@ async function chooseTarget(
 export async function stageAdminCommands(options: StageCommandsOptions): Promise<DailyNoteListItem | null> {
   const commands = options.commands.map((command) => command.trim()).filter(Boolean);
   if (commands.length === 0) throw new Error('No Admin Event commands were supplied.');
-  const target = await chooseTarget(options.plugin, options.preferredTarget);
+  const target = await chooseUnimportedDailyNote(options.plugin, options.preferredTarget);
   if (!target) return null;
   const file = options.plugin.app.vault.getAbstractFileByPath(target.filePath);
   if (!(file instanceof TFile)) throw new Error(`Daily Note not found: ${target.filePath}`);

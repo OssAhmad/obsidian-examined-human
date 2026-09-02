@@ -49,8 +49,9 @@ const thresholds = {
   minimumProteinG: 90,
 };
 
-function dailyNote() {
-  return `#### EH Form
+function dailyNote(date = '2026-08-20') {
+  return `#### EH Daily Form
+date: ${date}
 
 ##### Daily Metrics
 mood: 1
@@ -109,6 +110,11 @@ notes: calm
 ENTRIES:
 ACCOUNT_ALIAS | Cash | Wallet
 
+##### Valuation Rates
+ENTRIES:
+USD | 1
+Apartment | 2300000
+
 #### END`;
 }
 
@@ -133,15 +139,18 @@ test('native historical validation and import cover every Daily Note component',
   assert.equal(inspection.preview.transactions[0].engagement, 'Project Alpha');
   assert.equal(inspection.preview.transactions[0].engagement_raw, 'Alpha spending');
   assert.equal(inspection.preview.transactions[0].engagement_id, 1);
+  assert.deepEqual(inspection.preview.valuationRates, [{ unit: 'USD', value: 1 }, { unit: 'Apartment', value: 2300000 }]);
 
   const result = writeHistoricalDailyNote(db, input);
   assert.equal(result.sessionCount, 2);
   assert.equal(result.exerciseSetCount, 1);
+  assert.equal(result.valuationRateCount, 2);
   assert.equal(db.exec('SELECT COUNT(*) FROM imported_notes')[0].values[0][0], 1);
   assert.equal(db.exec('SELECT dieted FROM daily_metrics')[0].values[0][0], 0);
   assert.equal(db.exec('SELECT COUNT(*) FROM account_aliases')[0].values[0][0], 1);
   assert.equal(String(db.exec('SELECT category FROM transactions')[0].values[0][0]), '1');
   assert.equal(db.exec('SELECT COUNT(*) FROM engagement_measurements')[0].values[0][0], 1);
+  assert.deepEqual(db.exec('SELECT unit_key, value FROM valuation_rates ORDER BY source_ordinal')[0].values, [['USD', 1], ['APARTMENT', 2300000]]);
   assert.throws(() => writeHistoricalDailyNote(db, input), /already represented/);
   db.close();
 });
@@ -352,7 +361,8 @@ test('every milestone requires exactly one same-engagement owner session', () =>
 
 test('current and future planning is tolerant, replaceable, and marks missing notes deleted', () => {
   const db = database();
-  const sourceText = `#### EH Form
+  const sourceText = `#### EH Daily Form
+date: 2026-08-21
 ##### Sessions
 ENTRIES:
 bad time | study | Project Alpha | draft
@@ -382,9 +392,9 @@ bad time | study | Project Alpha | draft
 
 function weeklyNote() {
   const empty = ' |'.repeat(4);
-  return `---
-week start: 2026-08-22
----
+  return `#### EH Weekly Form
+start date: 2026-08-22
+end date: 2026-08-28
 - Main outcome: Ship native logger
 - Important deadline: Friday
 - Constraint or risk: Mobile testing
@@ -400,11 +410,13 @@ week start: 2026-08-22
 | Tuesday |${empty}
 | Wednesday |${empty}
 | Thursday |${empty}
-| Friday |${empty}`;
+| Friday |${empty}
+#### END`;
 }
 
 function emptyDaily(date) {
-  const sourceText = `#### EH Form
+  const sourceText = `#### EH Daily Form
+date: ${date}
 ##### Sessions
 ENTRIES:
 <!-- interval | type | engagement | notes -->
@@ -433,7 +445,7 @@ test('weekly plans import, collapse adjacent cells, and prepare guarded Daily No
   assert.equal(preview.sessionCount, 1);
   assert.equal(preview.plannedMinutes, 120);
   writeWeeklyPlan(db, input);
-  assert.throws(() => inspectWeeklyPlan(db, input), /already been imported/);
+  assert.equal(inspectWeeklyPlan(db, input).weekStart, '2026-08-22');
 
   const notes = Array.from({ length: 7 }, (_, index) => {
     const date = new Date(Date.UTC(2026, 7, 22 + index)).toISOString().slice(0, 10);

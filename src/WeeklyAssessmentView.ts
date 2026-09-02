@@ -2,7 +2,12 @@ import { ItemView, moment, normalizePath, Notice, TFile, WorkspaceLeaf } from 'o
 import type ExaminedHumanPlugin from './main.ts';
 import { buildDailyNoteList } from './daily-note-index.ts';
 import { pathIsInJournalFolder } from './journal-folder.ts';
-import type { WeeklyAssessmentQueryResult, WeeklyCommitmentAssessmentRecord } from './examined-human-query.ts';
+import type {
+  FinancialDashboardQueryResult,
+  WeeklyAssessmentQueryResult,
+  WeeklyCommitmentAssessmentRecord,
+} from './examined-human-query.ts';
+import { formatDashboardAmount, formatDashboardDate } from './DashboardViewBase.ts';
 import { confirmWeeklyAction } from './WeeklyActionConfirmationModal.ts';
 import { buildWeeklyNoteList, type WeeklyNoteListItem } from './weekly-note-index.ts';
 import type { WeeklyImportResult, WeeklyNoteWritePreview } from './native-logger/weekly.ts';
@@ -70,6 +75,7 @@ export class WeeklyAssessmentView extends ItemView {
   private items: WeeklyNoteListItem[] = [];
   private selectedItem: WeeklyNoteListItem | null = null;
   private assessment: WeeklyAssessmentQueryResult | null = null;
+  private financeBriefing: FinancialDashboardQueryResult | null = null;
   private loggerOutput: string | null = null;
   private renderGeneration = 0;
   private fingerprintTimer: number | null = null;
@@ -136,7 +142,7 @@ export class WeeklyAssessmentView extends ItemView {
     try {
       const today = moment().format('YYYY-MM-DD');
       const index = await this.plugin.database.weeklyPlanIndex(this.plugin.settings.databasePath);
-      const items = await buildWeeklyNoteList(this.app, index, today);
+      const items = await buildWeeklyNoteList(this.app, index, today, this.plugin.knownForms());
       if (generation !== this.renderGeneration) return;
       this.items = items;
       if (!this.selectedWeekStart || !items.some((item) => item.weekStartDate === this.selectedWeekStart)) {
@@ -153,6 +159,22 @@ export class WeeklyAssessmentView extends ItemView {
           this.selectedItem.weekStartDate,
         )
         : null;
+      this.financeBriefing = null;
+      if (this.assessment) {
+        try {
+          this.financeBriefing = await this.plugin.database.financialDashboard(
+            this.plugin.settings.databasePath,
+            this.assessment.weekStartDate,
+            this.assessment.weekEndDate,
+            {
+              label: this.plugin.settings.valuationUnitLabel,
+              referenceUnit: this.plugin.settings.valuationReferenceUnit,
+            },
+          );
+        } catch {
+          // Finance is an additive Schema v1 extension. Weekly assessment stays usable until it is upgraded.
+        }
+      }
       if (generation !== this.renderGeneration) return;
       this.renderDashboard();
     } catch (error) {
@@ -187,6 +209,7 @@ export class WeeklyAssessmentView extends ItemView {
     }
     this.renderDirection(main, this.assessment);
     this.renderSummary(main, this.assessment.commitments);
+    this.renderFinanceBriefing(main);
     this.renderCommitments(main, this.assessment);
   }
 
@@ -252,6 +275,14 @@ export class WeeklyAssessmentView extends ItemView {
       this.actionButton.setText('Already imported');
       this.actionButton.disabled = true;
     }
+    const discoverButton = controls.createEl('button', { text: 'Discover forms', cls: 'examined-human-toolbar-button' });
+    discoverButton.addEventListener('click', () => {
+      discoverButton.disabled = true;
+      discoverButton.setText('Discovering…');
+      void this.plugin.discoverFormsWithNotice().finally(() => {
+        if (discoverButton.isConnected) { discoverButton.disabled = false; discoverButton.setText('Discover forms'); }
+      });
+    });
     controls.createEl('button', { text: 'Refresh', cls: 'examined-human-toolbar-button' })
       .addEventListener('click', () => { void this.plugin.refreshViews(); });
   }
@@ -376,6 +407,29 @@ export class WeeklyAssessmentView extends ItemView {
     }
   }
 
+  private renderFinanceBriefing(container: HTMLElement): void {
+    const finance = this.financeBriefing;
+    if (!finance) return;
+    const section = container.createEl('section', { cls: 'examined-human-weekly-direction' });
+    section.createEl('h3', { text: 'Weekly finance briefing' });
+    const subtitle = section.createDiv({ cls: 'examined-human-weekly-chart-subtitle' });
+    const budget = finance.activeBudget;
+    subtitle.setText(budget
+      ? `Active budget: ${formatDashboardDate(budget.periodStart)} – ${formatDashboardDate(budget.periodEnd)} · transfers and balance adjustments are excluded from cash flow.`
+      : 'No active Budget Form. Cash flow excludes conservative internal transfers and marked balance adjustments.');
+    const grid = section.createDiv({ cls: 'examined-human-weekly-direction-grid' });
+    for (const currency of finance.currencies) {
+      const card = grid.createDiv({ cls: 'examined-human-weekly-direction-card' });
+      card.createDiv({ cls: 'examined-human-weekly-eyebrow', text: `${currency.currency} cash flow` });
+      card.createDiv({ cls: 'examined-human-weekly-direction-value', text: formatDashboardAmount(currency.net, currency.currency) });
+      card.createDiv({ text: `Inflow ${formatDashboardAmount(currency.inflow, currency.currency)} · outflow ${formatDashboardAmount(currency.outflow, currency.currency)}` });
+    }
+    if (finance.currencies.length === 0) grid.createDiv({ cls: 'examined-human-weekly-empty', text: 'No personal cash-flow entries were recorded in this week.' });
+    if (!budget) return;
+    const unmatched = budget.expectedMovements.filter((movement) => !movement.isMatched).length;
+    section.createDiv({ cls: 'examined-human-daily-validation-note', text: `${budget.targets.length} budget target${budget.targets.length === 1 ? '' : 's'} · ${unmatched} expected movement${unmatched === 1 ? '' : 's'} unmatched` });
+  }
+
   private renderCommitments(container: HTMLElement, result: WeeklyAssessmentQueryResult): void {
     const section = container.createEl('section', { cls: 'examined-human-weekly-commitments' });
     const heading = section.createDiv({ cls: 'examined-human-weekly-section-heading' });
@@ -482,6 +536,7 @@ export class WeeklyAssessmentView extends ItemView {
     if (!confirmed) return;
     this.actionButton?.setText('Importing…');
     const live = await this.plugin.nativeLogger.importWeekly(request);
+    await this.plugin.markImportedEhFormFileIfComplete(file);
     this.loggerOutput = [weeklyImportOutput(live), ...backupMutationOutput(live)].join('\n');
     await this.plugin.refreshViews();
     new Notice(`${item.weekLabel} imported successfully.`, 8000);
@@ -562,7 +617,7 @@ export class WeeklyAssessmentView extends ItemView {
       this.app,
       index,
       cutoffDate,
-      this.plugin.settings.journalFolder,
+      this.plugin.knownForms(),
     );
     const candidates = items.filter((item) => item.status === 'current-future' && item.date >= cutoffDate);
     const notes = await Promise.all(candidates.map(async (item) => {

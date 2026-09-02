@@ -120,7 +120,7 @@ export class DailyAssessmentView extends ItemView {
     try {
       const today = moment().format('YYYY-MM-DD');
       const index = await this.plugin.database.dailyNoteIndex(this.plugin.settings.databasePath);
-      const items = await buildDailyNoteList(this.app, index, today, this.plugin.settings.journalFolder);
+      const items = await buildDailyNoteList(this.app, index, today, this.plugin.knownForms());
       if (generation !== this.renderGeneration) return;
       this.items = items;
       if (!this.selectedDate || !items.some((item) => item.date === this.selectedDate)) {
@@ -214,6 +214,14 @@ export class DailyAssessmentView extends ItemView {
       this.actionButton.setText(this.selectedItem.status === 'current-future' ? 'Sync future' : 'Import');
       this.actionButton.addEventListener('click', () => { void this.handleImport(); });
     }
+    const discoverButton = actions.createEl('button', { text: 'Discover forms', cls: 'examined-human-toolbar-button' });
+    discoverButton.addEventListener('click', () => {
+      discoverButton.disabled = true;
+      discoverButton.setText('Discovering…');
+      void this.plugin.discoverFormsWithNotice().finally(() => {
+        if (discoverButton.isConnected) { discoverButton.disabled = false; discoverButton.setText('Discover forms'); }
+      });
+    });
     actions.createEl('button', { text: 'Refresh', cls: 'examined-human-toolbar-button' })
       .addEventListener('click', () => { void this.plugin.refreshViews(); });
   }
@@ -843,6 +851,7 @@ export class DailyAssessmentView extends ItemView {
         ].join('\n');
       } else {
         const result = await this.plugin.nativeLogger.importHistoricalDaily(request);
+        await this.plugin.markImportedEhFormFileIfComplete(noteFile);
         this.loggerOutput = [
           `Imported ${result.sessionCount} sessions, ${result.transactionCount} transactions, ${result.exerciseCount} exercises, and ${result.foodRowCount} food rows.`,
           `Milestones: ${result.milestoneCount}. Admin events: ${result.adminEventCount}.`,

@@ -1,11 +1,22 @@
 import type { Database, SqlValue } from 'sql.js';
-import { assertSchemaV1 } from './database-utils.ts';
+import {
+  assertFinanceFoundationSchema,
+  assertSchemaV1,
+  assertValuationHistorySchema,
+  hasFinanceFoundationSchema,
+  hasRetiredSingleBudgetSchema,
+  hasValuationHistorySchema,
+} from './database-utils.ts';
 import { assertMealImportSchema } from './meal-import.ts';
 
 export interface SchemaV1UpgradePreview {
   currentSchemaVersion: number;
   targetSchemaVersion: 1;
   migrationEntryCount: number;
+  needsFoodDictionary: boolean;
+  needsFinanceFoundation: boolean;
+  needsValuationHistory: boolean;
+  needsMutableBudgets: boolean;
 }
 
 function rows(db: Database, sql: string, params: SqlValue[] = []): Record<string, SqlValue>[] {
@@ -23,23 +34,52 @@ function rows(db: Database, sql: string, params: SqlValue[] = []): Record<string
 export function previewSchemaV1Upgrade(db: Database): SchemaV1UpgradePreview {
   const currentSchemaVersion = Number(rows(db, 'PRAGMA user_version')[0]?.user_version ?? 0);
   const migrationEntryCount = Number(rows(db, 'SELECT COUNT(*) AS count FROM schema_migrations')[0]?.count ?? 0);
-  if (currentSchemaVersion !== 5) {
+  if (currentSchemaVersion === 5) {
+    return {
+      currentSchemaVersion,
+      targetSchemaVersion: 1,
+      migrationEntryCount,
+      needsFoodDictionary: true,
+      needsFinanceFoundation: true,
+      needsValuationHistory: true,
+      needsMutableBudgets: true,
+    };
+  }
+  if (currentSchemaVersion === 1 && (!hasFinanceFoundationSchema(db) || !hasValuationHistorySchema(db))) {
+    return {
+      currentSchemaVersion,
+      targetSchemaVersion: 1,
+      migrationEntryCount,
+      needsFoodDictionary: false,
+      needsFinanceFoundation: !hasFinanceFoundationSchema(db) && !hasRetiredSingleBudgetSchema(db),
+      needsValuationHistory: !hasValuationHistorySchema(db),
+      needsMutableBudgets: !hasFinanceFoundationSchema(db),
+    };
+  }
+  {
     throw new Error(
       currentSchemaVersion === 1
-        ? 'This database already uses official Data Schema v1.'
+        ? 'This database already includes the current official Data Schema v1 finance, valuation, and mutable budget foundations.'
         : `This one-time upgrade supports only the retired pre-Schema-v1 database; this database reports v${currentSchemaVersion}.`,
     );
   }
-  return { currentSchemaVersion, targetSchemaVersion: 1, migrationEntryCount };
 }
 
 export function applyV5ToOfficialSchemaV1(
   db: Database,
-  upgradeSql: string,
+  foodUpgradeSql: string,
+  financeUpgradeSql: string,
+  valuationUpgradeSql: string,
+  mutableBudgetUpgradeSql: string,
 ): SchemaV1UpgradePreview {
   const preview = previewSchemaV1Upgrade(db);
-  db.run(upgradeSql);
+  if (preview.needsFoodDictionary) db.run(foodUpgradeSql);
+  if (preview.needsFinanceFoundation) db.run(financeUpgradeSql);
+  if (preview.needsValuationHistory) db.run(valuationUpgradeSql);
+  if (preview.needsMutableBudgets) db.run(mutableBudgetUpgradeSql);
   assertSchemaV1(db);
   assertMealImportSchema(db);
+  assertFinanceFoundationSchema(db);
+  assertValuationHistorySchema(db);
   return preview;
 }

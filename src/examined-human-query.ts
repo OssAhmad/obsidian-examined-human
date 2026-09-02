@@ -9,6 +9,7 @@ import type {
   SessionMilestoneDetails,
 } from './events.ts';
 import { parseDatabaseTime, titleForEngagement } from './events.ts';
+import { normalizeValuationUnit } from './native-logger/valuation-rates.ts';
 
 const REQUIRED_COLUMNS: Record<string, string[]> = {
   sessions: ['id', 'engagement_id', 'date', 'start_time', 'end_time', 'duration_minutes', 'session_type_id', 'notes'],
@@ -72,6 +73,14 @@ const FINANCIAL_DASHBOARD_COLUMNS: Record<string, string[]> = {
   accounts: ['id', 'name', 'type', 'currency'],
   transactions: ['id', 'account_id', 'date', 'amount', 'category', 'description'],
   engagements: ['id', 'name'],
+  budget_plans: ['id', 'period_start', 'period_end', 'source_file_name', 'source_file_path', 'source_checksum'],
+  budget_targets: ['id', 'budget_plan_id', 'source_ordinal', 'currency', 'amount', 'engagement_id', 'engagement_raw'],
+  expected_financial_movements: [
+    'id', 'budget_plan_id', 'source_ordinal', 'due_date', 'currency', 'amount', 'account_id',
+    'engagement_id', 'engagement_raw', 'description',
+  ],
+  valuation_rate_sets: ['id', 'rate_date', 'source_file_name', 'source_file_path', 'source_checksum'],
+  valuation_rates: ['id', 'rate_set_id', 'source_ordinal', 'unit_key', 'unit_label', 'value'],
 };
 
 const NUTRITION_DASHBOARD_COLUMNS: Record<string, string[]> = {
@@ -351,6 +360,34 @@ export interface FinancialAccountRecord extends FinancialCurrencyRecord {
   accountId: number;
   accountName: string;
   accountType: string | null;
+  balance: number;
+  openingBalance: number;
+  reconciliationAdjustment: number;
+  transferIn: number;
+  transferOut: number;
+  lastActivityDate: string | null;
+  valuationRate: number | null;
+  valuationRateDate: string | null;
+  valuationAmount: number | null;
+  valuationKind: 'reference' | 'observed' | 'missing';
+}
+
+export interface FinancialMissingValuationRecord {
+  accountId: number;
+  accountName: string;
+  unit: string;
+  balance: number;
+}
+
+export interface FinancialValuationSummary {
+  label: string;
+  referenceUnit: string;
+  asOfDate: string;
+  assetTotal: number;
+  liabilityTotal: number;
+  netWorth: number;
+  valuedAccountCount: number;
+  missingAccounts: FinancialMissingValuationRecord[];
 }
 
 export interface FinancialTransactionRecord {
@@ -362,6 +399,81 @@ export interface FinancialTransactionRecord {
   accountName: string;
   engagementName: string | null;
   description: string | null;
+  kind: 'normal' | 'opening_balance' | 'reconciliation' | 'transfer';
+  isTransfer: boolean;
+}
+
+export interface FinancialBalanceHistoryRecord {
+  date: string;
+  nativeBalance: number | null;
+  valuationBalance: number | null;
+  missingAccountCount: number;
+}
+
+export interface FinancialExplorerEngagementRecord {
+  engagementId: number;
+  engagementName: string;
+  transactionCount: number;
+  nativeCurrency: string | null;
+  nativeInflow: number | null;
+  nativeOutflow: number | null;
+  nativeNet: number | null;
+  valuationTransactionCount: number;
+  valuationInflow: number;
+  valuationOutflow: number;
+  valuationNet: number;
+  missingValuationTransactionCount: number;
+}
+
+export interface FinancialAccountExplorerRecord {
+  accountId: number | null;
+  accountName: string;
+  nativeCurrency: string | null;
+  nativeBalance: number | null;
+  nativeInflow: number | null;
+  nativeOutflow: number | null;
+  nativeNet: number | null;
+  valuationBalance: number | null;
+  valuationInflow: number;
+  valuationOutflow: number;
+  valuationNet: number;
+  missingCurrentValuationAccountCount: number;
+  missingFlowValuationTransactionCount: number;
+  balanceHistory: FinancialBalanceHistoryRecord[];
+  engagements: FinancialExplorerEngagementRecord[];
+}
+
+export interface FinancialBudgetTargetRecord {
+  id: number;
+  currency: string;
+  amount: number;
+  engagementId: number | null;
+  engagementName: string;
+  actualAmount: number;
+  variance: number;
+}
+
+export interface FinancialExpectedMovementRecord {
+  id: number;
+  dueDate: string;
+  currency: string;
+  amount: number;
+  accountId: number | null;
+  accountName: string;
+  engagementId: number | null;
+  engagementName: string;
+  description: string | null;
+  isMatched: boolean;
+}
+
+export interface ActiveBudgetPlanRecord {
+  periodStart: string;
+  periodEnd: string;
+  sourceFileName: string;
+  sourceFilePath: string;
+  sourceChecksum: string;
+  targets: FinancialBudgetTargetRecord[];
+  expectedMovements: FinancialExpectedMovementRecord[];
 }
 
 export interface FinancialDashboardQueryResult {
@@ -375,6 +487,15 @@ export interface FinancialDashboardQueryResult {
   engagements: FinancialEngagementRecord[];
   accounts: FinancialAccountRecord[];
   recentTransactions: FinancialTransactionRecord[];
+  activeBudget: ActiveBudgetPlanRecord | null;
+  valuation: FinancialValuationSummary;
+  explorer: FinancialAccountExplorerRecord;
+}
+
+export interface FinancialValuationOptions {
+  label: string;
+  referenceUnit: string;
+  selectedAccountId?: number | null;
 }
 
 export interface NutritionDailyRecord {
@@ -1446,154 +1567,417 @@ export function queryFinancialDashboard(
   db: Database,
   startDate: string | null,
   endDate: string,
+  valuationOptions: FinancialValuationOptions = { label: 'EHM', referenceUnit: 'USD' },
 ): FinancialDashboardQueryResult {
   validateDashboardSchema(db, 'Financial Dashboard', FINANCIAL_DASHBOARD_COLUMNS);
-  const rangeParams: SqlValue[] = [startDate, startDate, endDate];
   const currencyExpression = `COALESCE(NULLIF(TRIM(account.currency), ''), 'Unspecified')`;
   const linkJoin = `LEFT JOIN engagements AS engagement
       ON CAST(engagement.id AS TEXT) = TRIM(CAST(transaction_row.category AS TEXT))`;
-
-  const summary = rows(db, `
-    SELECT COUNT(*) AS transaction_count,
-           SUM(CASE WHEN engagement.id IS NOT NULL THEN 1 ELSE 0 END) AS linked_count,
-           SUM(CASE WHEN engagement.id IS NULL THEN 1 ELSE 0 END) AS unresolved_count
+  interface LedgerRow extends FinancialTransactionRecord {
+    engagementId: number | null;
+  }
+  const ledger = rows(db, `
+    SELECT transaction_row.id, transaction_row.account_id, transaction_row.date,
+           transaction_row.amount, transaction_row.description,
+           account.name AS account_name, account.type AS account_type,
+           ${currencyExpression} AS currency,
+           engagement.id AS engagement_id, engagement.name AS engagement_name
     FROM transactions AS transaction_row
+    JOIN accounts AS account ON account.id = transaction_row.account_id
     ${linkJoin}
-    WHERE (? IS NULL OR transaction_row.date >= ?)
-      AND transaction_row.date <= ?
-  `, rangeParams)[0];
+    ORDER BY transaction_row.date, transaction_row.id
+  `).map((row): LedgerRow => {
+    const description = nullableText(row.description);
+    const marker = description?.trim().toLowerCase() ?? '';
+    const kind: FinancialTransactionRecord['kind'] = marker.startsWith('[eh opening balance]')
+      ? 'opening_balance'
+      : marker.startsWith('[eh reconciliation]') ? 'reconciliation' : 'normal';
+    return {
+      id: Number(row.id),
+      accountId: Number(row.account_id),
+      date: String(row.date),
+      amount: Number(row.amount),
+      currency: normalizeValuationUnit(String(row.currency)),
+      accountName: String(row.account_name),
+      engagementName: nullableText(row.engagement_name),
+      engagementId: nullableNumber(row.engagement_id),
+      description,
+      kind,
+      isTransfer: false,
+    };
+  });
 
-  const currencies = rows(db, `
-    SELECT ${currencyExpression} AS currency,
-           COUNT(*) AS transaction_count,
-           COALESCE(SUM(CASE WHEN transaction_row.amount > 0 THEN transaction_row.amount ELSE 0 END), 0) AS inflow,
-           COALESCE(SUM(CASE WHEN transaction_row.amount < 0 THEN -transaction_row.amount ELSE 0 END), 0) AS outflow,
-           COALESCE(SUM(transaction_row.amount), 0) AS net
-    FROM transactions AS transaction_row
-    JOIN accounts AS account ON account.id = transaction_row.account_id
-    WHERE (? IS NULL OR transaction_row.date >= ?)
-      AND transaction_row.date <= ?
-    GROUP BY ${currencyExpression}
-    ORDER BY currency COLLATE NOCASE
-  `, rangeParams).map((row): FinancialCurrencyRecord => ({
-    currency: String(row.currency),
-    transactionCount: Number(row.transaction_count ?? 0),
-    inflow: Number(row.inflow ?? 0),
-    outflow: Number(row.outflow ?? 0),
-    net: Number(row.net ?? 0),
-  }));
+  const transferGroups = new Map<string, LedgerRow[]>();
+  for (const row of ledger) {
+    if (row.kind !== 'normal' || row.amount === 0) continue;
+    const key = `${row.date}\u0000${row.currency}\u0000${Math.abs(row.amount)}`;
+    const group = transferGroups.get(key) ?? [];
+    group.push(row);
+    transferGroups.set(key, group);
+  }
+  for (const group of transferGroups.values()) {
+    const negatives = group.filter((row) => row.amount < 0);
+    const positives = group.filter((row) => row.amount > 0);
+    if (negatives.length === 1 && positives.length === 1 && negatives[0].accountId !== positives[0].accountId) {
+      negatives[0].isTransfer = true;
+      positives[0].isTransfer = true;
+      negatives[0].kind = 'transfer';
+      positives[0].kind = 'transfer';
+    }
+  }
 
-  const dailyFlow = rows(db, `
-    SELECT transaction_row.date,
-           ${currencyExpression} AS currency,
-           COUNT(*) AS transaction_count,
-           COALESCE(SUM(CASE WHEN transaction_row.amount > 0 THEN transaction_row.amount ELSE 0 END), 0) AS inflow,
-           COALESCE(SUM(CASE WHEN transaction_row.amount < 0 THEN -transaction_row.amount ELSE 0 END), 0) AS outflow,
-           COALESCE(SUM(transaction_row.amount), 0) AS net
-    FROM transactions AS transaction_row
-    JOIN accounts AS account ON account.id = transaction_row.account_id
-    WHERE (? IS NULL OR transaction_row.date >= ?)
-      AND transaction_row.date <= ?
-    GROUP BY transaction_row.date, ${currencyExpression}
-    ORDER BY transaction_row.date, currency COLLATE NOCASE
-  `, rangeParams).map((row): FinancialDailyRecord => ({
-    date: String(row.date),
-    currency: String(row.currency),
-    transactionCount: Number(row.transaction_count ?? 0),
-    inflow: Number(row.inflow ?? 0),
-    outflow: Number(row.outflow ?? 0),
-    net: Number(row.net ?? 0),
-  }));
+  const asOfLedger = ledger.filter((row) => row.date <= endDate);
+  const inRange = (row: LedgerRow): boolean => (startDate == null || row.date >= startDate) && row.date <= endDate;
+  const rangeLedger = asOfLedger.filter(inRange);
+  const ordinary = (row: LedgerRow): boolean => row.kind === 'normal' && !row.isTransfer;
+  const flowRows = rangeLedger.filter(ordinary);
+  const aggregateFlow = <T extends { currency: string; amount: number }>(records: T[]): FinancialCurrencyRecord => ({
+    currency: records[0]?.currency ?? 'Unspecified',
+    transactionCount: records.length,
+    inflow: records.reduce((sum, row) => sum + (row.amount > 0 ? row.amount : 0), 0),
+    outflow: records.reduce((sum, row) => sum + (row.amount < 0 ? -row.amount : 0), 0),
+    net: records.reduce((sum, row) => sum + row.amount, 0),
+  });
+  const groupBy = <T>(records: T[], keyFor: (record: T) => string): Map<string, T[]> => {
+    const grouped = new Map<string, T[]>();
+    for (const record of records) {
+      const key = keyFor(record);
+      const group = grouped.get(key) ?? [];
+      group.push(record);
+      grouped.set(key, group);
+    }
+    return grouped;
+  };
 
-  const engagements = rows(db, `
-    SELECT engagement.id AS engagement_id,
-           engagement.name AS engagement_name,
-           ${currencyExpression} AS currency,
-           COUNT(*) AS transaction_count,
-           COALESCE(SUM(CASE WHEN transaction_row.amount > 0 THEN transaction_row.amount ELSE 0 END), 0) AS inflow,
-           COALESCE(SUM(CASE WHEN transaction_row.amount < 0 THEN -transaction_row.amount ELSE 0 END), 0) AS outflow,
-           COALESCE(SUM(transaction_row.amount), 0) AS net
-    FROM transactions AS transaction_row
-    JOIN accounts AS account ON account.id = transaction_row.account_id
-    JOIN engagements AS engagement
-      ON CAST(engagement.id AS TEXT) = TRIM(CAST(transaction_row.category AS TEXT))
-    WHERE (? IS NULL OR transaction_row.date >= ?)
-      AND transaction_row.date <= ?
-    GROUP BY engagement.id, engagement.name, ${currencyExpression}
-    ORDER BY outflow DESC, engagement.name COLLATE NOCASE
-  `, rangeParams).map((row): FinancialEngagementRecord => ({
-    engagementId: Number(row.engagement_id),
-    engagementName: String(row.engagement_name),
-    currency: String(row.currency),
-    transactionCount: Number(row.transaction_count ?? 0),
-    inflow: Number(row.inflow ?? 0),
-    outflow: Number(row.outflow ?? 0),
-    net: Number(row.net ?? 0),
-  }));
+  const currencies = [...groupBy(flowRows, (row) => row.currency).values()]
+    .map(aggregateFlow).sort((left, right) => left.currency.localeCompare(right.currency));
+  const dailyFlow = [...groupBy(flowRows, (row) => `${row.date}\u0000${row.currency}`).values()]
+    .map((records): FinancialDailyRecord => ({ date: records[0].date, ...aggregateFlow(records) }))
+    .sort((left, right) => left.date.localeCompare(right.date) || left.currency.localeCompare(right.currency));
+  const engagements = [...groupBy(flowRows.filter((row) => row.engagementId != null), (row) => `${row.engagementId}\u0000${row.currency}`).values()]
+    .map((records): FinancialEngagementRecord => ({
+      engagementId: records[0].engagementId!,
+      engagementName: records[0].engagementName!,
+      ...aggregateFlow(records),
+    }))
+    .sort((left, right) => right.outflow - left.outflow || left.engagementName.localeCompare(right.engagementName));
 
-  const accounts = rows(db, `
-    SELECT account.id AS account_id,
-           account.name AS account_name,
-           account.type AS account_type,
-           ${currencyExpression} AS currency,
-           COUNT(*) AS transaction_count,
-           COALESCE(SUM(CASE WHEN transaction_row.amount > 0 THEN transaction_row.amount ELSE 0 END), 0) AS inflow,
-           COALESCE(SUM(CASE WHEN transaction_row.amount < 0 THEN -transaction_row.amount ELSE 0 END), 0) AS outflow,
-           COALESCE(SUM(transaction_row.amount), 0) AS net
+  const rateRows = rows(db, `
+    SELECT rate_set.rate_date, rate.id, rate.unit_key, rate.value
+    FROM valuation_rates AS rate
+    JOIN valuation_rate_sets AS rate_set ON rate_set.id = rate.rate_set_id
+    WHERE rate_set.rate_date <= ?
+    ORDER BY rate_set.rate_date DESC, rate.id DESC
+  `, [endDate]);
+  const latestRates = new Map<string, { value: number; date: string }>();
+  for (const row of rateRows) {
+    const unitKey = String(row.unit_key);
+    if (!latestRates.has(unitKey)) latestRates.set(unitKey, { value: Number(row.value), date: String(row.rate_date) });
+  }
+  const referenceUnit = normalizeValuationUnit(valuationOptions.referenceUnit) || 'USD';
+  const valuationLabel = valuationOptions.label.trim() || 'EHM';
+  const rateHistory = new Map<string, Array<{ date: string; value: number }>>();
+  for (const row of [...rateRows].reverse()) {
+    const unitKey = normalizeValuationUnit(String(row.unit_key));
+    const history = rateHistory.get(unitKey) ?? [];
+    history.push({ date: String(row.rate_date), value: Number(row.value) });
+    rateHistory.set(unitKey, history);
+  }
+  const valuationRateFor = (unit: string, date: string): number | null => {
+    const unitKey = normalizeValuationUnit(unit);
+    if (unitKey === referenceUnit) return 1;
+    const history = rateHistory.get(unitKey) ?? [];
+    let low = 0;
+    let high = history.length - 1;
+    let match: number | null = null;
+    while (low <= high) {
+      const middle = Math.floor((low + high) / 2);
+      if (history[middle].date <= date) {
+        match = history[middle].value;
+        low = middle + 1;
+      } else {
+        high = middle - 1;
+      }
+    }
+    return match;
+  };
+  const accountRows = rows(db, `
+    SELECT id, name, type, ${currencyExpression} AS currency
     FROM accounts AS account
-    JOIN transactions AS transaction_row ON transaction_row.account_id = account.id
-    WHERE (? IS NULL OR transaction_row.date >= ?)
-      AND transaction_row.date <= ?
-    GROUP BY account.id, account.name, account.type, ${currencyExpression}
-    ORDER BY currency COLLATE NOCASE, ABS(net) DESC, account.name COLLATE NOCASE
-  `, rangeParams).map((row): FinancialAccountRecord => ({
-    accountId: Number(row.account_id),
-    accountName: String(row.account_name),
-    accountType: nullableText(row.account_type),
-    currency: String(row.currency),
-    transactionCount: Number(row.transaction_count ?? 0),
-    inflow: Number(row.inflow ?? 0),
-    outflow: Number(row.outflow ?? 0),
-    net: Number(row.net ?? 0),
-  }));
+    ORDER BY currency COLLATE NOCASE, name COLLATE NOCASE
+  `);
+  const accounts = accountRows.map((row): FinancialAccountRecord => {
+    const accountId = Number(row.id);
+    const accountLedger = asOfLedger.filter((entry) => entry.accountId === accountId);
+    const accountPeriodFlow = accountLedger.filter(inRange).filter(ordinary);
+    const record = aggregateFlow(accountPeriodFlow);
+    const currency = normalizeValuationUnit(String(row.currency));
+    const unitKey = normalizeValuationUnit(currency);
+    const observedRate = latestRates.get(unitKey);
+    const valuationKind: FinancialAccountRecord['valuationKind'] = unitKey === referenceUnit
+      ? 'reference'
+      : observedRate ? 'observed' : 'missing';
+    const valuationRate = valuationKind === 'reference' ? 1 : observedRate?.value ?? null;
+    return {
+      accountId,
+      accountName: String(row.name),
+      accountType: nullableText(row.type),
+      ...record,
+      currency,
+      balance: accountLedger.reduce((sum, entry) => sum + entry.amount, 0),
+      openingBalance: accountLedger.filter((entry) => entry.kind === 'opening_balance').reduce((sum, entry) => sum + entry.amount, 0),
+      reconciliationAdjustment: accountLedger.filter((entry) => entry.kind === 'reconciliation').reduce((sum, entry) => sum + entry.amount, 0),
+      transferIn: accountLedger.filter(inRange).filter((entry) => entry.isTransfer && entry.amount > 0).reduce((sum, entry) => sum + entry.amount, 0),
+      transferOut: accountLedger.filter(inRange).filter((entry) => entry.isTransfer && entry.amount < 0).reduce((sum, entry) => sum + -entry.amount, 0),
+      lastActivityDate: accountLedger.length ? accountLedger[accountLedger.length - 1].date : null,
+      valuationRate,
+      valuationRateDate: valuationKind === 'reference' ? null : observedRate?.date ?? null,
+      valuationAmount: valuationRate == null ? null : accountLedger.reduce((sum, entry) => sum + entry.amount, 0) * valuationRate,
+      valuationKind,
+    };
+  });
 
-  const recentTransactions = rows(db, `
-    SELECT transaction_row.id,
-           transaction_row.date,
-           transaction_row.amount,
-           transaction_row.description,
-           account.name AS account_name,
-           ${currencyExpression} AS currency,
-           engagement.name AS engagement_name
-    FROM transactions AS transaction_row
-    JOIN accounts AS account ON account.id = transaction_row.account_id
-    ${linkJoin}
-    WHERE (? IS NULL OR transaction_row.date >= ?)
-      AND transaction_row.date <= ?
-    ORDER BY transaction_row.date DESC, transaction_row.id DESC
-    LIMIT 24
-  `, rangeParams).map((row): FinancialTransactionRecord => ({
-    id: Number(row.id),
-    accountId: Number(row.account_id),
-    date: String(row.date),
-    amount: Number(row.amount),
-    currency: String(row.currency),
-    accountName: String(row.account_name),
-    engagementName: nullableText(row.engagement_name),
-    description: nullableText(row.description),
-  }));
+  const activePlanRow = rows(db, `
+    SELECT id, period_start, period_end, source_file_name, source_file_path, source_checksum
+    FROM budget_plans
+    WHERE period_start <= ? AND period_end >= ?
+    ORDER BY period_start DESC
+    LIMIT 1
+  `, [endDate, endDate])[0];
+  let activeBudget: ActiveBudgetPlanRecord | null = null;
+  if (activePlanRow) {
+    const periodStart = String(activePlanRow.period_start);
+    const periodEnd = String(activePlanRow.period_end);
+    const budgetLedger = asOfLedger.filter((row) => row.date >= periodStart && row.date <= periodEnd && ordinary(row));
+    const targetRows = rows(db, `
+      SELECT target.id, target.currency, target.amount, target.engagement_id,
+             target.engagement_raw, engagement.name AS engagement_name
+      FROM budget_targets AS target
+      LEFT JOIN engagements AS engagement ON engagement.id = target.engagement_id
+      WHERE target.budget_plan_id = ?
+      ORDER BY target.source_ordinal
+    `, [Number(activePlanRow.id)]);
+    const targets = targetRows.map((row): FinancialBudgetTargetRecord => {
+      const engagementId = nullableNumber(row.engagement_id);
+      const amount = Number(row.amount);
+      const actualAmount = budgetLedger.filter((entry) => (
+        entry.currency === normalizeValuationUnit(String(row.currency))
+        && entry.engagementId === engagementId
+        && Math.sign(entry.amount) === Math.sign(amount)
+      )).reduce((sum, entry) => sum + entry.amount, 0);
+      return {
+        id: Number(row.id),
+        currency: normalizeValuationUnit(String(row.currency)),
+        amount,
+        engagementId,
+        engagementName: nullableText(row.engagement_name) ?? String(row.engagement_raw),
+        actualAmount,
+        variance: actualAmount - amount,
+      };
+    });
+    const expectedRows = rows(db, `
+      SELECT movement.id, movement.due_date, movement.currency, movement.amount,
+             movement.account_id, movement.engagement_id, movement.engagement_raw, movement.description,
+             account.name AS account_name, engagement.name AS engagement_name
+      FROM expected_financial_movements AS movement
+      LEFT JOIN accounts AS account ON account.id = movement.account_id
+      LEFT JOIN engagements AS engagement ON engagement.id = movement.engagement_id
+      WHERE movement.budget_plan_id = ?
+      ORDER BY movement.due_date, movement.source_ordinal
+    `, [Number(activePlanRow.id)]);
+    const matchingActuals = new Map<string, LedgerRow[]>();
+    for (const row of budgetLedger) {
+      const key = `${row.date}\u0000${row.currency}\u0000${row.amount}\u0000${row.accountId}\u0000${row.engagementId ?? ''}`;
+      const matches = matchingActuals.get(key) ?? [];
+      matches.push(row);
+      matchingActuals.set(key, matches);
+    }
+    const expectedMovements = expectedRows.map((row): FinancialExpectedMovementRecord => {
+      const accountId = nullableNumber(row.account_id);
+      const engagementId = nullableNumber(row.engagement_id);
+      const key = `${String(row.due_date)}\u0000${normalizeValuationUnit(String(row.currency))}\u0000${Number(row.amount)}\u0000${accountId ?? ''}\u0000${engagementId ?? ''}`;
+      const matches = matchingActuals.get(key) ?? [];
+      const isMatched = matches.length > 0;
+      if (isMatched) matches.shift();
+      return {
+        id: Number(row.id), dueDate: String(row.due_date), currency: normalizeValuationUnit(String(row.currency)), amount: Number(row.amount),
+        accountId, accountName: nullableText(row.account_name) ?? 'Unknown account',
+        engagementId, engagementName: nullableText(row.engagement_name) ?? String(row.engagement_raw),
+        description: nullableText(row.description), isMatched,
+      };
+    });
+    activeBudget = {
+      periodStart, periodEnd,
+      sourceFileName: String(activePlanRow.source_file_name), sourceFilePath: String(activePlanRow.source_file_path),
+      sourceChecksum: String(activePlanRow.source_checksum), targets, expectedMovements,
+    };
+  }
+
+  const missingAccounts = accounts.filter((account) => account.balance !== 0 && account.valuationAmount == null)
+    .map((account): FinancialMissingValuationRecord => ({
+      accountId: account.accountId, accountName: account.accountName, unit: account.currency, balance: account.balance,
+    }));
+  const valuedAccounts = accounts.filter((account) => account.valuationAmount != null);
+  const valuation: FinancialValuationSummary = {
+    label: valuationLabel,
+    referenceUnit,
+    asOfDate: endDate,
+    assetTotal: valuedAccounts.reduce((sum, account) => sum + Math.max(0, account.valuationAmount ?? 0), 0),
+    liabilityTotal: valuedAccounts.reduce((sum, account) => sum + Math.min(0, account.valuationAmount ?? 0), 0),
+    netWorth: valuedAccounts.reduce((sum, account) => sum + (account.valuationAmount ?? 0), 0),
+    valuedAccountCount: valuedAccounts.length,
+    missingAccounts,
+  };
+
+  const selectedAccount = valuationOptions.selectedAccountId == null
+    ? null
+    : accounts.find((account) => account.accountId === valuationOptions.selectedAccountId) ?? null;
+  const explorerLedger = selectedAccount
+    ? asOfLedger.filter((row) => row.accountId === selectedAccount.accountId)
+    : asOfLedger;
+  const explorerRangeLedger = explorerLedger.filter(inRange);
+  const explorerFlowRows = explorerRangeLedger.filter(ordinary);
+  const valuedFlow = (records: LedgerRow[]): {
+    inflow: number;
+    outflow: number;
+    net: number;
+    valuedCount: number;
+    missingCount: number;
+  } => {
+    let inflow = 0;
+    let outflow = 0;
+    let valuedCount = 0;
+    let missingCount = 0;
+    for (const record of records) {
+      const rate = valuationRateFor(record.currency, record.date);
+      if (rate == null && record.amount !== 0) {
+        missingCount += 1;
+        continue;
+      }
+      const amount = record.amount * (rate ?? 0);
+      valuedCount += 1;
+      if (amount > 0) inflow += amount;
+      else if (amount < 0) outflow += -amount;
+    }
+    return { inflow, outflow, net: inflow - outflow, valuedCount, missingCount };
+  };
+  const valuationFlow = valuedFlow(explorerFlowRows);
+  const nativeFlow = selectedAccount ? aggregateFlow(explorerFlowRows) : null;
+
+  const explorerEngagements = [...groupBy(
+    explorerFlowRows.filter((row) => row.engagementId != null),
+    (row) => String(row.engagementId),
+  ).values()].map((records): FinancialExplorerEngagementRecord => {
+    const native = selectedAccount ? aggregateFlow(records) : null;
+    const valued = valuedFlow(records);
+    return {
+      engagementId: records[0].engagementId!,
+      engagementName: records[0].engagementName!,
+      transactionCount: records.length,
+      nativeCurrency: selectedAccount?.currency ?? null,
+      nativeInflow: native?.inflow ?? null,
+      nativeOutflow: native?.outflow ?? null,
+      nativeNet: native?.net ?? null,
+      valuationTransactionCount: valued.valuedCount,
+      valuationInflow: valued.inflow,
+      valuationOutflow: valued.outflow,
+      valuationNet: valued.net,
+      missingValuationTransactionCount: valued.missingCount,
+    };
+  }).sort((left, right) => {
+    const leftActivity = selectedAccount
+      ? (left.nativeInflow ?? 0) + (left.nativeOutflow ?? 0)
+      : left.valuationInflow + left.valuationOutflow;
+    const rightActivity = selectedAccount
+      ? (right.nativeInflow ?? 0) + (right.nativeOutflow ?? 0)
+      : right.valuationInflow + right.valuationOutflow;
+    return rightActivity - leftActivity || left.engagementName.localeCompare(right.engagementName);
+  });
+
+  const chartLedger = selectedAccount
+    ? asOfLedger.filter((row) => row.accountId === selectedAccount.accountId)
+    : asOfLedger;
+  const chartStart = startDate ?? chartLedger[0]?.date ?? endDate;
+  const balanceHistory: FinancialBalanceHistoryRecord[] = [];
+  if (chartLedger.length > 0) {
+    const balances = new Map<number, number>();
+    const rowsByDate = new Map<string, LedgerRow[]>();
+    for (const row of chartLedger) {
+      if (row.date < chartStart) {
+        balances.set(row.accountId, (balances.get(row.accountId) ?? 0) + row.amount);
+      } else {
+        const dated = rowsByDate.get(row.date) ?? [];
+        dated.push(row);
+        rowsByDate.set(row.date, dated);
+      }
+    }
+    const cursor = new Date(`${chartStart}T00:00:00Z`);
+    const finalDate = new Date(`${endDate}T00:00:00Z`);
+    while (cursor <= finalDate) {
+      const date = cursor.toISOString().slice(0, 10);
+      for (const row of rowsByDate.get(date) ?? []) {
+        balances.set(row.accountId, (balances.get(row.accountId) ?? 0) + row.amount);
+      }
+      if (selectedAccount) {
+        const nativeBalance = balances.get(selectedAccount.accountId) ?? 0;
+        const rate = valuationRateFor(selectedAccount.currency, date);
+        const missing = nativeBalance !== 0 && rate == null;
+        balanceHistory.push({
+          date,
+          nativeBalance,
+          valuationBalance: missing ? null : nativeBalance * (rate ?? 0),
+          missingAccountCount: missing ? 1 : 0,
+        });
+      } else {
+        let valuationBalance = 0;
+        let missingAccountCount = 0;
+        for (const account of accounts) {
+          const nativeBalance = balances.get(account.accountId) ?? 0;
+          if (nativeBalance === 0) continue;
+          const rate = valuationRateFor(account.currency, date);
+          if (rate == null) missingAccountCount += 1;
+          else valuationBalance += nativeBalance * rate;
+        }
+        balanceHistory.push({ date, nativeBalance: null, valuationBalance, missingAccountCount });
+      }
+      cursor.setUTCDate(cursor.getUTCDate() + 1);
+    }
+  }
+
+  const explorer: FinancialAccountExplorerRecord = {
+    accountId: selectedAccount?.accountId ?? null,
+    accountName: selectedAccount?.accountName ?? 'All accounts',
+    nativeCurrency: selectedAccount?.currency ?? null,
+    nativeBalance: selectedAccount?.balance ?? null,
+    nativeInflow: nativeFlow?.inflow ?? null,
+    nativeOutflow: nativeFlow?.outflow ?? null,
+    nativeNet: nativeFlow?.net ?? null,
+    valuationBalance: selectedAccount ? selectedAccount.valuationAmount : valuation.netWorth,
+    valuationInflow: valuationFlow.inflow,
+    valuationOutflow: valuationFlow.outflow,
+    valuationNet: valuationFlow.net,
+    missingCurrentValuationAccountCount: selectedAccount
+      ? (selectedAccount.balance !== 0 && selectedAccount.valuationAmount == null ? 1 : 0)
+      : valuation.missingAccounts.length,
+    missingFlowValuationTransactionCount: valuationFlow.missingCount,
+    balanceHistory,
+    engagements: explorerEngagements,
+  };
 
   return {
     startDate,
     endDate,
-    transactionCount: Number(summary?.transaction_count ?? 0),
-    linkedTransactionCount: Number(summary?.linked_count ?? 0),
-    unresolvedTransactionCount: Number(summary?.unresolved_count ?? 0),
+    transactionCount: rangeLedger.length,
+    linkedTransactionCount: rangeLedger.filter((row) => row.engagementId != null).length,
+    unresolvedTransactionCount: rangeLedger.filter((row) => row.engagementId == null).length,
     currencies,
     dailyFlow,
     engagements,
     accounts,
-    recentTransactions,
+    recentTransactions: [...explorerRangeLedger].sort((left, right) => right.date.localeCompare(left.date) || right.id - left.id).slice(0, 24),
+    activeBudget,
+    valuation,
+    explorer,
   };
 }
 

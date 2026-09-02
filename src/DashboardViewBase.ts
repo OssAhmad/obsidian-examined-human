@@ -100,6 +100,109 @@ export interface DashboardTrendRecord {
   ariaLabel: string;
 }
 
+export interface DashboardLineRecord {
+  label: string;
+  value: number | null;
+  displayValue: string;
+  ariaLabel: string;
+}
+
+function svgElement<K extends keyof SVGElementTagNameMap>(
+  parent: Element,
+  name: K,
+  attributes: Record<string, string> = {},
+): SVGElementTagNameMap[K] {
+  return parent.createSvg(name, { attr: attributes });
+}
+
+export function renderDashboardLine(container: HTMLElement, records: DashboardLineRecord[], ariaLabel: string): void {
+  const values = records.map((record) => record.value).filter((value): value is number => value != null && Number.isFinite(value));
+  if (values.length === 0) {
+    container.createDiv({ cls: 'examined-human-domain-empty', text: 'No valued balance history is available in this period.' });
+    return;
+  }
+  const width = 760;
+  const height = 250;
+  const padding = { top: 18, right: 18, bottom: 38, left: 68 };
+  const plotWidth = width - padding.left - padding.right;
+  const plotHeight = height - padding.top - padding.bottom;
+  let minimum = Math.min(...values);
+  let maximum = Math.max(...values);
+  if (minimum === maximum) {
+    const breathingRoom = Math.max(Math.abs(minimum) * 0.05, 1);
+    minimum -= breathingRoom;
+    maximum += breathingRoom;
+  }
+  const x = (index: number): number => padding.left + (records.length === 1 ? plotWidth / 2 : (index / (records.length - 1)) * plotWidth);
+  const y = (value: number): number => padding.top + ((maximum - value) / (maximum - minimum)) * plotHeight;
+  const svg = svgElement(container, 'svg', {
+    class: 'examined-human-domain-line-chart',
+    viewBox: `0 0 ${width} ${height}`,
+    role: 'img',
+    'aria-label': ariaLabel,
+  });
+  svgElement(svg, 'line', {
+    class: 'examined-human-domain-line-axis',
+    x1: String(padding.left), y1: String(padding.top + plotHeight),
+    x2: String(width - padding.right), y2: String(padding.top + plotHeight),
+  });
+  if (minimum <= 0 && maximum >= 0) {
+    svgElement(svg, 'line', {
+      class: 'examined-human-domain-line-zero',
+      x1: String(padding.left), y1: String(y(0)), x2: String(width - padding.right), y2: String(y(0)),
+    });
+  }
+
+  let segment: string[] = [];
+  const flushSegment = (): void => {
+    if (segment.length === 0) return;
+    svgElement(svg, 'polyline', {
+      class: 'examined-human-domain-line-series',
+      points: segment.join(' '),
+    });
+    segment = [];
+  };
+  records.forEach((record, index) => {
+    if (record.value == null || !Number.isFinite(record.value)) {
+      flushSegment();
+      return;
+    }
+    segment.push(`${x(index)},${y(record.value)}`);
+  });
+  flushSegment();
+
+  records.forEach((record, index) => {
+    if (record.value == null || !Number.isFinite(record.value)) return;
+    const point = svgElement(svg, 'circle', {
+      class: 'examined-human-domain-line-point',
+      cx: String(x(index)), cy: String(y(record.value)), r: records.length <= 60 ? '3.2' : '2.2',
+      tabindex: '0',
+      'aria-label': `${record.ariaLabel}: ${record.displayValue}`,
+    });
+    const title = svgElement(point, 'title');
+    title.textContent = `${record.ariaLabel}: ${record.displayValue}`;
+  });
+
+  const axisLabels: Array<{ x: number; y: number; text: string; anchor: string }> = [
+    { x: padding.left - 8, y: padding.top + 4, text: formatDashboardNumber(maximum, 2), anchor: 'end' },
+    { x: padding.left - 8, y: padding.top + plotHeight, text: formatDashboardNumber(minimum, 2), anchor: 'end' },
+  ];
+  const dateIndexes = [...new Set([0, Math.floor((records.length - 1) / 2), records.length - 1])];
+  for (const index of dateIndexes) {
+    axisLabels.push({
+      x: x(index), y: height - 12, text: records[index].label,
+      anchor: index === 0 ? 'start' : index === records.length - 1 ? 'end' : 'middle',
+    });
+  }
+  for (const label of axisLabels) {
+    const text = svgElement(svg, 'text', {
+      class: 'examined-human-domain-line-label',
+      x: String(label.x), y: String(label.y), 'text-anchor': label.anchor,
+    });
+    text.textContent = label.text;
+  }
+}
+
 export function renderDashboardTrend(container: HTMLElement, records: DashboardTrendRecord[]): void {
   if (records.length === 0) {
     container.createDiv({ cls: 'examined-human-domain-empty', text: 'No trend data was recorded in this period.' });
@@ -126,6 +229,12 @@ export abstract class DashboardViewBase<T> extends ItemView {
   protected selectedRange: DashboardRangeKey = 'days';
   protected startDate: string | null = null;
   protected endDate = '';
+  /**
+   * Most dashboards use today as their right-hand boundary. A dashboard that
+   * presents historical "as of" facts can opt into a fixed boundary without
+   * changing the shared range semantics.
+   */
+  protected endDateOverride: string | null = null;
   private renderGeneration = 0;
   private fingerprintTimer: number | null = null;
   private lastFingerprint: string | null = null;
@@ -165,7 +274,7 @@ export abstract class DashboardViewBase<T> extends ItemView {
 
   async refresh(): Promise<void> {
     const generation = ++this.renderGeneration;
-    this.endDate = moment().format('YYYY-MM-DD');
+    this.endDate = this.endDateOverride ?? moment().format('YYYY-MM-DD');
     this.startDate = dashboardRangeStart(this.selectedRange, this.endDate, this.plugin.settings.defaultDashboardDays);
     this.contentEl.empty();
     this.contentEl.addClass('examined-human-domain-view');

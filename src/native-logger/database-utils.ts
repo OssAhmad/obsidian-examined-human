@@ -74,6 +74,47 @@ export function assertSchemaV1(db: Database): void {
   if (version !== 1) throw new Error(`Native EH import requires official Data Schema v1; this database reports v${version}.`);
 }
 
+export function hasFinanceFoundationSchema(db: Database): boolean {
+  const required = ['budget_plans', 'budget_targets', 'expected_financial_movements'];
+  return required.every((name) => queryRows(
+    db,
+    "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ? LIMIT 1",
+    [name],
+  ).length === 1);
+}
+
+export function hasRetiredSingleBudgetSchema(db: Database): boolean {
+  const required = ['active_budget_plan', 'budget_targets', 'expected_financial_movements'];
+  return required.every((name) => queryRows(
+    db,
+    "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ? LIMIT 1",
+    [name],
+  ).length === 1);
+}
+
+export function assertFinanceFoundationSchema(db: Database): void {
+  assertSchemaV1(db);
+  if (!hasFinanceFoundationSchema(db)) {
+    throw new Error('Current Finance foundations are missing. Upgrade this official Data Schema v1 database before using budgets or ledger balances.');
+  }
+}
+
+export function hasValuationHistorySchema(db: Database): boolean {
+  const required = ['valuation_rate_sets', 'valuation_rates'];
+  return required.every((name) => queryRows(
+    db,
+    "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ? LIMIT 1",
+    [name],
+  ).length === 1);
+}
+
+export function assertValuationHistorySchema(db: Database): void {
+  assertFinanceFoundationSchema(db);
+  if (!hasValuationHistorySchema(db)) {
+    throw new Error('Valuation history is missing. Upgrade this official Data Schema v1 database before importing or viewing Valuation Rates.');
+  }
+}
+
 export function resolveTaxonomy(db: Database, table: string, value: string): ResolvedTaxonomy | null {
   if (!['session_types', 'engagement_types', 'engagement_statuses'].includes(table)) {
     throw new Error(`Unsupported taxonomy table: ${table}`);

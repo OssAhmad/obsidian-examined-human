@@ -1,5 +1,6 @@
 import { App, Notice, PluginSettingTab, Setting } from 'obsidian';
 import { DEFAULT_SESSION_COLORS, SESSION_TYPES } from './events.ts';
+import type { FormDiscoveryCache, FormDiscoveryMode } from './form-discovery.ts';
 import { DEFAULT_JOURNAL_FOLDER, normalizeJournalFolder } from './journal-folder.ts';
 import { confirmWeeklyAction } from './WeeklyActionConfirmationModal.ts';
 import type ExaminedHumanPlugin from './main.ts';
@@ -7,6 +8,8 @@ import type ExaminedHumanPlugin from './main.ts';
 export interface ExaminedHumanSettings {
   databasePath: string;
   journalFolder: string;
+  formDiscoveryMode: FormDiscoveryMode;
+  formDiscoveryCache: FormDiscoveryCache;
   mealCalorieLimitKcal: number;
   dailyCalorieLimitKcal: number;
   minimumProteinG: number;
@@ -16,12 +19,16 @@ export interface ExaminedHumanSettings {
   dayColumnWidth: number;
   mobileDayColumnWidth: number;
   defaultDashboardDays: number;
+  valuationUnitLabel: string;
+  valuationReferenceUnit: string;
   sessionColors: Record<string, string>;
 }
 
 export const DEFAULT_SETTINGS: ExaminedHumanSettings = {
   databasePath: 'EH.db',
   journalFolder: DEFAULT_JOURNAL_FOLDER,
+  formDiscoveryMode: 'tagged-vault',
+  formDiscoveryCache: { version: 1, entries: {} },
   mealCalorieLimitKcal: 0,
   dailyCalorieLimitKcal: 1850,
   minimumProteinG: 0,
@@ -31,6 +38,8 @@ export const DEFAULT_SETTINGS: ExaminedHumanSettings = {
   dayColumnWidth: 180,
   mobileDayColumnWidth: 160,
   defaultDashboardDays: 14,
+  valuationUnitLabel: 'EHM',
+  valuationReferenceUnit: 'USD',
   sessionColors: { ...DEFAULT_SESSION_COLORS },
 };
 
@@ -88,9 +97,37 @@ export class ExaminedHumanSettingTab extends PluginSettingTab {
           }
         }));
 
+    new Setting(containerEl).setName('Valuation').setHeading();
+    containerEl.createEl('p', {
+      text: 'Valuation Rates are user-entered dated observations. The Finance Dashboard carries each known rate forward until a newer one is imported; it never fetches market data.',
+      cls: 'setting-item-description',
+    });
+    new Setting(containerEl)
+      .setName('Valuation display label')
+      .setDesc('Label displayed beside total valued assets and liabilities. It can be EHM, USD, Satoshi, or any other text.')
+      .addText((text) => text
+        .setPlaceholder('EHM')
+        .setValue(this.plugin.settings.valuationUnitLabel)
+        .onChange(async (value) => {
+          this.plugin.settings.valuationUnitLabel = value.trim() || DEFAULT_SETTINGS.valuationUnitLabel;
+          await this.plugin.saveSettings();
+          await this.plugin.refreshViews();
+        }));
+    new Setting(containerEl)
+      .setName('Reference asset class')
+      .setDesc('Exact account unit that is automatically worth 1 valuation unit. Default: USD. Matching ignores case and extra spaces.')
+      .addText((text) => text
+        .setPlaceholder('USD')
+        .setValue(this.plugin.settings.valuationReferenceUnit)
+        .onChange(async (value) => {
+          this.plugin.settings.valuationReferenceUnit = value.trim() || DEFAULT_SETTINGS.valuationReferenceUnit;
+          await this.plugin.saveSettings();
+          await this.plugin.refreshViews();
+        }));
+
     new Setting(containerEl)
       .setName('Upgrade legacy database to Schema v1')
-      .setDesc('One-time 0.9.3 upgrade for the Food Dictionary. It preserves existing meal rows, adds canonical foods and food aliases, resets retired migration metadata to official Data Schema v1, and creates a verified backup.')
+      .setDesc('One-time pre-1.0 upgrade for the Food Dictionary, Finance, and Valuation foundations. It preserves existing meal rows, adds canonical foods/aliases, budget tables, and valuation history, resets retired migration metadata to official Data Schema v1, and creates a verified backup.')
       .addButton((button) => button
         .setButtonText('Preview upgrade')
         .onClick(async () => {
@@ -99,9 +136,9 @@ export class ExaminedHumanSettingTab extends PluginSettingTab {
             const preview = await this.plugin.nativeLogger.inspectSchemaV1Upgrade(this.plugin.settings.databasePath);
             const confirmed = await confirmWeeklyAction(this.app, {
               title: 'Upgrade to official Data Schema v1',
-              explanation: 'This one-time upgrade adds the Food Dictionary. It keeps existing meal rows unchanged, but replaces the retired schema migration history with one official Schema v1 record.',
+              explanation: 'This one-time upgrade adds the Food Dictionary, Finance, and Valuation foundations. It keeps existing meal rows unchanged, but replaces retired schema migration history with one official Schema v1 record.',
               confirmLabel: 'Upgrade database',
-              dryRunOutput: `Current SQLite schema marker: v${preview.currentSchemaVersion}\nTarget official schema marker: v${preview.targetSchemaVersion}\nRetired migration records to replace: ${preview.migrationEntryCount}\nNew tables: foods, food_aliases\nNew daily_meals links: food_id, amount_g, nutrient snapshots`,
+              dryRunOutput: `Current SQLite schema marker: v${preview.currentSchemaVersion}\nTarget official schema marker: v${preview.targetSchemaVersion}\nRetired migration records to replace: ${preview.migrationEntryCount}\nFood Dictionary needed: ${preview.needsFoodDictionary ? 'yes' : 'already present'}\nFinance foundation needed: ${preview.needsFinanceFoundation ? 'yes' : 'already present'}\nMutable dated budgets needed: ${preview.needsMutableBudgets ? 'yes' : 'already present'}\nValuation history needed: ${preview.needsValuationHistory ? 'yes' : 'already present'}\nNew tables when needed: foods, food_aliases, budget_plans, budget_targets, expected_financial_movements, valuation_rate_sets, valuation_rates\nNew daily_meals links when needed: food_id, amount_g, nutrient snapshots`,
               warning: 'A backup, transaction, integrity checks, and post-write verification will run before the upgraded database becomes the source of truth.',
             });
             if (!confirmed) return;
@@ -152,6 +189,18 @@ export class ExaminedHumanSettingTab extends PluginSettingTab {
           } catch (error) {
             new Notice(error instanceof Error ? error.message : String(error), 8000);
           }
+        }));
+
+    new Setting(containerEl)
+      .setName('Form discovery')
+      .setDesc('Default: scan only Markdown notes whose YAML frontmatter contains EH form: true or unimported (case-insensitive). Imported and false markers are skipped. Journal folder mode also scans unmarked notes in that folder and can take noticeably longer in a large vault.')
+      .addDropdown((dropdown) => dropdown
+        .addOption('tagged-vault', 'Only unimported EH Form notes')
+        .addOption('journal-folder', 'Every note in Journal folder')
+        .setValue(this.plugin.settings.formDiscoveryMode)
+        .onChange(async (value) => {
+          this.plugin.settings.formDiscoveryMode = value === 'journal-folder' ? 'journal-folder' : 'tagged-vault';
+          await this.plugin.saveSettings();
         }));
 
     new Setting(containerEl).setName('Nutrition evaluation').setHeading();

@@ -94,13 +94,19 @@ const DAY_OFFSETS: Record<string, number> = {
   friday: 6,
 };
 
-function parseWeekStart(text: string): string {
-  const frontmatter = /^---\s*\r?\n([\s\S]*?)\r?\n---/.exec(text);
-  if (!frontmatter) throw new Error('Weekly note has no YAML frontmatter.');
-  const match = /^week start:\s*["']?(\d{4}-\d{2}-\d{2})["']?\s*$/im.exec(frontmatter[1]);
-  if (!match) throw new Error('Weekly note YAML must contain a rendered week start: YYYY-MM-DD.');
-  requireIsoDate(match[1], 'Weekly plan start');
-  return match[1];
+function weeklyFormBody(text: string): { body: string; weekStart: string } {
+  const form = /^####\s+EH\s+Weekly\s+Form\s*$/mi.exec(text);
+  if (!form || form.index == null) throw new Error('Weekly note has no #### EH Weekly Form heading.');
+  const after = text.slice(form.index + form[0].length);
+  const end = /^####\s+END\s*$/mi.exec(after);
+  if (!end || end.index == null) throw new Error('EH Weekly Form has no matching #### END marker.');
+  const body = after.slice(0, end.index);
+  const start = /^start date:\s*(.*?)\s*$/im.exec(body)?.[1]?.trim() ?? '';
+  const finish = /^end date:\s*(.*?)\s*$/im.exec(body)?.[1]?.trim() ?? '';
+  requireIsoDate(start, 'Weekly plan start date');
+  requireIsoDate(finish, 'Weekly plan end date');
+  if (addIsoDays(start, 6) !== finish) throw new Error('Weekly plan end date must equal start date + 6 days.');
+  return { body, weekStart: start };
 }
 
 function labeledValue(text: string, label: string): string | null {
@@ -236,25 +242,30 @@ function parseGrid(db: Database, text: string, weekStart: string): WeeklySession
 
 export function parseWeeklyPlan(db: Database, input: NativeWeeklyNoteInput): ParsedWeeklyPlan {
   assertSchemaV1(db);
-  const weekStart = parseWeekStart(input.sourceText);
+  const form = weeklyFormBody(input.sourceText);
+  const weekStart = form.weekStart;
   if (weekStart !== input.weekStartDate) {
-    throw new Error(`Weekly note index says ${input.weekStartDate}, but YAML says ${weekStart}.`);
+    throw new Error(`Weekly Form discovery says ${input.weekStartDate}, but the form says ${weekStart}.`);
   }
   return {
     weekStart,
-    mainOutcome: labeledValue(input.sourceText, 'Main outcome'),
-    importantDeadline: labeledValue(input.sourceText, 'Important deadline'),
-    constraintOrRisk: labeledValue(input.sourceText, 'Constraint or risk'),
-    commitments: parseCommitments(db, input.sourceText),
-    sessions: parseGrid(db, input.sourceText, weekStart),
+    mainOutcome: labeledValue(form.body, 'Main outcome'),
+    importantDeadline: labeledValue(form.body, 'Important deadline'),
+    constraintOrRisk: labeledValue(form.body, 'Constraint or risk'),
+    commitments: parseCommitments(db, form.body),
+    sessions: parseGrid(db, form.body, weekStart),
   };
 }
 
 export function inspectWeeklyPlan(db: Database, input: NativeWeeklyNoteInput): WeeklyImportResult {
   const plan = parseWeeklyPlan(db, input);
-  const duplicate = queryRows(db, `SELECT source_file_name FROM weekly_plans
-    WHERE week_start_date = ? OR source_file_path = ? LIMIT 1`, [plan.weekStart, input.filePath])[0];
-  if (duplicate) throw new Error(`Week ${plan.weekStart} has already been imported from ${String(duplicate.source_file_name)}.`);
+  const overlap = queryRows(db, `SELECT week_start_date, source_file_name FROM weekly_plans
+    WHERE week_start_date <> ?
+      AND NOT (date(week_start_date, '+6 days') < ? OR week_start_date > ?)
+    LIMIT 1`, [plan.weekStart, plan.weekStart, addIsoDays(plan.weekStart, 6)])[0];
+  if (overlap) {
+    throw new Error(`Week ${plan.weekStart} overlaps imported week ${String(overlap.week_start_date)} from ${String(overlap.source_file_name)}.`);
+  }
   return {
     weekStart: plan.weekStart,
     commitmentCount: plan.commitments.length,
@@ -266,14 +277,29 @@ export function inspectWeeklyPlan(db: Database, input: NativeWeeklyNoteInput): W
 export function writeWeeklyPlan(db: Database, input: NativeWeeklyNoteInput): WeeklyImportResult {
   const result = inspectWeeklyPlan(db, input);
   const plan = parseWeeklyPlan(db, input);
-  db.run(`INSERT INTO weekly_plans (
+  const existing = queryRows(db, 'SELECT id FROM weekly_plans WHERE week_start_date = ?', [plan.weekStart])[0];
+  let planId: number;
+  if (existing) {
+    planId = Number(existing.id);
+    db.run('DELETE FROM weekly_plan_sessions WHERE weekly_plan_id = ?', [planId]);
+    db.run('DELETE FROM weekly_commitments WHERE weekly_plan_id = ?', [planId]);
+    db.run(`UPDATE weekly_plans SET
+      source_file_name = ?, source_file_path = ?, source_checksum = ?,
+      main_outcome = ?, important_deadline = ?, constraint_or_risk = ?, imported_at = CURRENT_TIMESTAMP
+      WHERE id = ?`, [
+      input.fileName, input.filePath, input.sourceChecksum,
+      plan.mainOutcome, plan.importantDeadline, plan.constraintOrRisk, planId,
+    ]);
+  } else {
+    db.run(`INSERT INTO weekly_plans (
       week_start_date, source_file_name, source_file_path, source_checksum,
       main_outcome, important_deadline, constraint_or_risk
     ) VALUES (?, ?, ?, ?, ?, ?, ?)`, [
     plan.weekStart, input.fileName, input.filePath, input.sourceChecksum,
     plan.mainOutcome, plan.importantDeadline, plan.constraintOrRisk,
-  ]);
-  const planId = lastInsertId(db);
+    ]);
+    planId = lastInsertId(db);
+  }
   for (const item of plan.commitments) {
     db.run(`INSERT INTO weekly_commitments (
       weekly_plan_id, source_ordinal, target_minutes, engagement_id, engagement_raw, commitment_text
@@ -335,8 +361,8 @@ function sessionRows(db: Database, planId: number): Map<string, string[]> {
 }
 
 function sessionEntryLocation(text: string): { position: number; prefix: string; occupied: boolean } {
-  const form = /^#### EH Form\s*$/m.exec(text);
-  if (!form) throw new Error('no EH Form heading');
+  const form = /^#### EH Daily Form\s*$/m.exec(text);
+  if (!form) throw new Error('no EH Daily Form heading');
   const formTail = text.slice((form.index ?? 0) + form[0].length);
   const formEndMatch = /^#### END\s*$/m.exec(formTail);
   const formEnd = formEndMatch ? (form.index ?? 0) + form[0].length + formEndMatch.index : text.length;

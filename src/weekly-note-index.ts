@@ -1,9 +1,7 @@
-import type { App, TFile } from 'obsidian';
+import type { App } from 'obsidian';
 import type { NoteTemporalState } from './daily-note-index.ts';
 import type { WeeklyPlanIndexQueryResult } from './examined-human-query.ts';
-
-const WEEKLY_NOTE_PATTERN = /^\d{4}-W\d{1,2}\.md$/i;
-const WEEK_START_PATTERN = /^week start:\s*["']?(\d{4}-\d{2}-\d{2})["']?\s*$/mi;
+import type { DiscoveredEhForm } from './form-discovery.ts';
 
 export type WeeklyNoteStatus = 'pending' | 'imported';
 
@@ -29,15 +27,6 @@ function temporalState(
   return 'current';
 }
 
-function parseWeekStart(content: string): string | null {
-  const match = WEEK_START_PATTERN.exec(content);
-  if (!match) return null;
-  const parsed = new Date(`${match[1]}T00:00:00Z`);
-  return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === match[1]
-    ? match[1]
-    : null;
-}
-
 function weekEnd(startDate: string): string {
   const parsed = new Date(`${startDate}T00:00:00Z`);
   parsed.setUTCDate(parsed.getUTCDate() + 6);
@@ -45,34 +34,33 @@ function weekEnd(startDate: string): string {
 }
 
 export async function buildWeeklyNoteList(
-  app: App,
+  _app: App,
   index: WeeklyPlanIndexQueryResult,
   todayDate: string,
+  discoveredForms: Array<Omit<DiscoveredEhForm, 'formText'>> = [],
 ): Promise<WeeklyNoteListItem[]> {
   const importedByStart = new Map(index.importedPlans.map((plan) => [plan.weekStartDate, plan]));
-  const weeklyFiles = app.vault.getMarkdownFiles().filter((file) => WEEKLY_NOTE_PATTERN.test(file.name));
-  const scanned = await Promise.all(weeklyFiles.map(async (file: TFile) => {
-    const content = await app.vault.cachedRead(file);
-    const startDate = parseWeekStart(content);
-    if (!startDate) return null;
+  const scanned = discoveredForms
+    .filter((form): form is Omit<DiscoveredEhForm, 'formText'> & { startDate: string; endDate: string } => (
+      form.kind === 'weekly' && form.startDate != null && form.endDate != null
+    )).map((form) => {
+    const startDate = form.startDate;
     const imported = importedByStart.has(startDate);
-    const endDate = weekEnd(startDate);
     return {
       weekStartDate: startDate,
-      weekEndDate: endDate,
-      weekLabel: file.basename,
-      fileName: file.name,
-      filePath: file.path,
+      weekEndDate: form.endDate,
+      weekLabel: form.fileName.replace(/\.md$/i, ''),
+      fileName: form.fileName,
+      filePath: form.filePath,
       status: imported ? 'imported' : 'pending',
-      temporalState: temporalState(startDate, endDate, todayDate, imported),
+      temporalState: temporalState(startDate, form.endDate, todayDate, imported),
     } satisfies WeeklyNoteListItem;
-  }));
+  });
 
   const byStart = new Map<string, WeeklyNoteListItem>();
   for (const item of scanned) {
-    if (!item) continue;
     if (byStart.has(item.weekStartDate)) {
-      throw new Error(`More than one weekly note declares ${item.weekStartDate}.`);
+      throw new Error(`Two EH Weekly Forms declare ${item.weekStartDate}: ${byStart.get(item.weekStartDate)!.filePath} and ${item.filePath}.`);
     }
     byStart.set(item.weekStartDate, item);
   }
@@ -89,6 +77,13 @@ export async function buildWeeklyNoteList(
       temporalState: 'imported',
     });
   }
-  return [...byStart.values()]
-    .sort((left, right) => right.weekStartDate.localeCompare(left.weekStartDate));
+  const ordered = [...byStart.values()].sort((left, right) => left.weekStartDate.localeCompare(right.weekStartDate));
+  for (let index = 1; index < ordered.length; index += 1) {
+    const previous = ordered[index - 1];
+    const current = ordered[index];
+    if (current.weekStartDate <= previous.weekEndDate) {
+      throw new Error(`EH Weekly Forms overlap: ${previous.filePath} (${previous.weekStartDate}–${previous.weekEndDate}) and ${current.filePath} (${current.weekStartDate}–${current.weekEndDate}).`);
+    }
+  }
+  return ordered.reverse();
 }

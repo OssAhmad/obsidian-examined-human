@@ -146,6 +146,63 @@ CREATE TABLE transactions (
     description TEXT
 );
 
+CREATE TABLE budget_plans (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    period_start DATE NOT NULL,
+    period_end DATE NOT NULL,
+    source_file_name TEXT NOT NULL,
+    source_file_path TEXT NOT NULL,
+    source_checksum TEXT NOT NULL,
+    imported_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CHECK (julianday(period_end) - julianday(period_start) >= 3),
+    UNIQUE (period_start, period_end)
+);
+
+CREATE TABLE budget_targets (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    budget_plan_id INTEGER NOT NULL REFERENCES budget_plans(id) ON DELETE CASCADE,
+    source_ordinal INTEGER NOT NULL,
+    currency TEXT NOT NULL CHECK (trim(currency) <> ''),
+    amount REAL NOT NULL CHECK (amount <> 0),
+    engagement_id INTEGER NOT NULL REFERENCES engagements(id),
+    engagement_raw TEXT NOT NULL,
+    UNIQUE (budget_plan_id, source_ordinal)
+);
+
+CREATE TABLE expected_financial_movements (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    budget_plan_id INTEGER NOT NULL REFERENCES budget_plans(id) ON DELETE CASCADE,
+    source_ordinal INTEGER NOT NULL,
+    due_date DATE NOT NULL,
+    currency TEXT NOT NULL CHECK (trim(currency) <> ''),
+    amount REAL NOT NULL CHECK (amount <> 0),
+    account_id INTEGER NOT NULL REFERENCES accounts(id),
+    engagement_id INTEGER NOT NULL REFERENCES engagements(id),
+    engagement_raw TEXT NOT NULL,
+    description TEXT,
+    UNIQUE (budget_plan_id, source_ordinal)
+);
+
+CREATE TABLE valuation_rate_sets (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    rate_date DATE NOT NULL UNIQUE,
+    source_file_name TEXT NOT NULL,
+    source_file_path TEXT NOT NULL,
+    source_checksum TEXT NOT NULL,
+    imported_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE valuation_rates (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    rate_set_id INTEGER NOT NULL REFERENCES valuation_rate_sets(id) ON DELETE CASCADE,
+    source_ordinal INTEGER NOT NULL,
+    unit_key TEXT NOT NULL,
+    unit_label TEXT NOT NULL,
+    value REAL NOT NULL CHECK (value > 0),
+    UNIQUE (rate_set_id, source_ordinal),
+    UNIQUE (rate_set_id, unit_key)
+);
+
 CREATE TABLE engagement_aliases (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     engagement_id INTEGER NOT NULL REFERENCES engagements(id),
@@ -394,6 +451,13 @@ CREATE INDEX idx_planned_sessions_date ON planned_sessions(date);
 CREATE INDEX idx_planned_sessions_source ON planned_sessions(source_note_id);
 CREATE INDEX idx_planned_sessions_type ON planned_sessions(resolved_session_type_id);
 CREATE INDEX idx_transactions_date ON transactions(date);
+CREATE INDEX idx_budget_plans_period ON budget_plans(period_start, period_end);
+CREATE INDEX idx_budget_targets_plan_currency ON budget_targets(budget_plan_id, currency);
+CREATE INDEX idx_budget_targets_engagement ON budget_targets(engagement_id);
+CREATE INDEX idx_expected_financial_movements_plan_due ON expected_financial_movements(budget_plan_id, due_date);
+CREATE INDEX idx_expected_financial_movements_account ON expected_financial_movements(account_id, due_date);
+CREATE INDEX idx_valuation_rate_sets_date ON valuation_rate_sets(rate_date);
+CREATE INDEX idx_valuation_rates_unit ON valuation_rates(unit_key, rate_set_id);
 CREATE INDEX idx_engagement_milestones_session ON engagement_milestones(session_id);
 CREATE INDEX idx_exercise_sets_session ON exercise_sets(session_exercise_id);
 CREATE INDEX idx_weekly_plan_sessions_plan ON weekly_plan_sessions(weekly_plan_id);
@@ -549,7 +613,7 @@ INSERT INTO engagement_statuses (code, label, sort_order) VALUES
 ('paused', 'Paused', 40), ('completed', 'Completed', 50), ('abandoned', 'Abandoned', 60);
 
 INSERT INTO schema_migrations (version, name) VALUES
-(1, 'official schema v1: canonical food dictionary');
+(1, 'official schema v1: food, finance, valuation, and mutable budget foundations');
 
 PRAGMA user_version = 1;
 COMMIT;

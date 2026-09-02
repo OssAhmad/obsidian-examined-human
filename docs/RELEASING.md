@@ -11,6 +11,6 @@ Before starting, read `docs/ARCHITECTURE.md`, confirm the working tree contains 
 7. Create a GitHub Release whose tag exactly matches `manifest.json` (no `v` prefix).
 8. Attach `main.js`, `manifest.json`, and `styles.css` to the release. Never attach `data.json` or a database.
 
-For the owner's test vault, run `python scripts/deploy_to_vault.py` from the parent `examined-human` project to inspect the deployment plan, then repeat with `--apply`. This preserves plugin `data.json` and installs only the three plugin artifacts. Version 0.9.3 has no Python runtime dependency.
+For the owner's test vault, deploy only `main.js`, `manifest.json`, and `styles.css` from this checkout to `C:\Users\Azimi\ossaFiles\vaults\ossaWaxVault\.obsidian\plugins\examined-human`. Verify artifact hashes after copying and verify that the existing plugin `data.json` is unchanged. Python is a maintenance-tool dependency only; the plugin runtime has no Python dependency.
 
 For the initial Community directory submission, sign in at `community.obsidian.md`, link GitHub, choose **Plugins → New plugin**, and submit this repository URL. Later updates are distributed from GitHub Releases automatically.

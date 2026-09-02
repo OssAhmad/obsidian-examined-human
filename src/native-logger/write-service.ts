@@ -54,6 +54,22 @@ import {
   upgradeV5ToOfficialSchemaV1,
   type SchemaV1UpgradePreview,
 } from './schema-upgrade.ts';
+import {
+  inspectBudgetForm,
+  writeBudgetForm,
+  type BudgetImportResult,
+  type NativeBudgetFormInput,
+} from './budget.ts';
+import {
+  prepareFinanceEntryStage,
+  type FinanceEntryStageInput,
+  type FinanceEntryStagePreview,
+} from './finance-entry-stage.ts';
+import {
+  prepareValuationRateStage,
+  type ValuationRateStageInput,
+  type ValuationRateStagePreview,
+} from './valuation-rate-stage.ts';
 
 export interface BackupMutationMetadata {
   backupPath: string | null;
@@ -98,6 +114,15 @@ export interface SchemaV1UpgradeResult extends SchemaV1UpgradePreview, BackupMut
   databasePath: string;
 }
 
+export interface NativeBudgetRequest extends Omit<NativeBudgetFormInput, 'sourceChecksum'> {
+  databasePath: string;
+}
+
+export interface NativeBudgetWriteResult extends BudgetImportResult, BackupMutationMetadata {
+  databasePath: string;
+  sourceChecksum: string;
+}
+
 export interface NativeDailyRequest extends Omit<NativeDailyNoteInput, 'sourceChecksum' | 'pluginVersion'> {
   databasePath: string;
 }
@@ -139,6 +164,9 @@ export interface AdminEventStageRequest {
   command?: string;
   commands?: string[];
 }
+
+export type FinanceEntryStageRequest = FinanceEntryStageInput;
+export type ValuationRateStageRequest = ValuationRateStageInput;
 
 function rows(db: Database, sql: string, params: SqlValue[] = []): Record<string, SqlValue>[] {
   const statement = db.prepare(sql);
@@ -231,6 +259,30 @@ export class NativeLoggerWriteService {
       return {
         ...mutation.value,
         databasePath: mutation.databasePath,
+        backupPath: mutation.backupPath,
+        backupsPruned: mutation.backupsPruned,
+        backupRetentionWarning: mutation.backupRetentionWarning,
+      };
+    });
+  }
+
+  async inspectBudget(request: NativeBudgetRequest): Promise<BudgetImportResult> {
+    const input = await this.budgetInput(request);
+    return this.inspectDatabase(request.databasePath, (db) => inspectBudgetForm(db, input));
+  }
+
+  importBudget(request: NativeBudgetRequest): Promise<NativeBudgetWriteResult> {
+    return this.enqueue(async () => {
+      const input = await this.budgetInput(request);
+      const mutation = await this.mutateDatabase(
+        request.databasePath,
+        'budget-plan',
+        (db) => writeBudgetForm(db, input),
+      );
+      return {
+        ...mutation.value,
+        databasePath: mutation.databasePath,
+        sourceChecksum: input.sourceChecksum,
         backupPath: mutation.backupPath,
         backupsPruned: mutation.backupsPruned,
         backupRetentionWarning: mutation.backupRetentionWarning,
@@ -470,6 +522,38 @@ export class NativeLoggerWriteService {
     });
   }
 
+  previewFinanceEntryStage(request: FinanceEntryStageRequest): Promise<FinanceEntryStagePreview> {
+    return prepareFinanceEntryStage(request);
+  }
+
+  stageFinanceEntry(preview: FinanceEntryStagePreview): Promise<FinanceEntryStagePreview> {
+    return this.enqueue(async () => {
+      const file = this.requireFile(preview.filePath, 'Daily Note');
+      const current = await this.app.vault.read(file);
+      if (await sha256Text(current) !== preview.sourceChecksum) {
+        throw new Error(`${preview.fileName} changed during preview. Refresh and retry; no note was written.`);
+      }
+      await this.app.vault.modify(file, preview.updatedText);
+      return preview;
+    });
+  }
+
+  previewValuationRateStage(request: ValuationRateStageRequest): Promise<ValuationRateStagePreview> {
+    return prepareValuationRateStage(request);
+  }
+
+  stageValuationRates(preview: ValuationRateStagePreview): Promise<ValuationRateStagePreview> {
+    return this.enqueue(async () => {
+      const file = this.requireFile(preview.filePath, 'Daily Note');
+      const current = await this.app.vault.read(file);
+      if (await sha256Text(current) !== preview.sourceChecksum) {
+        throw new Error(`${preview.fileName} changed during preview. Refresh and retry; no note was written.`);
+      }
+      await this.app.vault.modify(file, preview.updatedText);
+      return preview;
+    });
+  }
+
   private async dailyInput(request: NativeDailyRequest): Promise<NativeDailyNoteInput> {
     return {
       ...request,
@@ -479,6 +563,10 @@ export class NativeLoggerWriteService {
   }
 
   private async weeklyInput(request: NativeWeeklyRequest): Promise<NativeWeeklyNoteInput> {
+    return { ...request, sourceChecksum: await sha256Text(request.sourceText) };
+  }
+
+  private async budgetInput(request: NativeBudgetRequest): Promise<NativeBudgetFormInput> {
     return { ...request, sourceChecksum: await sha256Text(request.sourceText) };
   }
 

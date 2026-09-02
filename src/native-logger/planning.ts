@@ -55,19 +55,21 @@ const ESTIMATED_START_MINUTE = 7 * 60;
 const ESTIMATED_DURATION_MINUTES = 60;
 const ESTIMATED_SLOTS_PER_DAY = 17;
 
-function formSections(text: string): { sections: Map<string, string>; issues: string[] } {
+function formSections(text: string, expectedDate?: string): { sections: Map<string, string>; issues: string[] } {
   const issues: string[] = [];
-  const positions = ['#### EH Form']
-    .map((heading) => text.indexOf(heading))
-    .filter((position) => position >= 0);
-  if (positions.length === 0) return { sections: new Map(), issues: ['No EH Form heading was found.'] };
-  const start = Math.min(...positions);
-  let end = text.indexOf('#### END', start);
-  if (end < 0) {
-    end = text.length;
-    issues.push('No END marker was found; the form was parsed to the end of the note.');
+  const heading = /^####\s+EH\s+Daily\s+Form\s*$/mi.exec(text);
+  if (!heading || heading.index == null) return { sections: new Map(), issues: ['No EH Daily Form heading was found.'] };
+  const start = heading.index + heading[0].length;
+  const tail = text.slice(start);
+  const endMarker = /^####\s+END\s*$/mi.exec(tail);
+  if (!endMarker || endMarker.index == null) return { sections: new Map(), issues: ['EH Daily Form has no matching #### END marker.'] };
+  const form = tail.slice(0, endMarker.index);
+  const declared = /^date:\s*(.*?)\s*$/im.exec(form)?.[1]?.trim() ?? '';
+  if (!declared) issues.push('EH Daily Form requires date: YYYY-MM-DD.');
+  else {
+    try { requireIsoDate(declared, 'EH Daily Form date'); } catch (error) { issues.push(error instanceof Error ? error.message : String(error)); }
+    if (expectedDate && declared !== expectedDate) issues.push(`EH Daily Form declares ${declared}, but this projection targets ${expectedDate}.`);
   }
-  const form = text.slice(start, end);
   const matches = [...form.matchAll(/^##### (.+?)\r?$/gm)];
   const sections = new Map<string, string>();
   matches.forEach((match, index) => {
@@ -106,9 +108,9 @@ export function parsePlannedInterval(value: string): [number, number] | null {
   return end > start ? [start, end] : null;
 }
 
-export function inspectPlannedNote(text: string): PlannedNoteInspection {
-  const extracted = formSections(text);
-  if (extracted.issues.some((issue) => issue.startsWith('No EH Form'))) {
+export function inspectPlannedNote(text: string, expectedDate?: string): PlannedNoteInspection {
+  const extracted = formSections(text, expectedDate);
+  if (extracted.issues.some((issue) => issue.startsWith('No EH Daily Form'))) {
     return { sessions: [], issues: extracted.issues, parseStatus: 'error' };
   }
   const sessionLines = entriesBlock(extracted.sections.get('Sessions') ?? '').split(/\r?\n/);
@@ -184,7 +186,7 @@ function resolvePlanningFacts(db: Database, parsed: PlannedNoteInspection): Arra
 
 function projectNote(db: Database, note: NativePlanningNote): PlanningProjectionResult {
   requireIsoDate(note.noteDate, 'Daily Note date');
-  const parsed = inspectPlannedNote(note.sourceText);
+  const parsed = inspectPlannedNote(note.sourceText, note.noteDate);
   const resolved = resolvePlanningFacts(db, parsed);
   const combinedIssues = parsed.issues.join('\n\n') || null;
   let parseStatus: 'ok' | 'warning' | 'error' = parsed.parseStatus;

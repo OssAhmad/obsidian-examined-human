@@ -10,6 +10,7 @@ import type {
   EngagementDashboardQueryResult,
   ExerciseDashboardQueryResult,
   FinancialDashboardQueryResult,
+  FinancialValuationOptions,
   FoodLibraryRecord,
   NutritionDashboardQueryResult,
   SessionQueryResult,
@@ -92,8 +93,9 @@ export class ExaminedHumanDatabase {
     databasePath: string,
     startDate: string | null,
     endDate: string,
+    valuationOptions: FinancialValuationOptions,
   ): Promise<FinancialDashboardQueryResult> {
-    return this.withDatabase(databasePath, (db) => queryFinancialDashboard(db, startDate, endDate));
+    return this.withDatabase(databasePath, (db) => queryFinancialDashboard(db, startDate, endDate, valuationOptions));
   }
 
   async nutritionDashboard(

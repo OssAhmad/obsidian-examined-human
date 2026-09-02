@@ -28,7 +28,7 @@ function fixture() {
       (SELECT id FROM engagement_statuses WHERE code = 'active')
     );
     INSERT INTO accounts (id, name, type, currency) VALUES
-      (1, 'Cash', 'cash', 'USD'),
+      (1, 'Cash', 'cash', ' usd '),
       (2, 'Travel', 'cash', 'EUR');
     INSERT INTO transactions (id, account_id, date, amount, category, description) VALUES
       (1, 1, '2026-07-02', 100, '1', 'Income'),
@@ -89,6 +89,136 @@ test('financial dashboard reconciles currencies and excludes unresolved rows onl
     assert.equal(result.engagements.length, 1);
     assert.equal(result.engagements[0].outflow, 30);
     assert.equal(result.recentTransactions[0].engagementName, null);
+    assert.equal(result.accounts.find((account) => account.accountName === 'Cash')?.balance, 70);
+    assert.equal(result.accounts.find((account) => account.accountName === 'Travel')?.balance, -20);
+    assert.equal(result.activeBudget, null);
+  } finally {
+    db.close();
+  }
+});
+
+test('finance dashboard derives ledger balances, excludes one unambiguous transfer pair, and matches expected movements conservatively', () => {
+  const db = fixture();
+  try {
+    db.run(`
+      INSERT INTO accounts (id, name, type, currency) VALUES (3, 'Savings', 'cash', 'USD');
+      INSERT INTO transactions (id, account_id, date, amount, category, description) VALUES
+        (4, 1, '2026-07-05', -50, '1', 'moved to Savings'),
+        (5, 3, '2026-07-05', 50, '1', 'moved from Cash'),
+        (6, 1, '2026-07-06', 500, '1', '[EH opening balance] initial amount'),
+        (7, 1, '2026-07-07', -10, '1', '[EH reconciliation] forgotten cash purchase');
+      INSERT INTO budget_plans (id, period_start, period_end, source_file_name, source_file_path, source_checksum)
+        VALUES (1, '2026-07-01', '2026-07-31', 'July Budget.md', 'Plans/July Budget.md', 'checksum');
+      INSERT INTO budget_targets (budget_plan_id, source_ordinal, currency, amount, engagement_id, engagement_raw)
+        VALUES (1, 1, 'USD', -100, 1, 'Health Project');
+      INSERT INTO expected_financial_movements (
+        budget_plan_id, source_ordinal, due_date, currency, amount, account_id, engagement_id, engagement_raw, description
+      ) VALUES (1, 1, '2026-07-03', 'USD', -30, 1, 1, 'Health Project', 'Supplies');
+    `);
+    const result = queryFinancialDashboard(db, '2026-07-01', '2026-07-31');
+    assert.deepEqual(result.currencies.find((currency) => currency.currency === 'USD'), {
+      currency: 'USD', transactionCount: 2, inflow: 100, outflow: 30, net: 70,
+    });
+    const cash = result.accounts.find((account) => account.accountName === 'Cash');
+    assert.equal(cash?.balance, 510);
+    assert.equal(cash?.openingBalance, 500);
+    assert.equal(cash?.reconciliationAdjustment, -10);
+    assert.equal(cash?.transferOut, 50);
+    assert.equal(result.recentTransactions.find((transaction) => transaction.id === 4)?.kind, 'transfer');
+    assert.equal(result.activeBudget?.targets[0].actualAmount, -30);
+    assert.equal(result.activeBudget?.expectedMovements[0].isMatched, true);
+    assert.equal(result.explorer.accountId, null);
+    assert.equal(result.explorer.valuationInflow, 100);
+    assert.equal(result.explorer.valuationOutflow, 30);
+    assert.equal(result.explorer.missingFlowValuationTransactionCount, 1);
+  } finally {
+    db.close();
+  }
+});
+
+test('finance account explorer carries exact daily balances and supports native and valued account views', () => {
+  const db = fixture();
+  try {
+    const result = queryFinancialDashboard(db, '2026-07-01', '2026-07-05', {
+      label: 'EHM', referenceUnit: 'USD', selectedAccountId: 1,
+    });
+    assert.equal(result.explorer.accountName, 'Cash');
+    assert.equal(result.explorer.nativeCurrency, 'USD');
+    assert.equal(result.explorer.nativeBalance, 70);
+    assert.equal(result.explorer.nativeInflow, 100);
+    assert.equal(result.explorer.nativeOutflow, 30);
+    assert.equal(result.explorer.valuationBalance, 70);
+    assert.deepEqual(result.explorer.balanceHistory.map((point) => [point.date, point.nativeBalance, point.valuationBalance]), [
+      ['2026-07-01', 0, 0],
+      ['2026-07-02', 100, 100],
+      ['2026-07-03', 70, 70],
+      ['2026-07-04', 70, 70],
+      ['2026-07-05', 70, 70],
+    ]);
+    assert.equal(result.explorer.engagements[0].engagementName, 'Health Project');
+    assert.equal(result.explorer.engagements[0].nativeInflow, 100);
+    assert.equal(result.explorer.engagements[0].nativeOutflow, 30);
+    assert.equal(result.recentTransactions.every((transaction) => transaction.accountId === 1), true);
+  } finally {
+    db.close();
+  }
+});
+
+test('finance valuation history carries rates forward without applying them backward', () => {
+  const db = fixture();
+  try {
+    db.run(`
+      INSERT INTO accounts (id, name, type, currency) VALUES (3, 'Apartment', 'property', 'Apartment');
+      INSERT INTO transactions (id, account_id, date, amount, category, description)
+        VALUES (4, 3, '2026-01-01', 1, '1', '[EH opening balance] apartment');
+      INSERT INTO valuation_rate_sets (id, rate_date, source_file_name, source_file_path, source_checksum)
+        VALUES (1, '2026-01-06', '2026-01-06.md', 'Journal/2026-01-06.md', 'rate-set');
+      INSERT INTO valuation_rates (rate_set_id, source_ordinal, unit_key, unit_label, value)
+        VALUES (1, 1, 'APARTMENT', 'Apartment', 2300000);
+    `);
+    const result = queryFinancialDashboard(db, '2026-01-04', '2026-01-07', {
+      label: 'EHM', referenceUnit: 'USD', selectedAccountId: 3,
+    });
+    assert.deepEqual(result.explorer.balanceHistory.map((point) => [point.date, point.valuationBalance, point.missingAccountCount]), [
+      ['2026-01-04', null, 1],
+      ['2026-01-05', null, 1],
+      ['2026-01-06', 2300000, 0],
+      ['2026-01-07', 2300000, 0],
+    ]);
+    assert.equal(result.explorer.valuationBalance, 2300000);
+  } finally {
+    db.close();
+  }
+});
+
+test('financial valuation carries each unit forward independently through the selected as-of date', () => {
+  const db = fixture();
+  try {
+    db.run(`
+      INSERT INTO accounts (id, name, type, currency) VALUES (3, 'Apartment', 'property', 'Apartment');
+      INSERT INTO transactions (id, account_id, date, amount, category, description)
+        VALUES (4, 3, '2026-01-06', 1, '1', '[EH opening balance] recorded property unit');
+      INSERT INTO valuation_rate_sets (id, rate_date, source_file_name, source_file_path, source_checksum)
+        VALUES (1, '2026-01-06', '2026-01-06.md', 'Journal/2026-01-06.md', 'jan-rate-set'),
+               (2, '2026-08-01', '2026-08-01.md', 'Journal/2026-08-01.md', 'aug-rate-set');
+      INSERT INTO valuation_rates (rate_set_id, source_ordinal, unit_key, unit_label, value) VALUES
+        (1, 1, 'APARTMENT', 'Apartment', 2300000),
+        (1, 2, 'EUR', 'EUR', 1.20),
+        (2, 1, 'EUR', 'EUR', 1.10);
+    `);
+    const july = queryFinancialDashboard(db, null, '2026-07-31', { label: 'EHM', referenceUnit: 'USD' });
+    const apartmentInJuly = july.accounts.find((account) => account.accountName === 'Apartment');
+    assert.equal(apartmentInJuly?.valuationAmount, 2300000);
+    assert.equal(apartmentInJuly?.valuationRateDate, '2026-01-06');
+    assert.equal(july.accounts.find((account) => account.accountName === 'Cash')?.valuationKind, 'reference');
+
+    const august = queryFinancialDashboard(db, null, '2026-08-02', { label: 'EHM', referenceUnit: 'USD' });
+    const apartmentInAugust = august.accounts.find((account) => account.accountName === 'Apartment');
+    const travelInAugust = august.accounts.find((account) => account.accountName === 'Travel');
+    assert.equal(apartmentInAugust?.valuationAmount, 2300000, 'an omitted apartment rate must carry forward indefinitely');
+    assert.equal(apartmentInAugust?.valuationRateDate, '2026-01-06');
+    assert.equal(travelInAugust?.valuationRate, 1.10, 'a newer EUR rate updates EUR only');
+    assert.equal(travelInAugust?.valuationRateDate, '2026-08-01');
   } finally {
     db.close();
   }

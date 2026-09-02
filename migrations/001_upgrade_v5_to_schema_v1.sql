@@ -50,6 +50,6 @@ CREATE INDEX idx_food_aliases_food ON food_aliases(food_id);
 
 DELETE FROM schema_migrations;
 INSERT INTO schema_migrations (version, name, applied_at)
-VALUES (1, 'official schema v1: canonical food dictionary', datetime('now'));
+VALUES (1, 'official schema v1: food, finance, and valuation foundations', datetime('now'));
 
 PRAGMA user_version = 1;

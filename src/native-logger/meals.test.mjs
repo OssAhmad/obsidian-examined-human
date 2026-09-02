@@ -27,7 +27,8 @@ db.run(`
 
 function note({ calories = '4000', protein = '127', dieted = '1', meals = '' } = {}) {
   return `
-#### EH Form
+#### EH Daily Form
+date: 2026-08-20
 
 ##### Daily Metrics
 calories: ${calories}
