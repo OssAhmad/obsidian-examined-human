@@ -81,8 +81,8 @@ function formSections(text: string, expectedDate?: string): { sections: Map<stri
 }
 
 function entriesBlock(section: string): string {
-  const marker = section.indexOf('ENTRIES:');
-  return marker < 0 ? '' : section.slice(marker + 'ENTRIES:'.length).trim();
+  const marker = /^ENTRIES:[ \t]*$/mi.exec(section);
+  return marker == null ? '' : section.slice(marker.index + marker[0].length).trim();
 }
 
 function splitFields(line: string, expected: number): string[] {

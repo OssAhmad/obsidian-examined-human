@@ -2196,7 +2196,7 @@ __export(main_exports, {
   default: () => ExaminedHumanPlugin
 });
 module.exports = __toCommonJS(main_exports);
-var import_obsidian22 = require("obsidian");
+var import_obsidian21 = require("obsidian");
 
 // src/database-path.ts
 function normalizeVaultDatabasePath(value) {
@@ -6322,8 +6322,8 @@ function formSections(text, expectedDate) {
   return { sections: sections2, issues };
 }
 function entriesBlock(section) {
-  const marker = section.indexOf("ENTRIES:");
-  return marker < 0 ? "" : section.slice(marker + "ENTRIES:".length).trim();
+  const marker = /^ENTRIES:[ \t]*$/mi.exec(section);
+  return marker == null ? "" : section.slice(marker.index + marker[0].length).trim();
 }
 function splitFields2(line, expected) {
   for (const delimiter of ["|", ";"]) {
@@ -12130,9 +12130,6 @@ function pathIsInJournalFolder(filePath, journalFolder) {
   return folder === "" || normalizedPath.startsWith(`${folder}/`);
 }
 
-// src/form-discovery.ts
-var import_obsidian17 = require("obsidian");
-
 // src/form-status.ts
 function ehFormFrontmatterEntry(frontmatter) {
   var _a;
@@ -12233,6 +12230,11 @@ function cacheEntry(file, forms) {
 function restore(file, entry) {
   return entry.forms.map((form) => ({ ...form, fileName: file.name, filePath: file.path }));
 }
+function isVaultFile(value) {
+  if (!value || typeof value !== "object") return false;
+  const candidate = value;
+  return typeof candidate.name === "string" && typeof candidate.path === "string" && candidate.stat != null && typeof candidate.stat === "object";
+}
 function sanitizeFormDiscoveryCache(value) {
   if (!value || typeof value !== "object") return { ...EMPTY_FORM_DISCOVERY_CACHE, entries: {} };
   const rawEntries = value.entries;
@@ -12291,15 +12293,14 @@ function cachedEhForms(app, cache) {
   const forms = [];
   for (const [path, entry] of Object.entries(cache.entries)) {
     const file = app.vault.getAbstractFileByPath(path);
-    if (!(file instanceof import_obsidian17.TFile)) continue;
-    if (file.stat.mtime !== entry.mtime || file.stat.size !== entry.size) continue;
+    if (!isVaultFile(file)) continue;
     forms.push(...restore(file, entry));
   }
   return forms;
 }
 
 // src/NutritionDashboardView.ts
-var import_obsidian18 = require("obsidian");
+var import_obsidian17 = require("obsidian");
 var EXAMINED_HUMAN_NUTRITION_DASHBOARD_VIEW_TYPE = "examined-human-nutrition-dashboard";
 function average(values) {
   const available = values.filter((value) => value != null && Number.isFinite(value));
@@ -12380,7 +12381,7 @@ var NutritionDashboardView = class extends DashboardViewBase {
     renderDashboardTrend(panel, records.map((day) => {
       var _a, _b;
       return {
-        label: (0, import_obsidian18.moment)(day.date, "YYYY-MM-DD", true).format("MMM D"),
+        label: (0, import_obsidian17.moment)(day.date, "YYYY-MM-DD", true).format("MMM D"),
         value: (_a = day.calories) != null ? _a : 0,
         displayValue: `${formatDashboardNumber((_b = day.calories) != null ? _b : 0, 0)}`,
         ariaLabel: `${formatDashboardDate(day.date)}, calories`
@@ -12393,7 +12394,7 @@ var NutritionDashboardView = class extends DashboardViewBase {
     renderDashboardTrend(panel, records.map((day) => {
       var _a, _b;
       return {
-        label: (0, import_obsidian18.moment)(day.date, "YYYY-MM-DD", true).format("MMM D"),
+        label: (0, import_obsidian17.moment)(day.date, "YYYY-MM-DD", true).format("MMM D"),
         value: (_a = day.proteinG) != null ? _a : 0,
         displayValue: `${formatDashboardNumber((_b = day.proteinG) != null ? _b : 0, 0)} g`,
         ariaLabel: `${formatDashboardDate(day.date)}, protein`
@@ -12443,7 +12444,7 @@ var NutritionDashboardView = class extends DashboardViewBase {
 };
 
 // src/TimelineView.ts
-var import_obsidian19 = require("obsidian");
+var import_obsidian18 = require("obsidian");
 var EXAMINED_HUMAN_CALENDAR_VIEW_TYPE = "examined-human";
 var INITIAL_DAYS_EACH_SIDE = 45;
 var WINDOW_SHIFT_DAYS = 28;
@@ -12452,12 +12453,12 @@ var HEADER_HEIGHT = 58;
 var BASE_PX_PER_MINUTE = 1.15;
 var ZOOM_LEVELS = [0.7, 0.85, 1, 1.25, 1.5, 2];
 var FINGERPRINT_INTERVAL_MS4 = 1e4;
-var TimelineView = class extends import_obsidian19.ItemView {
+var TimelineView = class extends import_obsidian18.ItemView {
   constructor(leaf, plugin) {
     super(leaf);
     this.plugin = plugin;
-    this.rangeStart = (0, import_obsidian19.moment)().startOf("day").subtract(INITIAL_DAYS_EACH_SIDE, "days");
-    this.rangeEnd = (0, import_obsidian19.moment)().startOf("day").add(INITIAL_DAYS_EACH_SIDE, "days");
+    this.rangeStart = (0, import_obsidian18.moment)().startOf("day").subtract(INITIAL_DAYS_EACH_SIDE, "days");
+    this.rangeEnd = (0, import_obsidian18.moment)().startOf("day").add(INITIAL_DAYS_EACH_SIDE, "days");
     this.zoomIndex = 2;
     this.scrollEl = null;
     this.statusEl = null;
@@ -12483,14 +12484,14 @@ var TimelineView = class extends import_obsidian19.ItemView {
     this.contentEl.addClass("examined-human-view");
     await this.renderCalendar({
       viewport: {
-        centerDate: (0, import_obsidian19.moment)().format("YYYY-MM-DD"),
+        centerDate: (0, import_obsidian18.moment)().format("YYYY-MM-DD"),
         scrollMinute: this.plugin.settings.initialScrollHour * 60
       }
     });
     this.registerEvent(this.app.vault.on("modify", (file) => {
       const configuredPath = this.plugin.settings.databasePath;
       try {
-        if ((0, import_obsidian19.normalizePath)(file.path) === this.plugin.database.normalizeVaultPath(configuredPath)) void this.refresh();
+        if ((0, import_obsidian18.normalizePath)(file.path) === this.plugin.database.normalizeVaultPath(configuredPath)) void this.refresh();
       } catch (e) {
       }
     }));
@@ -12505,7 +12506,7 @@ var TimelineView = class extends import_obsidian19.ItemView {
     const viewWindow = this.contentEl.ownerDocument.defaultView;
     if (viewWindow) {
       this.registerDomEvent(viewWindow, "resize", () => {
-        if (!import_obsidian19.Platform.isMobile) return;
+        if (!import_obsidian18.Platform.isMobile) return;
         if (this.resizeTimer != null) window.clearTimeout(this.resizeTimer);
         this.resizeTimer = window.setTimeout(() => {
           void this.refresh();
@@ -12526,7 +12527,7 @@ var TimelineView = class extends import_obsidian19.ItemView {
     return BASE_PX_PER_MINUTE * ZOOM_LEVELS[this.zoomIndex];
   }
   get dayWidth() {
-    if (import_obsidian19.Platform.isMobile) {
+    if (import_obsidian18.Platform.isMobile) {
       return this.plugin.settings.mobileDayColumnWidth;
     }
     return this.plugin.settings.dayColumnWidth;
@@ -12545,7 +12546,7 @@ var TimelineView = class extends import_obsidian19.ItemView {
         this.plugin.settings.databasePath,
         this.rangeStart.format("YYYY-MM-DD"),
         this.rangeEnd.format("YYYY-MM-DD"),
-        (0, import_obsidian19.moment)().format("YYYY-MM-DD")
+        (0, import_obsidian18.moment)().format("YYYY-MM-DD")
       );
     } catch (error) {
       if (generation !== this.renderGeneration) return;
@@ -12572,8 +12573,8 @@ var TimelineView = class extends import_obsidian19.ItemView {
     window.requestAnimationFrame(() => {
       var _a2, _b2;
       if (!this.scrollEl) return;
-      const centerDate = (_a2 = viewport == null ? void 0 : viewport.centerDate) != null ? _a2 : (0, import_obsidian19.moment)().format("YYYY-MM-DD");
-      const centerIndex = (0, import_obsidian19.moment)(centerDate, "YYYY-MM-DD", true).diff(this.rangeStart, "days");
+      const centerDate = (_a2 = viewport == null ? void 0 : viewport.centerDate) != null ? _a2 : (0, import_obsidian18.moment)().format("YYYY-MM-DD");
+      const centerIndex = (0, import_obsidian18.moment)(centerDate, "YYYY-MM-DD", true).diff(this.rangeStart, "days");
       const desiredLeft = GUTTER_WIDTH + centerIndex * this.dayWidth - (this.scrollEl.clientWidth - this.dayWidth) / 2;
       this.scrollEl.scrollLeft = Math.max(0, desiredLeft);
       this.scrollEl.scrollTop = Math.max(0, ((_b2 = viewport == null ? void 0 : viewport.scrollMinute) != null ? _b2 : this.plugin.settings.initialScrollHour * 60) * this.pxPerMinute);
@@ -12616,7 +12617,7 @@ var TimelineView = class extends import_obsidian19.ItemView {
     warning.setAttribute("title", messages.join("\n"));
     if (chorMessages.length > 0 && !this.warningNoticeShown) {
       this.warningNoticeShown = true;
-      new import_obsidian19.Notice(`Examined Human found ${chorMessages.length} session${chorMessages.length === 1 ? "" : "s"} with type "chor". Correct the data in EH.db.`, 1e4);
+      new import_obsidian18.Notice(`Examined Human found ${chorMessages.length} session${chorMessages.length === 1 ? "" : "s"} with type "chor". Correct the data in EH.db.`, 1e4);
     }
   }
   renderGrid(eventsByDate, dayStates) {
@@ -12633,7 +12634,7 @@ var TimelineView = class extends import_obsidian19.ItemView {
     grid.style.gridTemplateRows = `${HEADER_HEIGHT}px ${1440 * this.pxPerMinute}px`;
     const corner = grid.createDiv({ cls: "examined-human-grid-corner" });
     corner.setText("Time");
-    const today = (0, import_obsidian19.moment)().format("YYYY-MM-DD");
+    const today = (0, import_obsidian18.moment)().format("YYYY-MM-DD");
     for (let index = 0; index < days.length; index++) {
       const day = days[index];
       const date = day.format("YYYY-MM-DD");
@@ -12695,7 +12696,7 @@ var TimelineView = class extends import_obsidian19.ItemView {
         column.appendChild(eventElement);
       }
       if (relation === "today") {
-        const now = (0, import_obsidian19.moment)();
+        const now = (0, import_obsidian18.moment)();
         const nowLine = column.createDiv({ cls: "examined-human-now-line" });
         nowLine.style.top = `${(now.hours() * 60 + now.minutes()) * this.pxPerMinute}px`;
       }
@@ -12719,7 +12720,7 @@ var TimelineView = class extends import_obsidian19.ItemView {
     };
   }
   async goToToday() {
-    const today = (0, import_obsidian19.moment)().startOf("day");
+    const today = (0, import_obsidian18.moment)().startOf("day");
     this.rangeStart = today.clone().subtract(INITIAL_DAYS_EACH_SIDE, "days");
     this.rangeEnd = today.clone().add(INITIAL_DAYS_EACH_SIDE, "days");
     await this.renderCalendar({
@@ -12767,7 +12768,7 @@ var TimelineView = class extends import_obsidian19.ItemView {
 };
 
 // src/WeeklyAssessmentView.ts
-var import_obsidian20 = require("obsidian");
+var import_obsidian19 = require("obsidian");
 
 // src/weekly-note-index.ts
 function temporalState(startDate, endDate, todayDate, imported) {
@@ -12840,8 +12841,8 @@ function formatDuration3(totalMinutes) {
   return `${hours}h ${remainder}m`;
 }
 function formatWeekRange(startDate, endDate) {
-  const start = (0, import_obsidian20.moment)(startDate, "YYYY-MM-DD", true);
-  const end = (0, import_obsidian20.moment)(endDate, "YYYY-MM-DD", true);
+  const start = (0, import_obsidian19.moment)(startDate, "YYYY-MM-DD", true);
+  const end = (0, import_obsidian19.moment)(endDate, "YYYY-MM-DD", true);
   if (!start.isValid() || !end.isValid()) return `${startDate} \u2013 ${endDate}`;
   if (start.year() === end.year() && start.month() === end.month()) {
     return `${start.format("MMM D")}\u2013${end.format("D, YYYY")}`;
@@ -12875,7 +12876,7 @@ function planningOutput(result) {
     `Missing sources marked deleted: ${result.deletedSourceCount}`
   ].join("\n");
 }
-var WeeklyAssessmentView = class extends import_obsidian20.ItemView {
+var WeeklyAssessmentView = class extends import_obsidian19.ItemView {
   constructor(leaf, plugin) {
     super(leaf);
     this.plugin = plugin;
@@ -12905,7 +12906,7 @@ var WeeklyAssessmentView = class extends import_obsidian20.ItemView {
     this.registerEvent(this.app.vault.on("modify", (file) => {
       var _a;
       try {
-        const databaseChanged = (0, import_obsidian20.normalizePath)(file.path) === this.plugin.database.normalizeVaultPath(this.plugin.settings.databasePath);
+        const databaseChanged = (0, import_obsidian19.normalizePath)(file.path) === this.plugin.database.normalizeVaultPath(this.plugin.settings.databasePath);
         const selectedNoteChanged = file.path === ((_a = this.selectedItem) == null ? void 0 : _a.filePath);
         if ((databaseChanged || selectedNoteChanged) && !this.plugin.nativeLogger.isRunning) void this.refresh();
       } catch (e) {
@@ -12942,7 +12943,7 @@ var WeeklyAssessmentView = class extends import_obsidian20.ItemView {
     this.contentEl.addClass("examined-human-weekly-view");
     this.contentEl.createDiv({ cls: "examined-human-loading", text: "Loading Weekly Assessment\u2026" });
     try {
-      const today = (0, import_obsidian20.moment)().format("YYYY-MM-DD");
+      const today = (0, import_obsidian19.moment)().format("YYYY-MM-DD");
       const index = await this.plugin.database.weeklyPlanIndex(this.plugin.settings.databasePath);
       const items = await buildWeeklyNoteList(this.app, index, today, this.plugin.knownForms());
       if (generation !== this.renderGeneration) return;
@@ -13009,7 +13010,7 @@ var WeeklyAssessmentView = class extends import_obsidian20.ItemView {
   renderHeader() {
     var _a;
     const item = this.selectedItem;
-    const today = (0, import_obsidian20.moment)().format("YYYY-MM-DD");
+    const today = (0, import_obsidian19.moment)().format("YYYY-MM-DD");
     const header = this.contentEl.createDiv({ cls: "examined-human-toolbar examined-human-weekly-toolbar" });
     const identity = header.createDiv({ cls: "examined-human-toolbar-identity" });
     identity.createEl("h2", { text: "Examined Human \u2014 Weekly Assessment" });
@@ -13030,13 +13031,13 @@ var WeeklyAssessmentView = class extends import_obsidian20.ItemView {
     });
     const submitDate = () => {
       const value = dateInput.value.trim();
-      if (!(0, import_obsidian20.moment)(value, "YYYY-MM-DD", true).isValid()) {
-        new import_obsidian20.Notice("Enter a date as YYYY-MM-DD.", 5e3);
+      if (!(0, import_obsidian19.moment)(value, "YYYY-MM-DD", true).isValid()) {
+        new import_obsidian19.Notice("Enter a date as YYYY-MM-DD.", 5e3);
         return;
       }
       const match = this.items.find((candidate) => candidate.weekStartDate <= value && candidate.weekEndDate >= value);
       if (!match) {
-        new import_obsidian20.Notice("No weekly note contains that date.", 6e3);
+        new import_obsidian19.Notice("No weekly note contains that date.", 6e3);
         return;
       }
       this.selectedWeekStart = match.weekStartDate;
@@ -13125,7 +13126,7 @@ var WeeklyAssessmentView = class extends import_obsidian20.ItemView {
         cls: "examined-human-daily-validation-note",
         text: "Importing validates and records the weekly plan. It does not write Daily Notes."
       });
-    } else if (item.weekEndDate >= (0, import_obsidian20.moment)().format("YYYY-MM-DD")) {
+    } else if (item.weekEndDate >= (0, import_obsidian19.moment)().format("YYYY-MM-DD")) {
       badge.addClass("is-ready");
       badge.setText("Ready to sync");
       section.createDiv({
@@ -13151,7 +13152,7 @@ var WeeklyAssessmentView = class extends import_obsidian20.ItemView {
     const header = block.createDiv({ cls: "examined-human-daily-output-header" });
     header.createEl("strong", { text: label });
     header.createEl("button", { text: "Copy", cls: "examined-human-toolbar-button" }).addEventListener("click", () => {
-      void navigator.clipboard.writeText(output).then(() => new import_obsidian20.Notice("Copied logger output."));
+      void navigator.clipboard.writeText(output).then(() => new import_obsidian19.Notice("Copied logger output."));
     });
     const textarea = block.createEl("textarea", {
       cls: "examined-human-daily-output",
@@ -13278,11 +13279,11 @@ var WeeklyAssessmentView = class extends import_obsidian20.ItemView {
     }
     try {
       if (item.status === "pending") await this.importSelectedWeek(item);
-      else if (item.weekEndDate >= (0, import_obsidian20.moment)().format("YYYY-MM-DD")) await this.syncSelectedWeek(item);
+      else if (item.weekEndDate >= (0, import_obsidian19.moment)().format("YYYY-MM-DD")) await this.syncSelectedWeek(item);
     } catch (error) {
       this.loggerOutput = error instanceof Error ? error.message : String(error);
       this.renderDashboard();
-      new import_obsidian20.Notice("EH Logger could not complete the weekly action.", 1e4);
+      new import_obsidian19.Notice("EH Logger could not complete the weekly action.", 1e4);
     } finally {
       if (activeButton == null ? void 0 : activeButton.isConnected) {
         activeButton.disabled = false;
@@ -13293,7 +13294,7 @@ var WeeklyAssessmentView = class extends import_obsidian20.ItemView {
   async importSelectedWeek(item) {
     var _a;
     const file = this.app.vault.getAbstractFileByPath(item.filePath);
-    if (!(file instanceof import_obsidian20.TFile)) throw new Error(`Weekly note not found: ${item.filePath}`);
+    if (!(file instanceof import_obsidian19.TFile)) throw new Error(`Weekly note not found: ${item.filePath}`);
     const request = {
       databasePath: this.plugin.settings.databasePath,
       weekStartDate: item.weekStartDate,
@@ -13316,7 +13317,7 @@ var WeeklyAssessmentView = class extends import_obsidian20.ItemView {
     await this.plugin.markImportedEhFormFileIfComplete(file);
     this.loggerOutput = [weeklyImportOutput(live), ...backupMutationOutput(live)].join("\n");
     await this.plugin.refreshViews();
-    new import_obsidian20.Notice(`${item.weekLabel} imported successfully.`, 8e3);
+    new import_obsidian19.Notice(`${item.weekLabel} imported successfully.`, 8e3);
   }
   async syncSelectedWeek(item) {
     var _a, _b, _c;
@@ -13348,13 +13349,13 @@ ${planningOutput(futureLive)}
 ${backupMutationOutput(futureLive).join("\n")}`
     ].join("\n\n");
     await this.plugin.refreshViews();
-    new import_obsidian20.Notice(`${item.weekLabel} was written to Daily Notes and future projections were refreshed.`, 1e4);
+    new import_obsidian19.Notice(`${item.weekLabel} was written to Daily Notes and future projections were refreshed.`, 1e4);
   }
   async weeklyDailyNoteRequest(item) {
-    const todayDate = (0, import_obsidian20.moment)().format("YYYY-MM-DD");
+    const todayDate = (0, import_obsidian19.moment)().format("YYYY-MM-DD");
     const first = item.weekStartDate > todayDate ? item.weekStartDate : todayDate;
     const dates = [];
-    for (let date = (0, import_obsidian20.moment)(first, "YYYY-MM-DD"); date.format("YYYY-MM-DD") <= item.weekEndDate; date = date.clone().add(1, "day")) {
+    for (let date = (0, import_obsidian19.moment)(first, "YYYY-MM-DD"); date.format("YYYY-MM-DD") <= item.weekEndDate; date = date.clone().add(1, "day")) {
       dates.push(date.format("YYYY-MM-DD"));
     }
     const notes = await Promise.all(dates.map(async (date) => {
@@ -13376,7 +13377,7 @@ ${backupMutationOutput(futureLive).join("\n")}`
     };
   }
   async planningSyncRequest() {
-    const cutoffDate = (0, import_obsidian20.moment)().format("YYYY-MM-DD");
+    const cutoffDate = (0, import_obsidian19.moment)().format("YYYY-MM-DD");
     const index = await this.plugin.database.dailyNoteIndex(this.plugin.settings.databasePath);
     const items = await buildDailyNoteList(
       this.app,
@@ -13387,7 +13388,7 @@ ${backupMutationOutput(futureLive).join("\n")}`
     const candidates = items.filter((item) => item.status === "current-future" && item.date >= cutoffDate);
     const notes = await Promise.all(candidates.map(async (item) => {
       const file = this.app.vault.getAbstractFileByPath(item.filePath);
-      if (!(file instanceof import_obsidian20.TFile)) throw new Error(`Daily Note not found: ${item.filePath}`);
+      if (!(file instanceof import_obsidian19.TFile)) throw new Error(`Daily Note not found: ${item.filePath}`);
       return {
         noteDate: item.date,
         fileName: item.fileName,
@@ -13420,7 +13421,7 @@ ${backupMutationOutput(futureLive).join("\n")}`
 };
 
 // src/settings.ts
-var import_obsidian21 = require("obsidian");
+var import_obsidian20 = require("obsidian");
 var DEFAULT_SETTINGS = {
   databasePath: "EH.db",
   journalFolder: DEFAULT_JOURNAL_FOLDER,
@@ -13439,7 +13440,7 @@ var DEFAULT_SETTINGS = {
   valuationReferenceUnit: "USD",
   sessionColors: { ...DEFAULT_SESSION_COLORS }
 };
-var ExaminedHumanSettingTab = class extends import_obsidian21.PluginSettingTab {
+var ExaminedHumanSettingTab = class extends import_obsidian20.PluginSettingTab {
   constructor(app, plugin) {
     super(app, plugin);
     this.plugin = plugin;
@@ -13447,12 +13448,12 @@ var ExaminedHumanSettingTab = class extends import_obsidian21.PluginSettingTab {
   display() {
     const { containerEl } = this;
     containerEl.empty();
-    new import_obsidian21.Setting(containerEl).setName("Database").setHeading();
+    new import_obsidian20.Setting(containerEl).setName("Database").setHeading();
     containerEl.createEl("p", {
       text: "Dashboard queries remain read-only. Official Data Schema v1 creation and confirmed imports use a separate guarded writer with backups and integrity checks.",
       cls: "setting-item-description"
     });
-    new import_obsidian21.Setting(containerEl).setName("Database path").setDesc("Path relative to the vault root, for example EH.db or data/EH.db. Absolute paths are not supported.").addText((text) => text.setPlaceholder("EH.db").setValue(this.plugin.settings.databasePath).onChange(async (value) => {
+    new import_obsidian20.Setting(containerEl).setName("Database path").setDesc("Path relative to the vault root, for example EH.db or data/EH.db. Absolute paths are not supported.").addText((text) => text.setPlaceholder("EH.db").setValue(this.plugin.settings.databasePath).onChange(async (value) => {
       this.plugin.settings.databasePath = value.trim();
       await this.plugin.saveSettings();
     })).addButton((button) => button.setButtonText("Test connection").onClick(async () => {
@@ -13460,9 +13461,9 @@ var ExaminedHumanSettingTab = class extends import_obsidian21.PluginSettingTab {
       try {
         const result = await this.plugin.database.inspect(this.plugin.settings.databasePath);
         const range = result.firstDate && result.lastDate ? `${result.firstDate} to ${result.lastDate}` : "no dated sessions";
-        new import_obsidian21.Notice(`Examined Human database OK: ${result.sessionCount} sessions across ${result.distinctDays} days (${range}).`, 8e3);
+        new import_obsidian20.Notice(`Examined Human database OK: ${result.sessionCount} sessions across ${result.distinctDays} days (${range}).`, 8e3);
       } catch (error) {
-        new import_obsidian21.Notice(`Examined Human database error: ${error instanceof Error ? error.message : String(error)}`, 1e4);
+        new import_obsidian20.Notice(`Examined Human database error: ${error instanceof Error ? error.message : String(error)}`, 1e4);
       } finally {
         button.setDisabled(false);
       }
@@ -13470,30 +13471,30 @@ var ExaminedHumanSettingTab = class extends import_obsidian21.PluginSettingTab {
       button.setDisabled(true);
       try {
         const result = await this.plugin.nativeLogger.createDatabase(this.plugin.settings.databasePath);
-        new import_obsidian21.Notice(`Created an empty Examined Human Data Schema v${result.schemaVersion} database at ${result.databasePath}.`, 9e3);
+        new import_obsidian20.Notice(`Created an empty Examined Human Data Schema v${result.schemaVersion} database at ${result.databasePath}.`, 9e3);
         await this.plugin.refreshViews();
       } catch (error) {
-        new import_obsidian21.Notice(`Examined Human database creation failed: ${error instanceof Error ? error.message : String(error)}`, 1e4);
+        new import_obsidian20.Notice(`Examined Human database creation failed: ${error instanceof Error ? error.message : String(error)}`, 1e4);
       } finally {
         button.setDisabled(false);
       }
     }));
-    new import_obsidian21.Setting(containerEl).setName("Valuation").setHeading();
+    new import_obsidian20.Setting(containerEl).setName("Valuation").setHeading();
     containerEl.createEl("p", {
       text: "Valuation Rates are user-entered dated observations. The Finance Dashboard carries each known rate forward until a newer one is imported; it never fetches market data.",
       cls: "setting-item-description"
     });
-    new import_obsidian21.Setting(containerEl).setName("Valuation display label").setDesc("Label displayed beside total valued assets and liabilities. It can be EHM, USD, Satoshi, or any other text.").addText((text) => text.setPlaceholder("EHM").setValue(this.plugin.settings.valuationUnitLabel).onChange(async (value) => {
+    new import_obsidian20.Setting(containerEl).setName("Valuation display label").setDesc("Label displayed beside total valued assets and liabilities. It can be EHM, USD, Satoshi, or any other text.").addText((text) => text.setPlaceholder("EHM").setValue(this.plugin.settings.valuationUnitLabel).onChange(async (value) => {
       this.plugin.settings.valuationUnitLabel = value.trim() || DEFAULT_SETTINGS.valuationUnitLabel;
       await this.plugin.saveSettings();
       await this.plugin.refreshViews();
     }));
-    new import_obsidian21.Setting(containerEl).setName("Reference asset class").setDesc("Exact account unit that is automatically worth 1 valuation unit. Default: USD. Matching ignores case and extra spaces.").addText((text) => text.setPlaceholder("USD").setValue(this.plugin.settings.valuationReferenceUnit).onChange(async (value) => {
+    new import_obsidian20.Setting(containerEl).setName("Reference asset class").setDesc("Exact account unit that is automatically worth 1 valuation unit. Default: USD. Matching ignores case and extra spaces.").addText((text) => text.setPlaceholder("USD").setValue(this.plugin.settings.valuationReferenceUnit).onChange(async (value) => {
       this.plugin.settings.valuationReferenceUnit = value.trim() || DEFAULT_SETTINGS.valuationReferenceUnit;
       await this.plugin.saveSettings();
       await this.plugin.refreshViews();
     }));
-    new import_obsidian21.Setting(containerEl).setName("Upgrade legacy database to Schema v1").setDesc("One-time pre-1.0 upgrade for the Food Dictionary, Finance, and Valuation foundations. It preserves existing meal rows, adds canonical foods/aliases, budget tables, and valuation history, resets retired migration metadata to official Data Schema v1, and creates a verified backup.").addButton((button) => button.setButtonText("Preview upgrade").onClick(async () => {
+    new import_obsidian20.Setting(containerEl).setName("Upgrade legacy database to Schema v1").setDesc("One-time pre-1.0 upgrade for the Food Dictionary, Finance, and Valuation foundations. It preserves existing meal rows, adds canonical foods/aliases, budget tables, and valuation history, resets retired migration metadata to official Data Schema v1, and creates a verified backup.").addButton((button) => button.setButtonText("Preview upgrade").onClick(async () => {
       button.setDisabled(true);
       try {
         const preview = await this.plugin.nativeLogger.inspectSchemaV1Upgrade(this.plugin.settings.databasePath);
@@ -13514,16 +13515,16 @@ New daily_meals links when needed: food_id, amount_g, nutrient snapshots`,
         });
         if (!confirmed) return;
         const result = await this.plugin.nativeLogger.upgradeToOfficialSchemaV1(this.plugin.settings.databasePath);
-        new import_obsidian21.Notice(`Upgraded ${result.databasePath} to official Data Schema v1. ${result.backupPath ? `Backup: ${result.backupPath}` : ""}`, 12e3);
+        new import_obsidian20.Notice(`Upgraded ${result.databasePath} to official Data Schema v1. ${result.backupPath ? `Backup: ${result.backupPath}` : ""}`, 12e3);
         await this.plugin.refreshViews();
         this.display();
       } catch (error) {
-        new import_obsidian21.Notice(`Database upgrade was not performed: ${error instanceof Error ? error.message : String(error)}`, 12e3);
+        new import_obsidian20.Notice(`Database upgrade was not performed: ${error instanceof Error ? error.message : String(error)}`, 12e3);
       } finally {
         button.setDisabled(false);
       }
     }));
-    new import_obsidian21.Setting(containerEl).setName("Backup retention limit").setDesc("Maximum number of newest EH-created database backups to keep. Use 0 to keep every backup. Cleanup runs only after a successful verified database write and never removes unrelated files.").addText((text) => {
+    new import_obsidian20.Setting(containerEl).setName("Backup retention limit").setDesc("Maximum number of newest EH-created database backups to keep. Use 0 to keep every backup. Cleanup runs only after a successful verified database write and never removes unrelated files.").addText((text) => {
       text.inputEl.type = "number";
       text.inputEl.min = "0";
       text.inputEl.step = "1";
@@ -13536,29 +13537,29 @@ New daily_meals links when needed: food_id, amount_g, nutrient snapshots`,
         await this.plugin.saveSettings();
       });
     });
-    new import_obsidian21.Setting(containerEl).setName("Journal notes").setHeading();
+    new import_obsidian20.Setting(containerEl).setName("Journal notes").setHeading();
     containerEl.createEl("p", {
       text: "Examined Human recursively scans the selected vault folder for Daily Notes. The currently supported canonical filename format is YYYY-MM-DD.md.",
       cls: "setting-item-description"
     });
-    new import_obsidian21.Setting(containerEl).setName("Journal folder").setDesc("Vault-relative base folder containing Daily Notes, including any year or daily subfolders. Leave blank to scan the entire vault.").addText((text) => text.setPlaceholder(DEFAULT_JOURNAL_FOLDER).setValue(this.plugin.settings.journalFolder).onChange(async (value) => {
+    new import_obsidian20.Setting(containerEl).setName("Journal folder").setDesc("Vault-relative base folder containing Daily Notes, including any year or daily subfolders. Leave blank to scan the entire vault.").addText((text) => text.setPlaceholder(DEFAULT_JOURNAL_FOLDER).setValue(this.plugin.settings.journalFolder).onChange(async (value) => {
       try {
         this.plugin.settings.journalFolder = normalizeJournalFolder(value);
         await this.plugin.saveSettings();
       } catch (error) {
-        new import_obsidian21.Notice(error instanceof Error ? error.message : String(error), 8e3);
+        new import_obsidian20.Notice(error instanceof Error ? error.message : String(error), 8e3);
       }
     }));
-    new import_obsidian21.Setting(containerEl).setName("Form discovery").setDesc("Default: scan only Markdown notes whose YAML frontmatter contains EH form: true or unimported (case-insensitive). Imported and false markers are skipped. Journal folder mode also scans unmarked notes in that folder and can take noticeably longer in a large vault.").addDropdown((dropdown) => dropdown.addOption("tagged-vault", "Only unimported EH Form notes").addOption("journal-folder", "Every note in Journal folder").setValue(this.plugin.settings.formDiscoveryMode).onChange(async (value) => {
+    new import_obsidian20.Setting(containerEl).setName("Form discovery").setDesc("Default: scan only Markdown notes whose YAML frontmatter contains EH form: true or unimported (case-insensitive). Imported and false markers are skipped. Journal folder mode also scans unmarked notes in that folder and can take noticeably longer in a large vault.").addDropdown((dropdown) => dropdown.addOption("tagged-vault", "Only unimported EH Form notes").addOption("journal-folder", "Every note in Journal folder").setValue(this.plugin.settings.formDiscoveryMode).onChange(async (value) => {
       this.plugin.settings.formDiscoveryMode = value === "journal-folder" ? "journal-folder" : "tagged-vault";
       await this.plugin.saveSettings();
     }));
-    new import_obsidian21.Setting(containerEl).setName("Nutrition evaluation").setHeading();
+    new import_obsidian20.Setting(containerEl).setName("Nutrition evaluation").setHeading();
     containerEl.createEl("p", {
       text: "These limits are used by the native Meals inspector. Zero disables that automatic rule. When both daily calories and minimum protein are zero, the EH Form dieted value is trusted.",
       cls: "setting-item-description"
     });
-    new import_obsidian21.Setting(containerEl).setName("Meal calorie limit").setDesc("Calories above this limit make Breakfast, Lunch, or Dinner leisure. Snacks never count directly. Set to 0 to use only is_leisure from the note.").addText((text) => {
+    new import_obsidian20.Setting(containerEl).setName("Meal calorie limit").setDesc("Calories above this limit make Breakfast, Lunch, or Dinner leisure. Snacks never count directly. Set to 0 to use only is_leisure from the note.").addText((text) => {
       text.inputEl.type = "number";
       text.inputEl.min = "0";
       text.inputEl.step = "1";
@@ -13570,7 +13571,7 @@ New daily_meals links when needed: food_id, amount_g, nutrient snapshots`,
         await this.plugin.saveSettings();
       });
     });
-    new import_obsidian21.Setting(containerEl).setName("Daily calorie limit").setDesc("The complete daily total includes snacks. Exceeding a positive limit makes the day count at least two leisure meals and participates in automatic dieted evaluation. Set to 0 to disable.").addText((text) => {
+    new import_obsidian20.Setting(containerEl).setName("Daily calorie limit").setDesc("The complete daily total includes snacks. Exceeding a positive limit makes the day count at least two leisure meals and participates in automatic dieted evaluation. Set to 0 to disable.").addText((text) => {
       text.inputEl.type = "number";
       text.inputEl.min = "0";
       text.inputEl.step = "1";
@@ -13582,7 +13583,7 @@ New daily_meals links when needed: food_id, amount_g, nutrient snapshots`,
         await this.plugin.saveSettings();
       });
     });
-    new import_obsidian21.Setting(containerEl).setName("Minimum daily protein").setDesc("A positive gram target participates in automatic dieted evaluation. Set to 0 to ignore protein and trust the remaining enabled rules or the EH Form value.").addText((text) => {
+    new import_obsidian20.Setting(containerEl).setName("Minimum daily protein").setDesc("A positive gram target participates in automatic dieted evaluation. Set to 0 to ignore protein and trust the remaining enabled rules or the EH Form value.").addText((text) => {
       text.inputEl.type = "number";
       text.inputEl.min = "0";
       text.inputEl.step = "0.1";
@@ -13594,15 +13595,15 @@ New daily_meals links when needed: food_id, amount_g, nutrient snapshots`,
         await this.plugin.saveSettings();
       });
     });
-    new import_obsidian21.Setting(containerEl).setName("Native logger").setHeading();
+    new import_obsidian20.Setting(containerEl).setName("Native logger").setHeading();
     containerEl.createEl("p", {
       text: "Daily validation and import, current/future projections, weekly-plan import, and weekly Daily Note writing run inside Obsidian on desktop and mobile. Python is not required.",
       cls: "setting-item-description"
     });
-    new import_obsidian21.Setting(containerEl).setName("Command Center").setDesc("Audit the Food Library and stage corrections into unimported Daily Notes. Contextual validation fixes use the current unimported note automatically; Command Center changes let you choose a current or future note.").addButton((button) => button.setButtonText("Open Command Center").onClick(() => {
+    new import_obsidian20.Setting(containerEl).setName("Command Center").setDesc("Audit the Food Library and stage corrections into unimported Daily Notes. Contextual validation fixes use the current unimported note automatically; Command Center changes let you choose a current or future note.").addButton((button) => button.setButtonText("Open Command Center").onClick(() => {
       void this.plugin.activateCommandCenterView();
     }));
-    new import_obsidian21.Setting(containerEl).setName("Default dashboard period").setDesc("Number of inclusive days used by Finance, Nutrition, Exercise, and other analytical dashboards when they open. Use All time inside a dashboard for the complete history.").addText((text) => {
+    new import_obsidian20.Setting(containerEl).setName("Default dashboard period").setDesc("Number of inclusive days used by Finance, Nutrition, Exercise, and other analytical dashboards when they open. Use All time inside a dashboard for the complete history.").addText((text) => {
       text.inputEl.type = "number";
       text.inputEl.min = "1";
       text.inputEl.step = "1";
@@ -13614,33 +13615,33 @@ New daily_meals links when needed: food_id, amount_g, nutrient snapshots`,
         await this.plugin.saveSettings();
       });
     });
-    new import_obsidian21.Setting(containerEl).setName("Hidden dashboard warnings").setDesc(`${this.plugin.settings.dismissedWarningKeys.length} warning type${this.plugin.settings.dismissedWarningKeys.length === 1 ? "" : "s"} hidden with \u201CDon't show again\u201D. Import blockers and safety confirmations cannot be hidden.`).addButton((button) => button.setButtonText("Show all warnings").setDisabled(this.plugin.settings.dismissedWarningKeys.length === 0).onClick(async () => {
+    new import_obsidian20.Setting(containerEl).setName("Hidden dashboard warnings").setDesc(`${this.plugin.settings.dismissedWarningKeys.length} warning type${this.plugin.settings.dismissedWarningKeys.length === 1 ? "" : "s"} hidden with \u201CDon't show again\u201D. Import blockers and safety confirmations cannot be hidden.`).addButton((button) => button.setButtonText("Show all warnings").setDisabled(this.plugin.settings.dismissedWarningKeys.length === 0).onClick(async () => {
       this.plugin.settings.dismissedWarningKeys = [];
       await this.plugin.saveSettings();
       await this.plugin.refreshViews();
       this.display();
     }));
-    new import_obsidian21.Setting(containerEl).setName("Initial hour").setDesc("Vertical position used when the calendar opens or jumps to today.").addSlider((slider) => slider.setLimits(0, 23, 1).setDynamicTooltip().setValue(this.plugin.settings.initialScrollHour).onChange(async (value) => {
+    new import_obsidian20.Setting(containerEl).setName("Initial hour").setDesc("Vertical position used when the calendar opens or jumps to today.").addSlider((slider) => slider.setLimits(0, 23, 1).setDynamicTooltip().setValue(this.plugin.settings.initialScrollHour).onChange(async (value) => {
       this.plugin.settings.initialScrollHour = value;
       await this.plugin.saveSettings();
     }));
-    new import_obsidian21.Setting(containerEl).setName("Desktop day width").setDesc("Width of each calendar day while scrolling horizontally on desktop.").addSlider((slider) => slider.setLimits(120, 280, 10).setDynamicTooltip().setValue(this.plugin.settings.dayColumnWidth).onChange(async (value) => {
+    new import_obsidian20.Setting(containerEl).setName("Desktop day width").setDesc("Width of each calendar day while scrolling horizontally on desktop.").addSlider((slider) => slider.setLimits(120, 280, 10).setDynamicTooltip().setValue(this.plugin.settings.dayColumnWidth).onChange(async (value) => {
       this.plugin.settings.dayColumnWidth = value;
       await this.plugin.saveSettings();
       await this.plugin.refreshViews();
     }));
-    new import_obsidian21.Setting(containerEl).setName("Mobile day width").setDesc("Width of each calendar day while scrolling horizontally on mobile.").addSlider((slider) => slider.setLimits(120, 280, 10).setDynamicTooltip().setValue(this.plugin.settings.mobileDayColumnWidth).onChange(async (value) => {
+    new import_obsidian20.Setting(containerEl).setName("Mobile day width").setDesc("Width of each calendar day while scrolling horizontally on mobile.").addSlider((slider) => slider.setLimits(120, 280, 10).setDynamicTooltip().setValue(this.plugin.settings.mobileDayColumnWidth).onChange(async (value) => {
       this.plugin.settings.mobileDayColumnWidth = value;
       await this.plugin.saveSettings();
       await this.plugin.refreshViews();
     }));
-    new import_obsidian21.Setting(containerEl).setName("Session colors").setHeading();
+    new import_obsidian20.Setting(containerEl).setName("Session colors").setHeading();
     containerEl.createEl("p", {
       text: "Colors are keyed by the canonical session_types.code referenced by sessions.session_type_id. Unknown values render in gray.",
       cls: "setting-item-description"
     });
     for (const type of SESSION_TYPES) {
-      new import_obsidian21.Setting(containerEl).setName(type).addColorPicker((picker) => {
+      new import_obsidian20.Setting(containerEl).setName(type).addColorPicker((picker) => {
         var _a;
         return picker.setValue((_a = this.plugin.settings.sessionColors[type]) != null ? _a : DEFAULT_SESSION_COLORS[type]).onChange(async (value) => {
           this.plugin.settings.sessionColors[type] = value;
@@ -13671,7 +13672,7 @@ function storedJournalFolder(value) {
 function storedText(value, fallback) {
   return typeof value === "string" && value.trim() ? value.trim() : fallback;
 }
-var ExaminedHumanPlugin = class extends import_obsidian22.Plugin {
+var ExaminedHumanPlugin = class extends import_obsidian21.Plugin {
   constructor() {
     super(...arguments);
     this.settings = DEFAULT_SETTINGS;
@@ -13841,10 +13842,10 @@ var ExaminedHumanPlugin = class extends import_obsidian22.Plugin {
   async discoverFormsWithNotice() {
     try {
       const result = await this.discoverForms();
-      new import_obsidian22.Notice(`Found ${result.forms.length} EH Form${result.forms.length === 1 ? "" : "s"}; scanned ${result.scannedFileCount} changed file${result.scannedFileCount === 1 ? "" : "s"} and reused ${result.reusedFileCount} cached file${result.reusedFileCount === 1 ? "" : "s"}.`, 8e3);
+      new import_obsidian21.Notice(`Found ${result.forms.length} EH Form${result.forms.length === 1 ? "" : "s"}; scanned ${result.scannedFileCount} changed file${result.scannedFileCount === 1 ? "" : "s"} and reused ${result.reusedFileCount} cached file${result.reusedFileCount === 1 ? "" : "s"}.`, 8e3);
       await this.refreshViews();
     } catch (error) {
-      new import_obsidian22.Notice(`EH Form discovery stopped: ${error instanceof Error ? error.message : String(error)}`, 12e3);
+      new import_obsidian21.Notice(`EH Form discovery stopped: ${error instanceof Error ? error.message : String(error)}`, 12e3);
     }
   }
   async markImportedEhFormFileIfComplete(file) {
@@ -13875,7 +13876,7 @@ var ExaminedHumanPlugin = class extends import_obsidian22.Plugin {
       await this.saveSettings();
       return true;
     } catch (error) {
-      new import_obsidian22.Notice(
+      new import_obsidian21.Notice(
         `The form import succeeded, but its EH form status could not be updated: ${error instanceof Error ? error.message : String(error)}`,
         12e3
       );
@@ -13884,7 +13885,7 @@ var ExaminedHumanPlugin = class extends import_obsidian22.Plugin {
   }
   async activeForm(kind) {
     const file = this.app.workspace.getActiveFile();
-    if (!(file instanceof import_obsidian22.TFile)) throw new Error("Open a Markdown note that contains the form you want to import.");
+    if (!(file instanceof import_obsidian21.TFile)) throw new Error("Open a Markdown note that contains the form you want to import.");
     const sourceText = await this.app.vault.read(file);
     const matches = formsInText(file, sourceText).filter((form) => form.kind === kind);
     if (matches.length === 0) throw new Error(`The active note contains no EH ${kind === "daily" ? "Daily" : kind === "weekly" ? "Weekly" : "Budget"} Form.`);
@@ -13916,7 +13917,7 @@ Planned time: ${preview.plannedMinutes} minutes`,
         if (!confirmed) return;
         await this.nativeLogger.importWeekly({ databasePath: this.settings.databasePath, weekStartDate: form.startDate, fileName: file.name, filePath: file.path, sourceText });
         await this.markImportedEhFormFileIfComplete(file);
-        new import_obsidian22.Notice(`Imported Weekly Form starting ${preview.weekStart}.`, 8e3);
+        new import_obsidian21.Notice(`Imported Weekly Form starting ${preview.weekStart}.`, 8e3);
       } else if (kind === "budget") {
         const preview = await this.nativeLogger.inspectBudget({ databasePath: this.settings.databasePath, fileName: file.name, filePath: file.path, sourceText });
         const confirmed = await confirmWeeklyAction(this.app, {
@@ -13931,9 +13932,9 @@ Expected movements: ${preview.expectedMovementCount}`,
         });
         if (!confirmed) return;
         await this.nativeLogger.importBudget({ databasePath: this.settings.databasePath, fileName: file.name, filePath: file.path, sourceText });
-        new import_obsidian22.Notice(`Imported Budget Form for ${preview.periodStart} through ${preview.periodEnd}.`, 8e3);
+        new import_obsidian21.Notice(`Imported Budget Form for ${preview.periodStart} through ${preview.periodEnd}.`, 8e3);
       } else {
-        const today = (0, import_obsidian22.moment)().format("YYYY-MM-DD");
+        const today = (0, import_obsidian21.moment)().format("YYYY-MM-DD");
         const request = {
           databasePath: this.settings.databasePath,
           noteDate: form.date,
@@ -13953,7 +13954,7 @@ Expected movements: ${preview.expectedMovementCount}`,
           for (const known of this.knownForms()) {
             if (known.kind !== "daily" || !known.date || known.date < today) continue;
             const knownFile = this.app.vault.getAbstractFileByPath(known.filePath);
-            if (!(knownFile instanceof import_obsidian22.TFile)) continue;
+            if (!(knownFile instanceof import_obsidian21.TFile)) continue;
             byDate.set(known.date, {
               noteDate: known.date,
               fileName: knownFile.name,
@@ -13976,7 +13977,7 @@ ${preview.deletedSourceCount} missing source${preview.deletedSourceCount === 1 ?
           });
           if (!confirmed2) return;
           await this.nativeLogger.syncPlanning(planningRequest);
-          new import_obsidian22.Notice("Current and future planning projections were refreshed.", 8e3);
+          new import_obsidian21.Notice("Current and future planning projections were refreshed.", 8e3);
           return;
         }
         const confirmed = await confirmDailyImport(this.app, {
@@ -13990,11 +13991,11 @@ Native validation completed successfully.`
         if (!confirmed) return;
         await this.nativeLogger.importHistoricalDaily(request);
         await this.markImportedEhFormFileIfComplete(file);
-        new import_obsidian22.Notice(`${form.date} imported successfully.`, 8e3);
+        new import_obsidian21.Notice(`${form.date} imported successfully.`, 8e3);
       }
       await this.refreshViews();
     } catch (error) {
-      new import_obsidian22.Notice(`EH Form import did not complete: ${error instanceof Error ? error.message : String(error)}`, 12e3);
+      new import_obsidian21.Notice(`EH Form import did not complete: ${error instanceof Error ? error.message : String(error)}`, 12e3);
     }
   }
   async activateView() {

@@ -1,118 +1,89 @@
 # Examined Human
 
-Examined Human is a local-first [Obsidian](https://obsidian.md) plugin for planning, recording, and reviewing a life through one connected body of data.
+Examined Human is a local-first Obsidian plugin for planning, recording, and reviewing a life through one connected body of information.
 
-It turns ordinary Markdown forms and a user-owned SQLite database into a calendar and a set of personal dashboards. Time, projects, habits, relationships, money, food, exercise, milestones, and weekly plans are connected through **engagements**: the people, practices, responsibilities, interests, and goals with which a person engages.
+You write ordinary Markdown forms. Examined Human validates them, asks for confirmation before importing them, and turns the resulting history into a calendar and a set of dashboards for time, commitments, money, food, exercise, and milestones.
 
-The plugin runs on desktop and mobile, keeps the database inside the vault, and does not require Python, a server, an account, or a cloud service.
+The connecting idea is an **engagement**: anything you meaningfully engage with, such as a person, relationship, course, project, practice, responsibility, hobby, or long-term goal. Sessions, transactions, milestones, and plans can all point to the same engagement.
+
+Examined Human runs on desktop and mobile. Your notes and database remain in your vault. It does not require an account, server, Python installation, or cloud service.
 
 > Current release: **0.9.4**
->
-> Obsidian: **1.8.7 or newer**
->
-> Database: **Examined Human Data Schema v1**
+> Requires Obsidian **1.8.7 or newer**
 
-## The basic workflow
+## What you can do with it
 
-Examined Human is designed around a simple loop:
+The usual rhythm is:
 
-1. **Plan** a day, a week, or a budget in Markdown.
-2. **Record** sessions, meals, exercise, transactions, metrics, and milestones in a Daily Form.
-3. **Validate and import** the form through a preview and explicit confirmation.
-4. **Review** what happened in the calendar and analytical dashboards.
-5. **Maintain** canonical engagements, foods, exercises, accounts, and aliases through the Command Center.
+1. Plan a day, week, or budget in Markdown.
+2. Record what actually happened in a Daily Form.
+3. Preview and validate the form.
+4. Confirm the import.
+5. Review the result in the calendar and dashboards.
+6. Improve your canonical lists of engagements, foods, exercises, accounts, and aliases as your life changes.
 
-Daily records are treated as receipts: once a historical Daily Form is finalized, it is immutable. Weekly plans and budgets are promises, so importing the same period again updates the existing plan.
+Daily history acts like a receipt: after a day is in the past and its Daily Form has been finalized, it cannot be silently rewritten. Current and future Daily Forms are plans and can still change. Weekly plans and budgets can be updated by importing the same period again.
 
-## What the plugin includes
+## Installation
 
-### Calendar
+### Install from Community plugins
 
-The calendar lays sessions out across a continuous horizontal timeline and a 24-hour vertical axis. It supports overlapping sessions, compact visual packing for closely spaced events, configurable desktop and mobile day widths, session colors, and detailed session modals.
+When Examined Human is available in the Obsidian Community plugins directory:
 
-Canonical engagement names are the event titles. Session type, duration, notes, structured exercises, and milestones appear as supporting detail rather than replacing the thing the user actually engaged with.
+1. Open **Settings → Community plugins**.
+2. Select **Browse**.
+3. Search for **Examined Human**.
+4. Install the plugin and enable it.
 
-### Daily Assessment
+### Install manually
 
-Daily Assessment brings imported history and discovered Daily Forms into one newest-first list. It can:
+1. Download `main.js`, `manifest.json`, and `styles.css` from the same [Examined Human release](https://github.com/OssAhmad/obsidian-examined-human/releases).
+2. In your vault, create `.obsidian/plugins/examined-human/`.
+3. Copy the three downloaded files into that folder.
+4. Reload Obsidian.
+5. Open **Settings → Community plugins** and enable **Examined Human**.
 
-- preview and strictly validate a historical Daily Form before import;
-- synchronize current and future sessions as mutable planning projections;
-- show one-day sessions, metrics, food, transactions, exercise details, and milestones;
-- identify unresolved foods, engagements, exercises, and accounts;
-- stage a missing canonical record or alias into the same unimported note, then revalidate it.
+Do not copy `data.json` from another vault. It contains settings that belong to that vault.
 
-### Weekly Assessment
+## First-time setup: from installation to a working plugin
 
-Weekly Assessment combines discovered Weekly Forms with imported weekly plans. It shows weekly direction, commitments, planned sessions, and planned-versus-actual time by engagement.
+Complete these steps in order. The first six establish a real, usable installation. Step 7 is an optional disposable practice run.
 
-A Weekly Form always spans exactly seven days. Reimporting the same starting date updates that week; overlapping weeks are rejected. A current or future plan can also be materialized into empty Daily Form `Sessions` sections, with previews and rollback protection around the multi-note edit.
+### 1. Choose or create your database
 
-### Command Center
+Open **Settings → Community plugins → Examined Human**.
 
-The Command Center is the maintenance surface for the user's canonical dictionaries. It provides searchable tabs for:
+In **Database path**, enter the location of the database relative to the root of your vault. For example:
 
-- foods and food aliases;
-- engagements and engagement aliases;
-- exercises and exercise aliases;
-- accounts and account aliases;
-- valuation rates;
-- batch Admin Events.
+- `EH.db` puts it at the vault root.
+- `data/EH.db` puts it inside a `data` folder.
 
-The dictionary and batch tools stage creates, edits, renames, deletions, lifecycle changes, alias moves, and other supported commands as Admin Events in a selected unimported current or future Daily Form. The Valuation tab stages rate rows into that form's existing Valuation Rates section. Nothing here silently edits SQLite; the normal Daily Form import applies the staged evidence.
+Do not enter a Windows drive path, an absolute path, or a path outside the vault.
 
-### Engagement Dashboard
+Then choose one route:
 
-The Engagement Dashboard is the connective center of the system. Search works across canonical names and aliases. For one engagement it can show:
+- **New user:** enter the path you want and select **Create Schema v1 database**.
+- **Existing user:** enter the vault-relative path of your existing compatible `.db` file.
 
-- status, type, dates, and descriptive metadata;
-- canonical session time and activity trends;
-- session-type distribution and recent sessions;
-- lifetime milestones and measurements;
-- linked financial inflow, outflow, and a complete transaction ledger.
+Select **Test connection**. Continue only after Obsidian reports that the Examined Human database is OK.
 
-The selected date range limits sessions and transactions. Milestones remain lifetime facts.
+If you are connecting an older pre-1.0 database and Settings offers an upgrade, make an independent copy first, preview the upgrade, read the confirmation carefully, and then decide whether to proceed.
 
-### Financial Dashboard
+### 2. Set the Journal folder
 
-The Financial Dashboard treats the transaction ledger as the source of each account's balance. It includes:
+In the same settings page, set **Journal folder** to the vault-relative folder that contains your Daily Notes. Examined Human searches its subfolders too, so a value such as `Journal` can cover folders like `Journal/2026/daily`.
 
-- balances as of a selected date;
-- an **All accounts** net-worth view or a single-account view;
-- period inflow and outflow;
-- financial activity grouped by engagement;
-- account-balance and net-worth history;
-- native-unit or reference-unit display;
-- active budget targets and expected movements;
-- recent transactions plus opening-balance and reconciliation staging actions.
+Leave the field blank only if you intentionally want the vault root to be the Journal folder. The recommended Daily Note filename is `YYYY-MM-DD.md`.
 
-The plugin conservatively recognizes only unambiguous same-day, same-unit, equal-and-opposite movements between different accounts as transfers. Those movements still affect the account balances and remain in the ledger, but they are excluded from personal income and spending totals.
+### 3. Choose how forms are discovered
 
-Financial categories are engagements. Money spent on a home, a relationship, health, a project, a hobby, or a business remains connected to that part of the user's life instead of being maintained in a second category hierarchy.
+The recommended **Form discovery** option is **Only unimported EH Form notes**. It lets you explicitly tell Examined Human which notes to inspect and avoids scanning unrelated Markdown.
 
-### Nutrition Dashboard
+The alternative, **Every note in Journal folder**, also considers unmarked notes in the Journal folder. It can be useful during migration, but it is broader and may be slower in a large vault.
 
-The Nutrition Dashboard uses the canonical Food Dictionary and immutable nutrition snapshots recorded at import time. It shows calorie and protein trends, meal and food breakdowns, diet adherence, and a coverage-aware leisure-debt calculation.
+### 4. Add `EH form` to note metadata
 
-Breakfast, Lunch, and Dinner are meal opportunities. Snacks contribute to effective daily calories but do not directly count as leisure meals. Evaluation thresholds for meal calories, daily calories, and minimum protein are configurable.
-
-### Exercise Dashboard
-
-The Exercise Dashboard combines canonical exercise sessions with structured exercise rows and sets. It can show training days, workout time, detail coverage, volume, performance maxima, distance, muscle exposure, and recent workouts.
-
-Structured exercise details are optional. A session remains valid and visible even when it has no exercise or set rows.
-
-## Forms and discovery
-
-Daily, Weekly, and Budget Forms may live in any Markdown note, and several forms may coexist in one file. Filenames do not determine form type or date; the bounded form heading and its internal date fields do.
-
-The recommended discovery mode scans only notes whose YAML frontmatter contains one of these markers, matched case-insensitively:
-
-```yaml
----
-EH form: true
----
-```
+For the recommended discovery mode, put this YAML frontmatter at the very top of every note that contains a form:
 
 ```yaml
 ---
@@ -120,260 +91,270 @@ EH form: unimported
 ---
 ```
 
-`EH form: imported` and `EH form: false` are skipped. After every historical Daily Form and every Weekly Form in a file has been imported, the plugin changes the marker to `imported`. Budget imports and current/future planning synchronization do not change it because those plans remain mutable.
+`EH form: true` is also accepted. Matching is case-insensitive.
 
-For users who do not want YAML markers, Settings can instead scan unmarked notes in the configured Journal folder. That mode is intentionally broader and may take longer in a large vault.
+The marker tells the plugin that the note is ready to be discovered:
 
-Discovery caches form paths, dates, kinds, and file timestamps in the plugin's local `data.json`; it never caches note content. Subsequent dashboard loads can reuse the index and reread only the relevant notes. A malformed dated form stops discovery with the exact source path in the error so it can be corrected.
+- `unimported` or `true`: inspect this note.
+- `imported`: its importable Daily and Weekly Forms are complete.
+- `false`: deliberately ignore this note.
 
-### Daily Form
+After all historical Daily Forms and Weekly Forms in a note have been imported, Examined Human normally changes the marker to `imported`. Budget imports and current/future planning updates do not change it because those plans remain editable.
 
-A Daily Form starts with `#### EH Daily Form`, declares its ISO date, and ends at `#### END`. Supported sections include Daily Metrics, Sessions, Meals, Transactions, Exercise Details, Milestones, Stoicism, Admin Events, and Valuation Rates.
+### 5. Put the forms into your note workflow
 
-```markdown
-#### EH Daily Form
-date: 2026-09-03
+The repository includes both explained and minimal versions:
 
-##### Sessions
-ENTRIES:
-07:00-08:00 | exercise | Morning Training | strength work
-09:00-10:30 | study | Probability | chapter review
+- [Daily Form with explanations](<EH Forms/the daily form with explanations.md>)
+- [Weekly Form with explanations](<EH Forms/the weekly form with explanations.md>)
+- [Budget Form with explanations](<EH Forms/the budget form with explanantions.md>)
+- [Minimal Daily Form](<EH Forms/the minimal daily form.md>)
+- [Minimal Weekly Form](<EH Forms/the minimal weekly form.md>)
+- [Minimal Budget Form](<EH Forms/the minimal budget form.md>)
 
-##### Transactions
-ENTRIES:
--12.50 | Cash | Nutrition and Dietary Practices | lunch
+Start with the explained forms. Use the minimal forms after the entry formats feel familiar.
 
-##### Exercise Details
-ENTRIES:
-Barbell Row | [50x8, 50x8] | controlled reps
+Copy the forms into your Obsidian template system or paste them into notes manually. If you do not use the Templater community plugin, replace expressions such as `<% tp.file.title %>` with the real ISO date yourself.
 
-##### Valuation Rates
-ENTRIES:
-EUR | 1.08
-APARTMENT | 2300000
+Keep these structural elements unchanged:
 
-##### Admin Events
-ENTRIES:
+- the `#### EH Daily Form`, `#### EH Weekly Form`, or `#### EH Budget Form` heading;
+- the date fields inside the form;
+- the section headings and required `ENTRIES:` markers;
+- the closing `#### END` marker.
 
-#### END
+A note may contain one form of each kind. The form's internal dates determine what it represents; the filename alone does not.
+
+### 6. Import the minimum personal vocabulary
+
+An empty database knows the allowed general types, but it does not know the names from your life. Before logging sessions, create at least one engagement. Add the other kinds of records only when you intend to use their sections:
+
+- an **engagement** is required for sessions, commitments, milestones, transactions, and budget targets;
+- an **account** is required for transactions;
+- a **food** is required for meal rows;
+- an **exercise** is required for structured Exercise Details.
+
+The quickest first seed is a Daily Form dated yesterday or earlier. Leave its ordinary sections blank and put your creation commands under **Admin Events → ENTRIES:**. For example, replacing these names and values with real ones:
+
+```text
+ENGAGEMENT_CREATE | Learning Examined Human | practice | active |
+ACCOUNT_CREATE | Cash | cash | USD |
+EXERCISE_CREATE | Walking | cardio
+FOOD_CREATE | Oats | grain | 389 | 16.9 | 66.3 | 6.9 | 0.01 | 10.6 | 0 | plain oats | [oatmeal]
 ```
 
-Transaction syntax is `amount | account | engagement | description`. The account and engagement must resolve by canonical name or alias.
+If you only want to begin tracking time, the engagement row is enough. Do not invent nutrition figures for real foods; use values you trust.
 
-Historical imports use strict validation and require a second confirmation. Current and future Daily Forms supply replaceable plans rather than canonical history.
+Open the seed note, run **Examined Human: Import Daily Form from Active File**, review the validation preview, and confirm the import. Creation rows are staged evidence until this import succeeds.
 
-### Weekly Form
+You can later use the **Command Center** to prepare new records and aliases through forms instead of typing commands manually.
 
-A Weekly Form declares a start date and an end date exactly six days later. Commitments name an engagement and a target number of hours; scheduled cells use `session type ; engagement`.
+### 7. Optional: learn in a temporary database
 
-```markdown
-#### EH Weekly Form
-start date: 2026-09-05
-end date: 2026-09-11
-- Main outcome: Finish the release
-- Important deadline: Thursday
-- Constraint or risk: Limited evening time
+After your minimum seed import succeeds, you may want to explore immediately without filling your real history with experiments.
 
-#### Commitments
-8 | Examined Human | Complete release testing
+1. Write down your real **Database path** exactly.
+2. Change it to a clearly temporary vault-relative path, such as `sandbox/EH-demo.db`.
+3. Select **Create Schema v1 database**, then **Test connection**.
+4. Copy a Daily Form and use a past date that is only for the demo.
+5. Repeat the minimum seed with obviously fictional names, such as `Demo Project`, `Demo Cash`, `Demo Meal`, and `Demo Exercise`.
+6. Add several dummy sessions, a meal, a transaction, exercise sets, and a milestone.
+7. Import the form and open every dashboard described below.
+8. Try a Weekly Form and a Budget Form, then reimport them after changing something so you can see how editable plans behave.
+9. When finished, restore the original Database path and select **Test connection** before returning to real notes.
 
-| Day | 07-08 | 08-09 | 09-10 |
-| --- | --- | --- | --- |
-| Saturday | exercise ; Morning Training | | work ; Examined Human |
-| Sunday | | study ; Probability | |
+The demo database is independent. Nothing seeded in your real database is automatically copied into it. You may keep the demo for later practice or delete it after switching back to the real database and verifying the connection.
 
-#### END
-```
+### 8. Check the important preferences
 
-Weekly scheduled rows are intentions. They are never counted as completed work; actual time always comes from imported canonical sessions.
+Before regular use, review these settings:
 
-### Budget Form
+- **Nutrition evaluation:** set meal calories, daily calories, and minimum protein to match the rules you actually want. A value of zero disables that automatic rule.
+- **Backup retention:** `0` keeps every Examined Human backup; a positive whole number keeps that many newest backups.
+- **Default dashboard period:** controls the initial date range in analytical dashboards.
+- **Valuation:** choose the display label and reference asset class only if you want converted net-worth views.
+- **Calendar:** choose the initial hour, desktop day width, mobile day width, and session colors.
 
-A budget may cover any non-overlapping period of at least four days. Negative values represent expected spending and positive values represent expected income. Targets and expected movements are independently optional.
+## How information moves from a note into the plugin
 
-```markdown
-#### EH Budget Form
-period start: 2026-09-01
-period end: 2026-09-30
+Examined Human deliberately separates preparation from import:
 
-##### Budget Targets
-ENTRIES:
-USD | -300 | Nutrition and Dietary Practices
-USD | -120 | My Online Gear
-USD | 1000 | Freelance Work
+1. **Discover:** the plugin finds a note through its `EH form` marker or the broader Journal-folder mode.
+2. **Stage:** you write entries directly, or a dashboard/Command Center adds proposed rows to an unimported Daily Form.
+3. **Review the note:** the Markdown remains the readable source you can inspect and correct.
+4. **Preview and validate:** the plugin checks dates, formats, names, aliases, and references and shows what it found.
+5. **Confirm:** only an explicit confirmation applies the validated change.
+6. **Review the result:** refresh and inspect the relevant dashboard.
 
-##### Expected Movements
-ENTRIES:
-2026-09-01 | USD | 1000 | Main Account | Freelance Work | monthly payment
-2026-09-03 | USD | -700 | Main Account | Home | rent
+Dashboard buttons that say **Stage** do not finish an import. They add reviewable text to a chosen current or future Daily Form. The database changes only when the appropriate form import later succeeds.
 
-#### END
-```
+### Daily Forms
 
-Expected-movement syntax is `date | unit | amount | account | engagement | description`. Its date must fall inside the budget period and its unit must match the account's configured unit.
+A Daily Form can contain metrics, sessions, meals, transactions, valuation rates, exercise details, milestones, Stoicism notes, and Admin Events.
 
-Budget periods cannot overlap. Reimporting the exact same start and end dates replaces that budget; no revision history is kept. Finance displays the budget that contains its selected as-of date. Budgets never create transactions, reminders, or notifications.
+- For **today or a future date**, importing synchronizes a replaceable planning view. It does not finalize the day.
+- For a **past date**, importing creates the canonical historical record after validation and confirmation.
+- Once a historical Daily Form is finalized, changed historical facts are rejected rather than silently replacing the receipt.
 
-## Food Dictionary and meals
+Use **Examined Human: Import Daily Form from Active File** while the note is open, or work from **Daily Assessment**.
 
-Schema v1 meals use compact `food | amount_g` rows. The food must resolve to a canonical name or alias:
+### Weekly Forms
 
-```markdown
-##### Meals
+A Weekly Form covers exactly seven days. It holds a direction, commitments, and a planning grid. Import it with **Examined Human: Import Weekly Form from Active File** or from **Weekly Assessment**.
 
-###### Breakfast
-is_leisure: 0
-ENTRIES:
-Eggs | 150
-Bread | 80 g
+Importing records the weekly plan. **Sync week** is a separate action that can copy current and future planned sessions into empty Daily Form Sessions sections. Existing occupied sections are not silently overwritten.
 
-###### Lunch
-is_leisure: 0
-ENTRIES:
-Chicken Breast | 180
-Rice | 250
+Importing the same starting date again updates that week. Planned sessions remain intentions; completed time comes from historical Daily Forms.
 
-###### Dinner
-is_leisure: 0
-ENTRIES:
+### Budget Forms
 
-###### Snacks
-is_leisure: 0
-ENTRIES:
-Dark Chocolate | 25
-```
+A Budget Form describes targets and expected movements for a non-overlapping period of at least four days. Import it with **Examined Human: Import Budget Form from Active File** or from the **Financial Dashboard**.
 
-Each canonical food defines per-100 g calories, protein, carbohydrates, fat, and salt, with optional fiber and cholesterol. During import, Examined Human calculates and stores a nutrition snapshot on the meal row. Later edits to the Food Dictionary therefore improve future entries without rewriting history.
+Negative targets represent expected spending or liabilities; positive targets represent expected income or assets. Expected movements are plans only. They do not create transactions, reminders, or notifications.
 
-Legacy `food | calories | protein` meal rows are deliberately rejected rather than accepted as incomplete nutrition data.
+Importing the same start and end dates again updates that budget.
 
-## Valuation and net worth
+### Command Center and other staging actions
 
-An account's `currency` field is treated as a general asset unit. It may be `USD`, `BTC`, `NASDAQ SHARE`, `GOLD`, or `APARTMENT`. Unit matching ignores case and surrounding whitespace.
+The Command Center manages your canonical foods, engagements, exercises, accounts, aliases, and valuation rates. Its actions are intentionally staged into a selected unimported Daily Form so you can read the exact change before importing it.
 
-Settings define:
+The Financial Dashboard uses the same pattern for opening balances and reconciliations: it stages a normal, clearly marked transaction in a Daily Form. The Daily Form import is the step that applies it.
 
-- a **valuation display label**, shown beside converted totals; the default is `EHM`;
-- a **reference asset class**, which is always worth one valuation unit; the default is `USD`.
+## What to do with forms after importing
 
-Rates for every other unit are user-entered dated observations. The Command Center stages only rate entries into an existing `##### Valuation Rates` section in an unimported Daily Form. It never invents the surrounding form or fetches market data.
+After an import succeeds, you have two valid choices:
 
-Each imported rate remains effective until a newer rate for the same unit appears. Rate sets may be partial: an apartment valuation entered once can continue indefinitely while exchange rates for other units change more often. Rates never apply backward to earlier dates.
+- **Keep the note.** This is recommended when you want a permanent, human-readable record of what happened, what you planned, and what was submitted to the plugin.
+- **Delete the note.** Imported historical information remains in the database, so the source form is not required for ordinary dashboard display.
 
-If a required rate is missing, native balances remain visible, but that asset is clearly excluded from converted totals. Examined Human never silently treats an unknown valuation as zero.
+Delete only after confirming that the import succeeded and the information appears correctly. Do not delete a current or future Daily Form if you still rely on it as the source of a planning projection. Deleting an unimported note also discards any staged changes that have not yet been applied.
 
-## Installation
+## Dashboard guide
 
-### Community Plugins
+Open dashboards from the Obsidian command palette. Obsidian prefixes their commands with `Examined Human:`.
 
-When the listing is available:
+### Calendar dashboard
 
-1. Open **Settings → Community plugins → Browse**.
-2. Search for **Examined Human**.
-3. Install and enable it.
+The calendar shows sessions on a horizontally scrollable sequence of days and a vertical 24-hour timeline. It combines canonical history with clearly identified current and future plans. Click a session for its exact time, duration, type, notes, exercise details, milestones, and any data-quality warning.
 
-### Manual installation
+Use it to answer: **When did I spend time, and what did I spend it on?**
 
-Download `main.js`, `manifest.json`, and `styles.css` from the matching [GitHub release](https://github.com/OssAhmad/obsidian-examined-human/releases), then:
+### Daily Assessment
 
-1. Create `<vault>/.obsidian/plugins/examined-human/`.
-2. Copy the three release artifacts into that directory.
-3. Reload Obsidian.
-4. Enable **Examined Human** under **Settings → Community plugins**.
+Daily Assessment lists discovered forms and imported days, newest first. It previews and validates Daily Forms, synchronizes current/future plans, imports historical days, and displays the selected day's sessions, metrics, meals, transactions, exercises, and milestones.
 
-Do not copy `data.json` from another vault. It contains vault-local settings and the form discovery cache.
+When a form refers to an unknown engagement, food, exercise, or account, Daily Assessment can help stage the missing canonical record or alias into that unimported note. Revalidate after staging.
 
-## First-time setup
+Use it to answer: **Is this day ready to import, and what exactly happened that day?**
 
-1. Open **Settings → Examined Human**.
-2. Set a database path relative to the vault root, such as `EH.db` or `data/EH.db`.
-3. Choose **Create Schema v1 database** for a new installation, or connect an existing compatible database.
-4. Use **Test connection**.
-5. Configure the Journal folder and form-discovery mode.
-6. Adjust nutrition limits, backup retention, dashboard period, valuation settings, calendar widths, and session colors as desired.
-7. Add the YAML marker and bounded forms to the user's templates.
-8. Open Daily or Weekly Assessment and run form discovery.
+### Weekly Assessment
 
-The default analytical period is 14 inclusive days. Dashboards can also be switched to all-time history.
+Weekly Assessment shows the week's direction, commitments, planned sessions, actual time by engagement, and planned-versus-actual differences. For current and future weeks, it can preview and sync the planning grid into empty Daily Form Sessions sections.
 
-### Upgrading a legacy v5 database
+Use it to answer: **What did I intend to do this week, and where did the week actually go?**
 
-Pre-1.0 builds include an explicit, one-time **Upgrade legacy database to Schema v1** action. The previewed and confirmed migration preserves existing historical meal rows while adding the current Food Dictionary, finance, budget, and valuation foundations and resetting retired migration metadata to the official Schema v1 identity.
+### Engagement Dashboard
 
-The migration creates and verifies a backup. Even so, close other SQLite writers and make an independent copy before upgrading. If a nonempty SQLite WAL has uncheckpointed frames, Examined Human refuses to read or write stale main-file bytes until the external writer checkpoints them.
+The Engagement Dashboard brings everything about one engagement together. Search by its canonical name or an alias, choose a date range, and review its status, dates, session time, activity trend, session types, recent sessions, lifetime milestones, linked financial totals, and transaction ledger.
 
-## Commands
+Use it to answer: **What is the complete story of this project, relationship, practice, course, or goal?**
 
-Obsidian prefixes each command with `Examined Human:` in the command palette:
+### Financial Dashboard
 
-- `Daily Assessment`
-- `Import Daily Form from Active File`
-- `Import Weekly Form from Active File`
-- `Import Budget Form from Active File`
-- `Open Command Dashboard`
-- `Weekly Assessment`
-- `Engagement Dashboard`
-- `Financial Dashboard`
-- `Nutrition Dashboard`
-- `Exercise Dashboard`
-- `Open calendar dashboard`
-- `Reload EH.db and refresh all dashboards`
+The Financial Dashboard shows balances as of a selected date, account and net-worth history, period inflow and outflow, financial activity by engagement, recent transactions, active budget targets, and expected movements. You can inspect one account or all accounts and use native units or your configured valuation view when rates are available.
 
-The calendar is also available from the ribbon icon.
+It can also stage an opening balance or reconciliation into a Daily Form. A period's net flow is activity during that period; it is not the same thing as an account balance.
 
-## Data safety and privacy
+Use it to answer: **What do my accounts show, how did money move, and how does that compare with the plan?**
 
-Dashboard access is permanently read-only. Approved mutations cross a separate `NativeLoggerWriteService` boundary and use preview, explicit confirmation, transaction staging, stale-file conflict detection, and post-write SQLite integrity checks.
+### Nutrition Dashboard
 
-Durable and finalized database writes create pre-write backups. Replaceable ephemeral Meals and planning projections do not. Backup retention defaults to `0`, which keeps every backup; a positive whole number keeps only that many newest EH-created backups. Cleanup never targets unrelated files.
+The Nutrition Dashboard shows calorie and protein trends, meal and food breakdowns, diet adherence, data coverage, and leisure-meal debt for assessed days. Snacks contribute to daily calories but do not count directly as one of the three main meal opportunities.
 
-Visible **Refresh** actions rebuild the database source boundary and refresh all open EH views. The plugin also checks the database and WAL fingerprint every ten seconds and performs an unconditional authoritative reload every ten minutes, allowing it to notice external changes even when Obsidian emits no useful vault event.
+Use it to answer: **What did I eat, how complete is the evidence, and am I following the rules I configured?**
 
-`EH.db`, SQLite journal files, `.examined-human-backups`, and local plugin `data.json` are ignored by this repository. Never commit a personal database.
+### Exercise Dashboard
 
-All parsing, validation, imports, and dashboards run locally inside Obsidian. The plugin does not upload, synchronize, value, or notify on the user's behalf. Vault synchronization remains the user's choice.
+The Exercise Dashboard shows training days, workout time, detail coverage, exercise volume, performance maxima, distance, measured duration, muscle exposure, and recent workouts. Ordinary exercise sessions still appear even when you did not record structured sets.
 
-## Deliberate boundaries
+Use it to answer: **How consistently am I training, and what does the recorded performance show?**
 
-- No automatic exchange-rate or market-price fetching.
-- No reminder, notification, email, calendar-sync, or recurring-transaction engine.
-- No medical-record subsystem.
-- No automatic repair of unresolved legacy transaction categories.
-- No overnight session interval that crosses midnight; split it across two dates.
-- Whole-file sql.js loading remains a long-horizon constraint, so large embedded content and unbounded queries are intentionally avoided.
+### Command Center
 
-These boundaries keep Examined Human focused on mindful recording, transparent plans, and inspectable personal evidence rather than becoming an automation platform.
+The Command Center is the maintenance workspace for engagements, foods, exercises, accounts, aliases, valuation rates, and batches of Admin Events. Search existing records, prepare changes, choose an unimported Daily Form, review the proposed rows, and stage them.
 
-## Development
+Use it to answer: **What canonical names does my system know, and what correction should I stage next?**
 
-Requirements: Node.js 22 or newer and npm.
+## A practical daily and weekly routine
 
-```bash
-npm install
-npm run check
-npm run build
-```
+1. Create today's Daily Form with `EH form: unimported` in its frontmatter.
+2. Add planned sessions if useful and synchronize the current plan.
+3. During or after the day, fill in what actually happened.
+4. On the next day, validate and import yesterday as historical fact.
+5. Keep the note as your readable journal record, or delete it after verifying the import.
+6. At the start of a week, create and import a Weekly Form.
+7. During the week, update and reimport the plan when necessary.
+8. At review time, compare Weekly Assessment with the canonical Daily Forms.
+9. Create or update a Budget Form whenever you begin a new planning period.
 
-For a full release validation:
+Use **Examined Human: Reload EH.db and refresh all dashboards** whenever you want every open view to reread the selected database immediately.
 
-```bash
-npm run release:check
-```
+## Troubleshooting the first setup
 
-To validate a database without printing private session content:
+### The plugin does not appear
 
-```bash
-npm run validate:database -- /path/to/EH.db
-```
+For a manual installation, confirm that `.obsidian/plugins/examined-human/` contains `main.js`, `manifest.json`, and `styles.css` directly—not inside another nested folder. Reload Obsidian and check that the plugin is enabled under Community plugins.
 
-The only release artifacts are `main.js`, `manifest.json`, and `styles.css`.
+### Test connection fails
 
-Read [Architecture and maintainer notes](docs/ARCHITECTURE.md) before changing data flow, import behavior, schema assumptions, or safety boundaries. The complete release procedure is in [Releasing](docs/RELEASING.md), and user-visible release history is in the [Changelog](CHANGELOG.md).
+Confirm that the Database path ends in `.db`, is relative to the vault root, and points to the database you intended. For a new installation, create the database before testing it. For an existing database, make sure the file is actually inside this vault.
 
-## Fork attribution
+### A form is not discovered
 
-This project began as a fork of [seonggoos/obsidian-schedule-calendar](https://github.com/seonggoos/obsidian-schedule-calendar). Its Obsidian view scaffolding and overlap-layout foundation were adapted for a different data source and interaction model. The original and current work remain under the MIT license.
+Check all four boundaries:
 
-## License
+1. the note has `EH form: unimported` or `EH form: true` at the top;
+2. the selected discovery mode includes that note;
+3. the form begins with the exact EH Form heading and contains a valid date;
+4. the form ends with `#### END`.
+
+If you chose Journal-folder discovery, also verify the configured Journal folder. If you chose the recommended marker-based mode, the form can be anywhere in the vault.
+
+### Import reports an unknown name
+
+Sessions and plans need a known engagement; transactions also need a known account; meals need a known food; structured exercise rows need a known exercise. Correct a misspelling, use an existing alias, or stage the missing canonical record through Daily Assessment or Command Center, then revalidate.
+
+### Today's Daily Form is not becoming historical
+
+That is expected. Today and future dates are treated as mutable plans. Import the completed day after it becomes historical to create its final record.
+
+### The database reports unfinished external changes
+
+Close or finish the write in the other SQLite application, then use **Examined Human: Reload EH.db and refresh all dashboards**. Do not replace the database file while another application still has unfinished changes.
+
+## Data ownership and safety
+
+- Your notes and database remain in your vault.
+- Examined Human does not upload your data or fetch market prices.
+- Imports and staged changes require review and confirmation.
+- Finalized writes create backups according to your retention setting.
+- The plugin refuses unsafe paths and avoids overwriting another program's unfinished database changes.
+- Vault synchronization is your choice and is not provided by the plugin.
+
+Keep independent vault backups, especially before connecting or upgrading an existing database.
+
+## Current boundaries
+
+Examined Human does not provide reminders, notifications, automatic exchange rates, market-price fetching, recurring transactions, medical records, recurrence rules, calendar synchronization, or automatic repair of ambiguous old data. Sessions that cross midnight must be split across two dates.
+
+These limits keep the system focused on deliberate recording, reviewable plans, and evidence you control.
+
+## For developers
+
+Build instructions, validation commands, repository structure, database and import architecture, safety invariants, and release guidance are in [DEVELOPMENT.md](DEVELOPMENT.md). User-visible release history is in [CHANGELOG.md](CHANGELOG.md).
+
+## Fork attribution and license
+
+This project began as a fork of [seonggoos/obsidian-schedule-calendar](https://github.com/seonggoos/obsidian-schedule-calendar). Its Obsidian view scaffolding and overlap-layout foundation were adapted for a different data source and interaction model.
 
 [MIT](LICENSE) — Copyright (c) 2026 seonggoos and Copyright (c) 2026 OssAhmad.

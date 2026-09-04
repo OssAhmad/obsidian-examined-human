@@ -390,6 +390,30 @@ bad time | study | Project Alpha | draft
   db.close();
 });
 
+test('current and future planning ignores examples and instructional ENTRIES mentions', () => {
+  const sourceText = `#### EH Daily Form
+date: 2026-08-21
+##### Sessions
+FORMAT:
+\`interval | session type | engagement | notes\`
+
+EXAMPLES (do not copy these below \`ENTRIES:\` unless they are real):
+\`09:00-10:30 | study | Jannach German for Reading | studied Kapitel 4\`
+\`14:00-15:30 | work | Mensonaut Paper | wrote related zettels\`
+
+ENTRIES:
+10:00-11:00 | study | Project Alpha | real session
+##### Meals
+#### END`;
+
+  const parsed = inspectPlannedNote(sourceText, '2026-08-21');
+  assert.equal(parsed.parseStatus, 'ok');
+  assert.deepEqual(parsed.issues, []);
+  assert.equal(parsed.sessions.length, 1);
+  assert.equal(parsed.sessions[0].engagementRaw, 'Project Alpha');
+  assert.equal(parsed.sessions[0].notes, 'real session');
+});
+
 function weeklyNote() {
   const empty = ' |'.repeat(4);
   return `#### EH Weekly Form

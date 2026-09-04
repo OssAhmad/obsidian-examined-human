@@ -1,4 +1,4 @@
-import { type App, TFile } from 'obsidian';
+import type { App, TFile } from 'obsidian';
 import { ehFormFrontmatterStatus, shouldDiscoverEhFormFile } from './form-status.ts';
 import { pathIsInJournalFolder } from './journal-folder.ts';
 
@@ -118,6 +118,15 @@ function restore(file: TFile, entry: FormDiscoveryCacheEntry): Array<Omit<Discov
   return entry.forms.map((form) => ({ ...form, fileName: file.name, filePath: file.path }));
 }
 
+function isVaultFile(value: unknown): value is TFile {
+  if (!value || typeof value !== 'object') return false;
+  const candidate = value as Partial<TFile>;
+  return typeof candidate.name === 'string'
+    && typeof candidate.path === 'string'
+    && candidate.stat != null
+    && typeof candidate.stat === 'object';
+}
+
 export function sanitizeFormDiscoveryCache(value: unknown): FormDiscoveryCache {
   if (!value || typeof value !== 'object') return { ...EMPTY_FORM_DISCOVERY_CACHE, entries: {} };
   const rawEntries = (value as { entries?: unknown }).entries;
@@ -188,8 +197,11 @@ export function cachedEhForms(app: App, cache: FormDiscoveryCache): Array<Omit<D
   const forms: Array<Omit<DiscoveredEhForm, 'formText'>> = [];
   for (const [path, entry] of Object.entries(cache.entries)) {
     const file = app.vault.getAbstractFileByPath(path);
-    if (!(file instanceof TFile)) continue;
-    if (file.stat.mtime !== entry.mtime || file.stat.size !== entry.size) continue;
+    if (!isVaultFile(file)) continue;
+    // The cache stores discovery descriptors, not a claim that the note content
+    // is unchanged. Daily and Weekly Assessment read the selected note again for
+    // validation, so ordinary edits must not make an already discovered form
+    // disappear before the next discovery scan refreshes this descriptor.
     forms.push(...restore(file, entry));
   }
   return forms;
