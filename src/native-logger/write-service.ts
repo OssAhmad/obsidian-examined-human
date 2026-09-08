@@ -22,8 +22,10 @@ import {
   type NativeDailyNoteInput,
 } from './daily-note.ts';
 import {
+  syncPlanningDate as syncPlanningDateProjection,
   syncPlanningNotes,
   type NativePlanningNote,
+  type PlanningDateSyncResult,
   type PlanningSyncResult,
 } from './planning.ts';
 import {
@@ -138,6 +140,12 @@ export interface NativePlanningRequest {
   databasePath: string;
   cutoffDate: string;
   notes: NativePlanningNoteRequest[];
+}
+
+export interface NativePlanningDateRequest {
+  databasePath: string;
+  noteDate: string;
+  note: NativePlanningNoteRequest | null;
 }
 
 export interface NativeWeeklyRequest extends Omit<NativeWeeklyNoteInput, 'sourceChecksum'> {
@@ -425,6 +433,40 @@ export class NativeLoggerWriteService {
         request.databasePath,
         'planning-sync',
         (db) => syncPlanningNotes(db, notes, request.cutoffDate),
+        'ephemeral',
+      );
+      return {
+        ...mutation.value,
+        backupPath: mutation.backupPath,
+        backupsPruned: mutation.backupsPruned,
+        backupRetentionWarning: mutation.backupRetentionWarning,
+      };
+    });
+  }
+
+  syncPlanningDate(
+    request: NativePlanningDateRequest,
+  ): Promise<PlanningDateSyncResult & BackupMutationMetadata> {
+    return this.enqueue(async () => {
+      const note = request.note == null
+        ? null
+        : (await this.planningInputs([request.note]))[0];
+      const preview = await this.inspectDatabase(
+        request.databasePath,
+        (db) => syncPlanningDateProjection(db, request.noteDate, note),
+      );
+      if (!preview.changed) {
+        return {
+          ...preview,
+          backupPath: null,
+          backupsPruned: 0,
+          backupRetentionWarning: null,
+        };
+      }
+      const mutation = await this.mutateDatabase(
+        request.databasePath,
+        'planning-date-sync',
+        (db) => syncPlanningDateProjection(db, request.noteDate, note),
         'ephemeral',
       );
       return {

@@ -60,6 +60,7 @@ export class TimelineView extends ItemView {
 
   async onOpen(): Promise<void> {
     this.contentEl.addClass('examined-human-view');
+    await this.plugin.syncTodayPlanningFromDailyForm();
     await this.renderCalendar({
       viewport: {
         centerDate: moment().format('YYYY-MM-DD'),
@@ -70,7 +71,8 @@ export class TimelineView extends ItemView {
     this.registerEvent(this.app.vault.on('modify', (file) => {
       const configuredPath = this.plugin.settings.databasePath;
       try {
-        if (normalizePath(file.path) === this.plugin.database.normalizeVaultPath(configuredPath)) void this.refresh();
+        if (normalizePath(file.path) === this.plugin.database.normalizeVaultPath(configuredPath)
+          && !this.plugin.nativeLogger.isRunning) void this.refresh();
       } catch {
         // The visible query error explains an invalid path; unrelated vault changes should remain safe.
       }
@@ -101,6 +103,7 @@ export class TimelineView extends ItemView {
   }
 
   async refresh(): Promise<void> {
+    await this.plugin.syncTodayPlanningFromDailyForm();
     await this.renderCalendar({ viewport: this.captureViewport() });
   }
 

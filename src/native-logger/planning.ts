@@ -51,6 +51,12 @@ export interface PlanningSyncResult {
   notes: PlanningProjectionResult[];
 }
 
+export interface PlanningDateSyncResult {
+  noteDate: string;
+  action: 'projected' | 'deleted' | 'unchanged';
+  changed: boolean;
+}
+
 const ESTIMATED_START_MINUTE = 7 * 60;
 const ESTIMATED_DURATION_MINUTES = 60;
 const ESTIMATED_SLOTS_PER_DAY = 17;
@@ -229,6 +235,60 @@ function projectNote(db: Database, note: NativePlanningNote): PlanningProjection
     warningCount: parsed.issues.length + resolved.reduce((total, item) => total + item.warnings.length, 0),
     parseStatus,
   };
+}
+
+/**
+ * Reconcile one current-date projection without treating unmentioned future
+ * Daily Forms as deleted. This is the narrow automatic path used when the
+ * Calendar opens; the broader manual planning sync remains authoritative for
+ * reconciling the complete current/future form set.
+ */
+export function syncPlanningDate(
+  db: Database,
+  noteDate: string,
+  note: NativePlanningNote | null,
+): PlanningDateSyncResult {
+  assertSchemaV1(db);
+  requireIsoDate(noteDate, 'Planning date');
+  if (note && note.noteDate !== noteDate) {
+    throw new Error(`Daily Form declares ${note.noteDate}, but the Calendar is syncing ${noteDate}.`);
+  }
+
+  const existing = queryRows(db, `SELECT id, file_name, file_path, content_checksum, lifecycle_state
+    FROM note_sources WHERE note_date = ?`, [noteDate])[0];
+  const canonical = queryRows(db, 'SELECT 1 AS present FROM imported_notes WHERE note_date = ? LIMIT 1', [noteDate])[0];
+  if (canonical || String(existing?.lifecycle_state ?? '') === 'finalized') {
+    return { noteDate, action: 'unchanged', changed: false };
+  }
+
+  if (note) {
+    if (existing
+      && String(existing.file_name) === note.fileName
+      && String(existing.file_path) === note.filePath
+      && String(existing.content_checksum) === note.sourceChecksum
+      && String(existing.lifecycle_state) === 'planned') {
+      return { noteDate, action: 'unchanged', changed: false };
+    }
+    projectNote(db, note);
+    return { noteDate, action: 'projected', changed: true };
+  }
+
+  if (!existing) {
+    return { noteDate, action: 'unchanged', changed: false };
+  }
+  const plannedCount = Number(queryRows(
+    db,
+    'SELECT COUNT(*) AS count FROM planned_sessions WHERE source_note_id = ?',
+    [existing.id],
+  )[0]?.count ?? 0);
+  if (String(existing.lifecycle_state) === 'deleted' && plannedCount === 0) {
+    return { noteDate, action: 'unchanged', changed: false };
+  }
+
+  db.run('DELETE FROM planned_sessions WHERE source_note_id = ?', [existing.id]);
+  db.run(`UPDATE note_sources SET lifecycle_state = 'deleted', parse_status = 'ok',
+    last_error = NULL, last_scanned_at = CURRENT_TIMESTAMP WHERE id = ?`, [existing.id]);
+  return { noteDate, action: 'deleted', changed: true };
 }
 
 export function syncPlanningNotes(

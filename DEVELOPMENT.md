@@ -40,13 +40,13 @@ The read boundary and write boundary are intentionally separate:
 - `ExaminedHumanDatabase` and dashboard queries are permanently read-only.
 - Approved mutations belong only in `NativeLoggerWriteService`.
 - Durable writes use preview, explicit confirmation, transaction staging, stale-file conflict checks, backup creation, integrity checks, and verified replacement.
-- Current/future planning projections and replaceable Meals components follow their documented ephemeral mutation policy.
+- Current/future planning projections and replaceable Meals components follow their documented ephemeral mutation policy. Calendar open/refresh performs one narrow, idempotent, backup-free reconciliation for today's Daily Form; broad current/future synchronization remains previewed and confirmed.
 
 Do not add direct SQLite writes to a view or to the reader. Do not place raw SQL or row mapping in DOM-rendering code.
 
 Database paths must remain vault-relative. Never read or replace main-database bytes while a nonempty SQLite WAL contains uncheckpointed frames. The database source boundary is rebuilt by visible Refresh actions, database/WAL fingerprint changes, and the unconditional periodic reload described in the architecture document.
 
-Canonical sessions win for dates represented by imported notes. Otherwise an active Daily or Weekly projection may supply mutable planned sessions. Historical Daily Forms are immutable receipts. Weekly plans and budgets are replaceable by their period identity.
+Canonical sessions win for dates represented by imported notes. Otherwise an active Daily Form projection supplies the date when available; today's projection is refreshed automatically when the Calendar opens or refreshes. An imported Weekly Form is the direct current/future calendar fallback when no Daily projection exists. Historical Daily Forms are immutable receipts. Weekly plans and budgets are replaceable by their period identity.
 
 Keep session titles engagement-first, duration formatted as `hh:mm`, `chor` distinct from `chore`, and optional exercise/milestone tables backward-compatible.
 

@@ -135,6 +135,38 @@ function addPlanningSchema(db) {
   `);
 }
 
+function addWeeklyPlanningSchema(db) {
+  db.run(`
+    CREATE TABLE weekly_plans (
+      id INTEGER PRIMARY KEY,
+      week_start_date TEXT,
+      source_file_name TEXT,
+      main_outcome TEXT,
+      important_deadline TEXT,
+      constraint_or_risk TEXT
+    );
+    CREATE TABLE weekly_plan_sessions (
+      id INTEGER PRIMARY KEY,
+      weekly_plan_id INTEGER,
+      date TEXT,
+      start_time TEXT,
+      end_time TEXT,
+      duration_minutes INTEGER,
+      session_type_id INTEGER,
+      engagement_id INTEGER,
+      notes TEXT
+    );
+    CREATE TABLE weekly_commitments (
+      id INTEGER PRIMARY KEY,
+      weekly_plan_id INTEGER,
+      source_ordinal INTEGER,
+      target_minutes INTEGER,
+      engagement_id INTEGER,
+      commitment_text TEXT
+    );
+  `);
+}
+
 test('database inspection verifies the schema and profile', () => {
   const db = fixture();
   try {
@@ -281,6 +313,88 @@ test('an imported note makes canonical sessions win over its planned projection'
     const result = querySessions(db, '2026-07-22', '2026-07-22', '2026-07-21');
     assert.deepEqual(result.events.map((event) => event.id), ['13']);
     assert.deepEqual(result.dayStates, {});
+  } finally {
+    db.close();
+  }
+});
+
+test('imported weekly sessions fill current and future calendar dates without Daily Notes', () => {
+  const db = fixture();
+  try {
+    addPlanningSchema(db);
+    addWeeklyPlanningSchema(db);
+    db.run(`
+      INSERT INTO weekly_plans VALUES (
+        40, '2026-07-25', '2026-W30.md', 'Plan the week', NULL, NULL
+      );
+      INSERT INTO weekly_plan_sessions VALUES (
+        41, 40, '2026-07-25', '08:00', '10:00', 120, 1, 1, 'First planned block'
+      );
+      INSERT INTO weekly_plan_sessions VALUES (
+        42, 40, '2026-07-26', '09:00', '10:00', 60, 1, 1, NULL
+      );
+      INSERT INTO weekly_plan_sessions VALUES (
+        43, 40, '2026-07-24', '09:00', '10:00', 60, 1, 1, 'Past plan'
+      );
+    `);
+
+    const result = querySessions(db, '2026-07-24', '2026-07-26', '2026-07-25');
+    assert.deepEqual(result.events.map((event) => event.id), ['weekly:41', 'weekly:42']);
+    assert.equal(result.events[0].title, 'MIT Differential Equations');
+    assert.equal(result.events[0].sourceKind, 'planned');
+    assert.equal(result.events[0].planningSource, 'weekly-plan');
+    assert.equal(result.events[0].startMinutes, 480);
+    assert.equal(result.events[0].durationMinutes, 120);
+    assert.deepEqual(result.dayStates['2026-07-25'], {
+      source: 'planned',
+      lifecycleState: 'weekly-plan',
+      overdue: false,
+      message: 'Imported Weekly Form 2026-W30.md supplies this date directly; no Daily Note is required.',
+    });
+    assert.equal(result.dayStates['2026-07-24'], undefined);
+    assert.deepEqual(
+      querySessions(db, '2026-07-25', '2026-07-26', '2026-07-25', false).events,
+      [],
+    );
+  } finally {
+    db.close();
+  }
+});
+
+test('canonical history and Daily Form projections take precedence over imported weekly sessions', () => {
+  const db = fixture();
+  try {
+    addPlanningSchema(db);
+    addWeeklyPlanningSchema(db);
+    db.run(`
+      INSERT INTO weekly_plans VALUES (
+        40, '2026-07-18', '2026-W29.md', 'Plan the week', NULL, NULL
+      );
+      INSERT INTO weekly_plan_sessions VALUES (
+        41, 40, '2026-07-22', '08:00', '10:00', 120, 1, 1, 'Weekly fallback'
+      );
+      INSERT INTO weekly_plan_sessions VALUES (
+        42, 40, '2026-07-23', '08:00', '10:00', 120, 1, 1, 'Weekly fallback'
+      );
+      INSERT INTO note_sources VALUES (20, '2026-07-22', 'planned', 'ok', NULL);
+      INSERT INTO planned_sessions VALUES (
+        30, 20, 1, '2026-07-22', '11:00', '12:00', 60, 0,
+        'study', 1, 'Daily plan', 1, 'More specific', NULL
+      );
+      INSERT INTO imported_notes VALUES (
+        1, '2026-07-23', '2026-07-23.md', 'Journal/2026-07-23.md'
+      );
+      INSERT INTO sessions VALUES (
+        13, 1, '2026-07-23', '14:00', '15:00', 60, 1, 'Canonical history'
+      );
+    `);
+
+    const result = querySessions(db, '2026-07-22', '2026-07-23', '2026-07-21');
+    assert.deepEqual(result.events.map((event) => event.id), ['planned:30', '13']);
+    assert.equal(result.events[0].planningSource, 'daily-note');
+    assert.equal(result.events[1].sourceKind, 'actual');
+    assert.equal(result.dayStates['2026-07-22'].lifecycleState, 'planned');
+    assert.equal(result.dayStates['2026-07-23'], undefined);
   } finally {
     db.close();
   }

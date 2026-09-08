@@ -47,7 +47,11 @@ export class SessionDetailsModal extends Modal {
     this.addDetail(details, 'Session type', this.event.sessionType);
     this.addDetail(details, 'Engagement', this.event.engagementName);
     this.addDetail(details, 'Engagement type', this.event.engagementType || '—');
-    this.addDetail(details, 'Source', this.event.sourceKind === 'planned' ? 'Planned journal note' : 'Imported Examined Human data');
+    let source = 'Imported Examined Human data';
+    if (this.event.sourceKind === 'planned') {
+      source = this.event.planningSource === 'weekly-plan' ? 'Imported Weekly Form' : 'Planned journal note';
+    }
+    this.addDetail(details, 'Source', source);
 
     if (this.event.sessionType.trim().toLowerCase() === 'exercise' || this.event.exerciseDetails) {
       this.renderExerciseDetails(contentEl);

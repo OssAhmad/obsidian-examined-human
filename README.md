@@ -192,7 +192,8 @@ Dashboard buttons that say **Stage** do not finish an import. They add reviewabl
 
 A Daily Form can contain metrics, sessions, meals, transactions, valuation rates, exercise details, milestones, Stoicism notes, and Admin Events.
 
-- For **today or a future date**, importing synchronizes a replaceable planning view. It does not finalize the day.
+- For **today**, opening or refreshing the Calendar automatically imports the eligible Daily Form's Sessions into the replaceable `planned_sessions` projection. It does not finalize the day or create a backup.
+- For a **future date**, importing synchronizes a replaceable planning view after preview and confirmation. It does not finalize the day.
 - For a **past date**, importing creates the canonical historical record after validation and confirmation.
 - Once a historical Daily Form is finalized, changed historical facts are rejected rather than silently replacing the receipt.
 
@@ -202,7 +203,9 @@ Use **Examined Human: Import Daily Form from Active File** while the note is ope
 
 A Weekly Form covers exactly seven days. It holds a direction, commitments, and a planning grid. Import it with **Examined Human: Import Weekly Form from Active File** or from **Weekly Assessment**.
 
-Importing records the weekly plan. **Sync week** is a separate action that can copy current and future planned sessions into empty Daily Form Sessions sections. Existing occupied sections are not silently overwritten.
+Importing records the weekly plan, and its current or future sessions appear directly in the Calendar dashboard even when no Daily Notes have been created yet. The latest imported version of that week is the one the calendar uses.
+
+**Sync week** is a separate, optional action that can copy current and future planned sessions into empty Daily Form Sessions sections. Use it only when you want those rows materialized in the notes; existing occupied sections are not silently overwritten.
 
 Importing the same starting date again updates that week. Planned sessions remain intentions; completed time comes from historical Daily Forms.
 
@@ -235,7 +238,7 @@ Open dashboards from the Obsidian command palette. Obsidian prefixes their comma
 
 ### Calendar dashboard
 
-The calendar shows sessions on a horizontally scrollable sequence of days and a vertical 24-hour timeline. It combines canonical history with clearly identified current and future plans. Click a session for its exact time, duration, type, notes, exercise details, milestones, and any data-quality warning.
+The calendar shows sessions on a horizontally scrollable sequence of days and a vertical 24-hour timeline. It combines canonical history with clearly identified current and future plans. Whenever the Calendar opens or refreshes, it discovers the eligible Daily Form dated today and refreshes today's `planned_sessions` projection automatically. Imported Weekly Forms supply the remaining current and future calendar sessions directly, so future Daily Notes do not have to exist. A more specific Daily Form projection takes precedence when one is available; canonical imported history always wins. Click a session for its exact time, duration, type, notes, exercise details, milestones, and any data-quality warning.
 
 Use it to answer: **When did I spend time, and what did I spend it on?**
 
@@ -288,7 +291,7 @@ Use it to answer: **What canonical names does my system know, and what correctio
 ## A practical daily and weekly routine
 
 1. Create today's Daily Form with `EH form: unimported` in its frontmatter.
-2. Add planned sessions if useful and synchronize the current plan.
+2. Add planned sessions if useful; opening or refreshing the Calendar synchronizes today's session plan automatically.
 3. During or after the day, fill in what actually happened.
 4. On the next day, validate and import yesterday as historical fact.
 5. Keep the note as your readable journal record, or delete it after verifying the import.

@@ -820,11 +820,86 @@ function queryPlannedEvents(
       durationMinutes: nullableNumber(row.duration_minutes) ?? end - start,
       notes: nullableText(row.notes),
       sourceKind: 'planned',
+      planningSource: 'daily-note',
       timeEstimated: Number(row.time_is_estimated) === 1,
       planningWarnings: warningText ? warningText.split('\n').filter(Boolean) : [],
     });
   }
   return events;
+}
+
+function queryWeeklyPlannedEvents(
+  db: Database,
+  startDate: string,
+  endDate: string,
+  todayDate: string,
+  excludedDates: Set<string>,
+  issues: DataIssue[],
+): { events: CalendarEvent[]; dayStates: Record<string, CalendarDayState> } {
+  const events: CalendarEvent[] = [];
+  const dayStates: Record<string, CalendarDayState> = {};
+  if (!hasWeeklyPlanningSchema(db)) return { events, dayStates };
+
+  const weeklyRows = rows(db, `
+    SELECT wps.id,
+           wps.date,
+           wps.start_time,
+           wps.end_time,
+           wps.duration_minutes,
+           wps.notes,
+           wp.source_file_name,
+           st.code AS session_type,
+           e.name AS engagement_name,
+           et.code AS engagement_type
+    FROM weekly_plan_sessions AS wps
+    JOIN weekly_plans AS wp ON wp.id = wps.weekly_plan_id
+    LEFT JOIN session_types AS st ON st.id = wps.session_type_id
+    LEFT JOIN engagements AS e ON e.id = wps.engagement_id
+    LEFT JOIN engagement_types AS et ON et.id = e.type_id
+    WHERE wps.date >= ? AND wps.date <= ?
+      AND wps.date >= ?
+    ORDER BY wps.date, wps.start_time, wps.id
+  `, [startDate, endDate, todayDate]);
+
+  for (const row of weeklyRows) {
+    const date = String(row.date);
+    if (excludedDates.has(date)) continue;
+    const id = `weekly:${String(row.id)}`;
+    const start = parseDatabaseTime(String(row.start_time ?? ''));
+    const end = parseDatabaseTime(String(row.end_time ?? ''));
+    if (start == null || end == null || end <= start) {
+      issues.push({ sessionId: id, message: `Weekly planned session ${id} has an invalid display time.` });
+      continue;
+    }
+
+    const engagementName = nullableText(row.engagement_name) ?? 'Untitled session';
+    const sourceFileName = nullableText(row.source_file_name) ?? 'Weekly Form';
+    events.push({
+      id,
+      date,
+      sessionType: nullableText(row.session_type) ?? '',
+      engagementName,
+      engagementType: nullableText(row.engagement_type) ?? '',
+      title: titleForEngagement(engagementName),
+      kind: 'timed',
+      startMinutes: start,
+      endMinutes: end,
+      durationMinutes: nullableNumber(row.duration_minutes) ?? end - start,
+      notes: nullableText(row.notes),
+      sourceKind: 'planned',
+      planningSource: 'weekly-plan',
+      timeEstimated: false,
+      planningWarnings: [],
+    });
+    dayStates[date] ??= {
+      source: 'planned',
+      lifecycleState: 'weekly-plan',
+      overdue: false,
+      message: `Imported Weekly Form ${sourceFileName} supplies this date directly; no Daily Note is required.`,
+    };
+  }
+
+  return { events, dayStates };
 }
 
 function nullableNumber(value: SqlValue | undefined): number | null {
@@ -2451,6 +2526,21 @@ export function querySessions(
   attachMilestoneDetails(db, startDate, endDate, events);
   if (includePlanning) {
     events.push(...queryPlannedEvents(db, startDate, endDate, importedDates, issues));
+    const excludedWeeklyDates = new Set([
+      ...importedDates,
+      ...Object.keys(dayStates),
+      ...events.filter((event) => event.sourceKind !== 'planned').map((event) => event.date),
+    ]);
+    const weeklyPlanning = queryWeeklyPlannedEvents(
+      db,
+      startDate,
+      endDate,
+      todayDate,
+      excludedWeeklyDates,
+      issues,
+    );
+    events.push(...weeklyPlanning.events);
+    Object.assign(dayStates, weeklyPlanning.dayStates);
   }
   for (const [date, state] of Object.entries(dayStates)) {
     if (state.overdue) {

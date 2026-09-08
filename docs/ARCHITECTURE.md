@@ -17,11 +17,11 @@ Treat these as part of the plugin contract unless a deliberate product decision 
 9. Database paths are always relative to the vault root so the same setting works on desktop and mobile.
 10. Close-session visual packing may move a displayed start or end by at most ten minutes. It never changes stored data, tooltips, or modal details.
 11. Exercise and milestone details are optional. Missing extension tables or columns must not prevent ordinary sessions from loading.
-12. A date present in `imported_notes` uses canonical sessions. Otherwise, an active planning projection may supply mutable sessions for that date.
+12. A date present in `imported_notes` uses canonical sessions. Otherwise, an active Daily Form projection supplies mutable sessions when available. Calendar open/refresh narrowly and idempotently reconciles today's eligible Daily Form into `planned_sessions`; it does not reconcile or delete any other date. For current/future dates with no Daily projection, the latest imported version of the covering Weekly Form supplies sessions directly without requiring Daily Notes.
 13. Form discovery reads only opted-in Markdown notes (`EH form: true` or `unimported` in YAML, case-insensitive) by default, or unmarked/eligible Markdown notes in the configured Journal folder when the user explicitly chooses that slower mode. Explicit `imported` and `false` markers are skipped. It caches descriptors and file timestamps—not note content—in local settings. Once every Daily Form in a file is historically finalized and every Weekly Form is imported, the marker becomes `imported`; Budget imports and mutable planning syncs never advance it.
 14. Runtime logger code uses only Obsidian APIs, Web Crypto, and SQL.js. Python and Node process/filesystem APIs are not plugin dependencies, so the complete workflow is mobile-compatible.
 15. Daily, Weekly, and Budget form filenames are irrelevant. Canonical form headings are `#### EH Daily Form`, `#### EH Weekly Form`, and `#### EH Budget Form`, each closed by `#### END`; Daily Forms require `date`, Weekly Forms require an exact seven-day `start date`/`end date`, and Budget Forms require `period start`/`period end`.
-16. Native writes are serialized and confirmation-gated. They must verify official Data Schema v1, snapshot the source checksum, detect stale database bytes, use one transaction, run `quick_check` and `foreign_key_check`, and verify the persisted bytes. Durable/finalized writes create a pre-write backup; replaceable ephemeral Meals and planning projections deliberately do not. Optional retention cleanup runs only after a verified durable write, keeps the current backup, and targets only exact EH-created backup names.
+16. Native writes are serialized. User-initiated imports and broad synchronizations are confirmation-gated; the sole automatic exception is the reversible, idempotent, today-only Calendar planning reconciliation. Every actual write must verify official Data Schema v1, snapshot the source checksum, detect stale database bytes, use one transaction, run `quick_check` and `foreign_key_check`, and verify the persisted bytes. Durable/finalized writes create a pre-write backup; replaceable ephemeral Meals and planning projections deliberately do not. Optional retention cleanup runs only after a verified durable write, keeps the current backup, and targets only exact EH-created backup names.
 17. Historical Meals components are immutable once finalized. Current/future Meals are `ephemeral` and replaceable; if the date becomes historical while the component is still ephemeral, one confirmed component or canonical full-note import may replace and finalize it from the completed note.
 18. Snacks never directly increase the leisure-meal count. They do contribute to structured-food calories; the effective daily total is the higher of Daily Metrics calories and all structured food rows.
 19. The third canonical transaction field is `engagement`, not a free-form category. It must resolve uniquely through engagement names or aliases. The native importer stores the engagement ID in the legacy `transactions.category` column; unresolved or empty values block import, while legacy free-text database rows remain readable.
@@ -40,6 +40,8 @@ Obsidian command/ribbon
         |
         v
 TimelineView
+        |
+        +--> discover today's eligible Daily Form --> today-only ephemeral planning reconciliation
         |
         | visible YYYY-MM-DD range
         v
@@ -73,6 +75,7 @@ Weekly Assessment command
         +--> native weekly parser + guarded writer
                  |
                  +--> pending-week preview + confirmed import
+                 +--> direct current/future Calendar fallback
                  +--> checksum-guarded current/future Daily Note write
                  +--> automatic future-projection preview + sync
 
@@ -233,7 +236,7 @@ The historical `transactions.category` column remains `TEXT` for compatibility, 
 
 `queryExerciseDashboard` counts canonical sessions whose taxonomy is `exercise` or which own at least one `session_exercises` row. Duration comes from canonical session totals. Exercises, sets, load × reps, distance, measured duration, pain coverage, and muscle exposure are optional detail measures and are reported separately from workout count. Muscle exposure can count one set against multiple mapped muscles and is labeled accordingly; the dashboard does not invent measurement units.
 
-Planned rows preserve raw session types and engagement text. A nullable engagement reference supplies the canonical name when the native resolver finds exactly one name or alias. The tolerant parser normalizes valid intervals and assigns estimated hourly display slots from 07:00 when time is missing or invalid, preserving warnings and provenance.
+Daily Form planned rows preserve raw session types and engagement text. A nullable engagement reference supplies the canonical name when the native resolver finds exactly one name or alias. The tolerant parser normalizes valid intervals and assigns estimated hourly display slots from 07:00 when time is missing or invalid, preserving warnings and provenance. Before a Calendar open/refresh query, the plugin discovers the one eligible Daily Form dated today and refreshes only that date's projection. An unchanged source checksum is a no-op; if no eligible today's form remains, only today's non-finalized projection is marked deleted. Other current/future projections are untouched. Imported Weekly Form rows are already strictly resolved and timed; the Calendar reads them directly for current/future dates only when neither canonical history nor a more specific Daily Form projection owns the date. Reimporting a week replaces its stored rows, so this fallback always uses the latest imported version of that week.
 
 Dates are compared lexically and must use ISO `YYYY-MM-DD`. Times accept `H:mm`, `HH:mm`, and optional seconds. A session is skipped with a warning when either time is invalid or when the end is not later than the start. Overnight sessions are not currently supported.
 
@@ -355,7 +358,7 @@ This is not a current blocker, but future work must avoid unbounded revision his
 - Pre-1.0 releases retain an explicit confirmed conversion from the retired v5 database to the current official Data Schema v1, including the Food Dictionary, Finance, and Valuation foundations. It may be removed only once the project reaches the user-approved post-1.0 migration policy.
 - The dashboard presents validation feedback in Obsidian instead of writing managed feedback blocks into Markdown notes
 - Python chart/report generation remains outside the plugin runtime; the four native analytical dashboards replace static images for current engagement, finance, nutrition, and exercise testing
-- Planning projections refresh when the user confirms a Daily or Weekly dashboard sync; arbitrary note edits are not silently written to EH.db
+- Only today's eligible Daily Form projection refreshes automatically on Calendar open/refresh; broad current/future Daily Form synchronization still requires confirmation. Imported Weekly Form sessions are read directly by the Calendar, while Sync week remains an optional confirmed action for materializing those sessions into Daily Notes
 - SQL.js still replaces the whole database file for a native write; the safety service mitigates but does not remove the memory/large-file limitation
 - Planned exercise prescriptions are not mapped yet
 - No overnight sessions

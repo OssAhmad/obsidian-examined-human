@@ -31,7 +31,10 @@ export function createSessionElement(
   element.style.left = `calc(${overlapColumn * 100 / overlapCount}% + 2px)`;
   element.style.width = `calc(${100 / overlapCount}% - 4px)`;
   element.style.setProperty('--examined-human-event-color', colorForSession(event, sessionColors));
-  const sourceLabel = event.sourceKind === 'planned' ? ', planned journal session' : '';
+  const plannedSourceLabel = event.planningSource === 'weekly-plan'
+    ? 'imported weekly plan session'
+    : 'planned journal session';
+  const sourceLabel = event.sourceKind === 'planned' ? `, ${plannedSourceLabel}` : '';
   const estimatedLabel = event.timeEstimated ? ', estimated time' : '';
   const milestoneCount = event.milestoneDetails?.length ?? 0;
   const milestoneLabel = milestoneCount > 0
@@ -46,7 +49,11 @@ export function createSessionElement(
     `Type: ${event.sessionType || 'Not specified'}`,
     `${formatTimeOfDay(event.startMinutes)}–${formatTimeOfDay(event.endMinutes)} · ${formatMinutesAsClock(event.durationMinutes)}`,
   ];
-  if (event.sourceKind === 'planned') tooltipLines.push('Source: planned journal note');
+  if (event.sourceKind === 'planned') {
+    tooltipLines.push(event.planningSource === 'weekly-plan'
+      ? 'Source: imported Weekly Form'
+      : 'Source: planned journal note');
+  }
   if (event.timeEstimated) tooltipLines.push('Time is an estimated display slot.');
   if (event.dataWarning) tooltipLines.push(event.dataWarning);
   if (milestoneCount > 0) {

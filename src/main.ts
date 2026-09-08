@@ -55,6 +55,8 @@ export default class ExaminedHumanPlugin extends Plugin {
   database!: ExaminedHumanDatabase;
   nativeLogger!: NativeLoggerWriteService;
   private refreshPromise: Promise<void> | null = null;
+  private todayPlanningSyncPromise: Promise<void> | null = null;
+  private lastTodayPlanningSyncError: string | null = null;
 
   async onload(): Promise<void> {
     await this.loadSettings();
@@ -207,6 +209,58 @@ export default class ExaminedHumanPlugin extends Plugin {
     } catch (error) {
       new Notice(`EH Form discovery stopped: ${error instanceof Error ? error.message : String(error)}`, 12_000);
     }
+  }
+
+  async syncTodayPlanningFromDailyForm(): Promise<void> {
+    if (this.todayPlanningSyncPromise) return this.todayPlanningSyncPromise;
+    if (this.nativeLogger.isRunning) return;
+    this.todayPlanningSyncPromise = this.performTodayPlanningSync();
+    try {
+      await this.todayPlanningSyncPromise;
+      this.lastTodayPlanningSyncError = null;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (message !== this.lastTodayPlanningSyncError) {
+        new Notice(`Today's Daily Form could not be projected: ${message}`, 12_000);
+        this.lastTodayPlanningSyncError = message;
+      }
+    } finally {
+      this.todayPlanningSyncPromise = null;
+    }
+  }
+
+  private async performTodayPlanningSync(): Promise<void> {
+    const today = moment().format('YYYY-MM-DD');
+    const discovery = await this.discoverForms();
+    const matches = discovery.forms.filter((form) => form.kind === 'daily' && form.date === today);
+    if (matches.length > 1) {
+      throw new Error(`Multiple eligible Daily Forms declare ${today}. Keep exactly one current form.`);
+    }
+
+    let note: {
+      noteDate: string;
+      fileName: string;
+      filePath: string;
+      sourceText: string;
+    } | null = null;
+    if (matches.length === 1) {
+      const discovered = matches[0];
+      const file = this.app.vault.getAbstractFileByPath(discovered.filePath);
+      if (!(file instanceof TFile)) throw new Error(`Daily Form was not found: ${discovered.filePath}`);
+      const sourceText = await this.app.vault.read(file);
+      const dailyForms = formsInText(file, sourceText).filter((form) => form.kind === 'daily');
+      if (dailyForms.length !== 1 || dailyForms[0].date !== today) {
+        throw new Error(`${file.path} must contain exactly one Daily Form dated ${today}.`);
+      }
+      note = { noteDate: today, fileName: file.name, filePath: file.path, sourceText };
+    }
+
+    const result = await this.nativeLogger.syncPlanningDate({
+      databasePath: this.settings.databasePath,
+      noteDate: today,
+      note,
+    });
+    if (result.changed) this.database = new ExaminedHumanDatabase(this.app);
   }
 
   async markImportedEhFormFileIfComplete(file: TFile): Promise<boolean> {

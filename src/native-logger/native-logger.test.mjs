@@ -6,7 +6,7 @@ import initSqlJs from 'sql.js';
 import { inspectDailyNote, writeHistoricalDailyNote } from './daily-note.ts';
 import { queryMealComponentState, writeMealInspection } from './meal-import.ts';
 import { inspectMeals } from './meals.ts';
-import { inspectPlannedNote, syncPlanningNotes } from './planning.ts';
+import { inspectPlannedNote, syncPlanningDate, syncPlanningNotes } from './planning.ts';
 import {
   inspectWeeklyPlan,
   prepareWeeklyDailyNoteWrites,
@@ -386,6 +386,76 @@ bad time | study | Project Alpha | draft
   const second = syncPlanningNotes(db, [], '2026-08-21');
   assert.equal(second.deletedSourceCount, 1);
   assert.equal(db.exec('SELECT lifecycle_state FROM note_sources')[0].values[0][0], 'deleted');
+  assert.equal(db.exec('SELECT COUNT(*) FROM planned_sessions')[0].values[0][0], 0);
+  db.close();
+});
+
+test('automatic Calendar planning sync changes only today and is idempotent', () => {
+  const db = database();
+  const note = (date, interval, checksum) => ({
+    noteDate: date,
+    fileName: `${date}.md`,
+    filePath: `Journal/${date}.md`,
+    sourceText: `#### EH Daily Form
+date: ${date}
+##### Sessions
+ENTRIES:
+${interval} | study | Project Alpha | planned work
+#### END`,
+    sourceChecksum: checksum,
+  });
+  const today = note('2026-08-21', '09:00-10:00', 'today-one');
+  const future = note('2026-08-22', '11:00-12:00', 'future-one');
+  syncPlanningNotes(db, [today, future], '2026-08-21');
+
+  const replacement = note('2026-08-21', '14:00-15:30', 'today-two');
+  const projected = syncPlanningDate(db, '2026-08-21', replacement);
+  assert.deepEqual(projected, { noteDate: '2026-08-21', action: 'projected', changed: true });
+  assert.deepEqual(
+    db.exec('SELECT date, start_time, end_time FROM planned_sessions ORDER BY date')[0].values,
+    [
+      ['2026-08-21', '14:00', '15:30'],
+      ['2026-08-22', '11:00', '12:00'],
+    ],
+  );
+
+  const unchanged = syncPlanningDate(db, '2026-08-21', replacement);
+  assert.deepEqual(unchanged, { noteDate: '2026-08-21', action: 'unchanged', changed: false });
+
+  const deleted = syncPlanningDate(db, '2026-08-21', null);
+  assert.deepEqual(deleted, { noteDate: '2026-08-21', action: 'deleted', changed: true });
+  assert.deepEqual(
+    db.exec('SELECT date, start_time, end_time FROM planned_sessions ORDER BY date')[0].values,
+    [['2026-08-22', '11:00', '12:00']],
+  );
+  assert.deepEqual(
+    db.exec('SELECT note_date, lifecycle_state FROM note_sources ORDER BY note_date')[0].values,
+    [
+      ['2026-08-21', 'deleted'],
+      ['2026-08-22', 'planned'],
+    ],
+  );
+  db.close();
+});
+
+test('automatic Calendar planning sync never replaces canonical history', () => {
+  const db = database();
+  db.run(`INSERT INTO imported_notes (note_date, file_name, file_path, checksum)
+    VALUES ('2026-08-21', '2026-08-21.md', 'Journal/2026-08-21.md', 'canonical')`);
+  const result = syncPlanningDate(db, '2026-08-21', {
+    noteDate: '2026-08-21',
+    fileName: '2026-08-21.md',
+    filePath: 'Journal/2026-08-21.md',
+    sourceText: `#### EH Daily Form
+date: 2026-08-21
+##### Sessions
+ENTRIES:
+09:00-10:00 | study | Project Alpha | should not project
+#### END`,
+    sourceChecksum: 'planning',
+  });
+  assert.deepEqual(result, { noteDate: '2026-08-21', action: 'unchanged', changed: false });
+  assert.equal(db.exec('SELECT COUNT(*) FROM note_sources')[0].values[0][0], 0);
   assert.equal(db.exec('SELECT COUNT(*) FROM planned_sessions')[0].values[0][0], 0);
   db.close();
 });

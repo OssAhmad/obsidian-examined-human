@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+### Changed
+
+- Made the Calendar render current and future sessions directly from the latest imported version of the covering Weekly Form when no canonical Daily history or Daily Form projection owns that date; Sync week is now optional for note materialization rather than required for calendar visibility
+- Made Calendar open and refresh automatically reconcile the eligible Daily Form dated today into the backup-free `planned_sessions` projection, without changing projections for other dates
+
 ## [0.9.4] - 2026-09-02
 
 ### Added

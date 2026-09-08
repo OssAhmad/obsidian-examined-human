@@ -81,6 +81,7 @@ export interface CalendarEvent {
   durationMinutes: number;
   notes: string | null;
   sourceKind?: 'actual' | 'planned';
+  planningSource?: 'daily-note' | 'weekly-plan';
   timeEstimated?: boolean;
   planningWarnings?: string[];
   exerciseDetails?: SessionExerciseDetails[];

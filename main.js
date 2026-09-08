@@ -2813,11 +2813,75 @@ function queryPlannedEvents(db, startDate, endDate, importedDates, issues) {
       durationMinutes: (_h = nullableNumber(row.duration_minutes)) != null ? _h : end - start,
       notes: nullableText(row.notes),
       sourceKind: "planned",
+      planningSource: "daily-note",
       timeEstimated: Number(row.time_is_estimated) === 1,
       planningWarnings: warningText ? warningText.split("\n").filter(Boolean) : []
     });
   }
   return events;
+}
+function queryWeeklyPlannedEvents(db, startDate, endDate, todayDate, excludedDates, issues) {
+  var _a, _b, _c, _d, _e, _f, _g, _h;
+  const events = [];
+  const dayStates = {};
+  if (!hasWeeklyPlanningSchema(db)) return { events, dayStates };
+  const weeklyRows = rows(db, `
+    SELECT wps.id,
+           wps.date,
+           wps.start_time,
+           wps.end_time,
+           wps.duration_minutes,
+           wps.notes,
+           wp.source_file_name,
+           st.code AS session_type,
+           e.name AS engagement_name,
+           et.code AS engagement_type
+    FROM weekly_plan_sessions AS wps
+    JOIN weekly_plans AS wp ON wp.id = wps.weekly_plan_id
+    LEFT JOIN session_types AS st ON st.id = wps.session_type_id
+    LEFT JOIN engagements AS e ON e.id = wps.engagement_id
+    LEFT JOIN engagement_types AS et ON et.id = e.type_id
+    WHERE wps.date >= ? AND wps.date <= ?
+      AND wps.date >= ?
+    ORDER BY wps.date, wps.start_time, wps.id
+  `, [startDate, endDate, todayDate]);
+  for (const row of weeklyRows) {
+    const date = String(row.date);
+    if (excludedDates.has(date)) continue;
+    const id = `weekly:${String(row.id)}`;
+    const start = parseDatabaseTime(String((_a = row.start_time) != null ? _a : ""));
+    const end = parseDatabaseTime(String((_b = row.end_time) != null ? _b : ""));
+    if (start == null || end == null || end <= start) {
+      issues.push({ sessionId: id, message: `Weekly planned session ${id} has an invalid display time.` });
+      continue;
+    }
+    const engagementName = (_c = nullableText(row.engagement_name)) != null ? _c : "Untitled session";
+    const sourceFileName = (_d = nullableText(row.source_file_name)) != null ? _d : "Weekly Form";
+    events.push({
+      id,
+      date,
+      sessionType: (_e = nullableText(row.session_type)) != null ? _e : "",
+      engagementName,
+      engagementType: (_f = nullableText(row.engagement_type)) != null ? _f : "",
+      title: titleForEngagement(engagementName),
+      kind: "timed",
+      startMinutes: start,
+      endMinutes: end,
+      durationMinutes: (_g = nullableNumber(row.duration_minutes)) != null ? _g : end - start,
+      notes: nullableText(row.notes),
+      sourceKind: "planned",
+      planningSource: "weekly-plan",
+      timeEstimated: false,
+      planningWarnings: []
+    });
+    (_h = dayStates[date]) != null ? _h : dayStates[date] = {
+      source: "planned",
+      lifecycleState: "weekly-plan",
+      overdue: false,
+      message: `Imported Weekly Form ${sourceFileName} supplies this date directly; no Daily Note is required.`
+    };
+  }
+  return { events, dayStates };
 }
 function nullableNumber(value) {
   if (value == null) return null;
@@ -4353,6 +4417,21 @@ function querySessions(db, startDate, endDate, todayDate = startDate, includePla
   attachMilestoneDetails(db, startDate, endDate, events);
   if (includePlanning) {
     events.push(...queryPlannedEvents(db, startDate, endDate, importedDates, issues));
+    const excludedWeeklyDates = /* @__PURE__ */ new Set([
+      ...importedDates,
+      ...Object.keys(dayStates),
+      ...events.filter((event) => event.sourceKind !== "planned").map((event) => event.date)
+    ]);
+    const weeklyPlanning = queryWeeklyPlannedEvents(
+      db,
+      startDate,
+      endDate,
+      todayDate,
+      excludedWeeklyDates,
+      issues
+    );
+    events.push(...weeklyPlanning.events);
+    Object.assign(dayStates, weeklyPlanning.dayStates);
   }
   for (const [date, state] of Object.entries(dayStates)) {
     if (state.overdue) {
@@ -6474,6 +6553,42 @@ function projectNote(db, note) {
     parseStatus
   };
 }
+function syncPlanningDate(db, noteDate, note) {
+  var _a, _b, _c;
+  assertSchemaV1(db);
+  requireIsoDate(noteDate, "Planning date");
+  if (note && note.noteDate !== noteDate) {
+    throw new Error(`Daily Form declares ${note.noteDate}, but the Calendar is syncing ${noteDate}.`);
+  }
+  const existing = queryRows(db, `SELECT id, file_name, file_path, content_checksum, lifecycle_state
+    FROM note_sources WHERE note_date = ?`, [noteDate])[0];
+  const canonical = queryRows(db, "SELECT 1 AS present FROM imported_notes WHERE note_date = ? LIMIT 1", [noteDate])[0];
+  if (canonical || String((_a = existing == null ? void 0 : existing.lifecycle_state) != null ? _a : "") === "finalized") {
+    return { noteDate, action: "unchanged", changed: false };
+  }
+  if (note) {
+    if (existing && String(existing.file_name) === note.fileName && String(existing.file_path) === note.filePath && String(existing.content_checksum) === note.sourceChecksum && String(existing.lifecycle_state) === "planned") {
+      return { noteDate, action: "unchanged", changed: false };
+    }
+    projectNote(db, note);
+    return { noteDate, action: "projected", changed: true };
+  }
+  if (!existing) {
+    return { noteDate, action: "unchanged", changed: false };
+  }
+  const plannedCount = Number((_c = (_b = queryRows(
+    db,
+    "SELECT COUNT(*) AS count FROM planned_sessions WHERE source_note_id = ?",
+    [existing.id]
+  )[0]) == null ? void 0 : _b.count) != null ? _c : 0);
+  if (String(existing.lifecycle_state) === "deleted" && plannedCount === 0) {
+    return { noteDate, action: "unchanged", changed: false };
+  }
+  db.run("DELETE FROM planned_sessions WHERE source_note_id = ?", [existing.id]);
+  db.run(`UPDATE note_sources SET lifecycle_state = 'deleted', parse_status = 'ok',
+    last_error = NULL, last_scanned_at = CURRENT_TIMESTAMP WHERE id = ?`, [existing.id]);
+  return { noteDate, action: "deleted", changed: true };
+}
 function syncPlanningNotes(db, notes, cutoffDate) {
   assertSchemaV1(db);
   requireIsoDate(cutoffDate, "Planning cutoff");
@@ -7675,6 +7790,35 @@ var NativeLoggerWriteService = class {
       };
     });
   }
+  syncPlanningDate(request) {
+    return this.enqueue(async () => {
+      const note = request.note == null ? null : (await this.planningInputs([request.note]))[0];
+      const preview = await this.inspectDatabase(
+        request.databasePath,
+        (db) => syncPlanningDate(db, request.noteDate, note)
+      );
+      if (!preview.changed) {
+        return {
+          ...preview,
+          backupPath: null,
+          backupsPruned: 0,
+          backupRetentionWarning: null
+        };
+      }
+      const mutation = await this.mutateDatabase(
+        request.databasePath,
+        "planning-date-sync",
+        (db) => syncPlanningDate(db, request.noteDate, note),
+        "ephemeral"
+      );
+      return {
+        ...mutation.value,
+        backupPath: mutation.backupPath,
+        backupsPruned: mutation.backupsPruned,
+        backupRetentionWarning: mutation.backupRetentionWarning
+      };
+    });
+  }
   async inspectWeekly(request) {
     const input = await this.weeklyInput(request);
     return this.inspectDatabase(request.databasePath, (db) => inspectWeeklyPlan(db, input));
@@ -8644,7 +8788,11 @@ var SessionDetailsModal = class extends import_obsidian7.Modal {
     this.addDetail(details, "Session type", this.event.sessionType);
     this.addDetail(details, "Engagement", this.event.engagementName);
     this.addDetail(details, "Engagement type", this.event.engagementType || "\u2014");
-    this.addDetail(details, "Source", this.event.sourceKind === "planned" ? "Planned journal note" : "Imported Examined Human data");
+    let source = "Imported Examined Human data";
+    if (this.event.sourceKind === "planned") {
+      source = this.event.planningSource === "weekly-plan" ? "Imported Weekly Form" : "Planned journal note";
+    }
+    this.addDetail(details, "Source", source);
     if (this.event.sessionType.trim().toLowerCase() === "exercise" || this.event.exerciseDetails) {
       this.renderExerciseDetails(contentEl);
     }
@@ -8769,7 +8917,8 @@ function createSessionElement(app, event, overlapColumn, overlapCount, vertical,
   element.style.left = `calc(${overlapColumn * 100 / overlapCount}% + 2px)`;
   element.style.width = `calc(${100 / overlapCount}% - 4px)`;
   element.style.setProperty("--examined-human-event-color", colorForSession(event, sessionColors));
-  const sourceLabel = event.sourceKind === "planned" ? ", planned journal session" : "";
+  const plannedSourceLabel = event.planningSource === "weekly-plan" ? "imported weekly plan session" : "planned journal session";
+  const sourceLabel = event.sourceKind === "planned" ? `, ${plannedSourceLabel}` : "";
   const estimatedLabel = event.timeEstimated ? ", estimated time" : "";
   const milestoneCount = (_b = (_a = event.milestoneDetails) == null ? void 0 : _a.length) != null ? _b : 0;
   const milestoneLabel = milestoneCount > 0 ? `, ${milestoneCount} milestone${milestoneCount === 1 ? "" : "s"} achieved` : "";
@@ -8782,7 +8931,9 @@ function createSessionElement(app, event, overlapColumn, overlapCount, vertical,
     `Type: ${event.sessionType || "Not specified"}`,
     `${formatTimeOfDay(event.startMinutes)}\u2013${formatTimeOfDay(event.endMinutes)} \xB7 ${formatMinutesAsClock(event.durationMinutes)}`
   ];
-  if (event.sourceKind === "planned") tooltipLines.push("Source: planned journal note");
+  if (event.sourceKind === "planned") {
+    tooltipLines.push(event.planningSource === "weekly-plan" ? "Source: imported Weekly Form" : "Source: planned journal note");
+  }
   if (event.timeEstimated) tooltipLines.push("Time is an estimated display slot.");
   if (event.dataWarning) tooltipLines.push(event.dataWarning);
   if (milestoneCount > 0) {
@@ -12482,6 +12633,7 @@ var TimelineView = class extends import_obsidian18.ItemView {
   }
   async onOpen() {
     this.contentEl.addClass("examined-human-view");
+    await this.plugin.syncTodayPlanningFromDailyForm();
     await this.renderCalendar({
       viewport: {
         centerDate: (0, import_obsidian18.moment)().format("YYYY-MM-DD"),
@@ -12491,7 +12643,7 @@ var TimelineView = class extends import_obsidian18.ItemView {
     this.registerEvent(this.app.vault.on("modify", (file) => {
       const configuredPath = this.plugin.settings.databasePath;
       try {
-        if ((0, import_obsidian18.normalizePath)(file.path) === this.plugin.database.normalizeVaultPath(configuredPath)) void this.refresh();
+        if ((0, import_obsidian18.normalizePath)(file.path) === this.plugin.database.normalizeVaultPath(configuredPath) && !this.plugin.nativeLogger.isRunning) void this.refresh();
       } catch (e) {
       }
     }));
@@ -12521,6 +12673,7 @@ var TimelineView = class extends import_obsidian18.ItemView {
     this.contentEl.empty();
   }
   async refresh() {
+    await this.plugin.syncTodayPlanningFromDailyForm();
     await this.renderCalendar({ viewport: this.captureViewport() });
   }
   get pxPerMinute() {
@@ -13677,6 +13830,8 @@ var ExaminedHumanPlugin = class extends import_obsidian21.Plugin {
     super(...arguments);
     this.settings = DEFAULT_SETTINGS;
     this.refreshPromise = null;
+    this.todayPlanningSyncPromise = null;
+    this.lastTodayPlanningSyncError = null;
   }
   async onload() {
     await this.loadSettings();
@@ -13847,6 +14002,49 @@ var ExaminedHumanPlugin = class extends import_obsidian21.Plugin {
     } catch (error) {
       new import_obsidian21.Notice(`EH Form discovery stopped: ${error instanceof Error ? error.message : String(error)}`, 12e3);
     }
+  }
+  async syncTodayPlanningFromDailyForm() {
+    if (this.todayPlanningSyncPromise) return this.todayPlanningSyncPromise;
+    if (this.nativeLogger.isRunning) return;
+    this.todayPlanningSyncPromise = this.performTodayPlanningSync();
+    try {
+      await this.todayPlanningSyncPromise;
+      this.lastTodayPlanningSyncError = null;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (message !== this.lastTodayPlanningSyncError) {
+        new import_obsidian21.Notice(`Today's Daily Form could not be projected: ${message}`, 12e3);
+        this.lastTodayPlanningSyncError = message;
+      }
+    } finally {
+      this.todayPlanningSyncPromise = null;
+    }
+  }
+  async performTodayPlanningSync() {
+    const today = (0, import_obsidian21.moment)().format("YYYY-MM-DD");
+    const discovery = await this.discoverForms();
+    const matches = discovery.forms.filter((form) => form.kind === "daily" && form.date === today);
+    if (matches.length > 1) {
+      throw new Error(`Multiple eligible Daily Forms declare ${today}. Keep exactly one current form.`);
+    }
+    let note = null;
+    if (matches.length === 1) {
+      const discovered = matches[0];
+      const file = this.app.vault.getAbstractFileByPath(discovered.filePath);
+      if (!(file instanceof import_obsidian21.TFile)) throw new Error(`Daily Form was not found: ${discovered.filePath}`);
+      const sourceText = await this.app.vault.read(file);
+      const dailyForms = formsInText(file, sourceText).filter((form) => form.kind === "daily");
+      if (dailyForms.length !== 1 || dailyForms[0].date !== today) {
+        throw new Error(`${file.path} must contain exactly one Daily Form dated ${today}.`);
+      }
+      note = { noteDate: today, fileName: file.name, filePath: file.path, sourceText };
+    }
+    const result = await this.nativeLogger.syncPlanningDate({
+      databasePath: this.settings.databasePath,
+      noteDate: today,
+      note
+    });
+    if (result.changed) this.database = new ExaminedHumanDatabase(this.app);
   }
   async markImportedEhFormFileIfComplete(file) {
     try {
