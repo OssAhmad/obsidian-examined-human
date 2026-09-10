@@ -1093,7 +1093,7 @@ export function queryWeeklyPlan(db: Database, weekStartDate: string): WeeklyPlan
            wps.duration_minutes, st.code AS session_type,
            e.name AS engagement_name, wps.notes
     FROM weekly_plan_sessions AS wps
-    JOIN session_types AS st ON st.id = wps.session_type_id
+    LEFT JOIN session_types AS st ON st.id = wps.session_type_id
     JOIN engagements AS e ON e.id = wps.engagement_id
     WHERE wps.weekly_plan_id = ?
     ORDER BY wps.date, wps.start_time, wps.id
@@ -1118,7 +1118,7 @@ export function queryWeeklyPlan(db: Database, weekStartDate: string): WeeklyPlan
       startTime: String(row.start_time),
       endTime: String(row.end_time),
       durationMinutes: Number(row.duration_minutes),
-      sessionType: String(row.session_type),
+      sessionType: nullableText(row.session_type) ?? '',
       engagementName: String(row.engagement_name),
       notes: nullableText(row.notes),
     })),
@@ -1500,7 +1500,7 @@ export function queryEngagementDashboard(
     GROUP BY st.id, st.code
     ORDER BY total_minutes DESC, st.code COLLATE NOCASE
   `, [engagementId, startDate, startDate, endDate]).map((row): EngagementSessionTypeRecord => ({
-    sessionType: String(row.session_type),
+    sessionType: nullableText(row.session_type) ?? '',
     sessionCount: Number(row.session_count ?? 0),
     totalMinutes: Number(row.total_minutes ?? 0),
   }));
@@ -1607,7 +1607,7 @@ export function queryEngagementDashboard(
            st.code AS session_type,
            s.notes
     FROM sessions AS s
-    JOIN session_types AS st ON st.id = s.session_type_id
+    LEFT JOIN session_types AS st ON st.id = s.session_type_id
     WHERE s.engagement_id = ?
       AND (? IS NULL OR s.date >= ?)
       AND s.date <= ?
@@ -1619,7 +1619,7 @@ export function queryEngagementDashboard(
     startTime: nullableText(row.start_time),
     endTime: nullableText(row.end_time),
     durationMinutes: Math.max(0, Number(row.duration_minutes ?? 0)),
-    sessionType: String(row.session_type),
+    sessionType: nullableText(row.session_type) ?? '',
     notes: nullableText(row.notes),
   }));
 
@@ -2245,7 +2245,7 @@ export function queryCommandCatalog(db: Database): CommandCatalog {
   const exerciseAliases = aliases('exercise_aliases', 'exercise_id');
   const accountAliases = aliases('account_aliases', 'account_id');
   const taxonomy = (table: string): string[] => rows(db, `
-    SELECT code FROM "${table}" ORDER BY code COLLATE NOCASE, id
+    SELECT code FROM "${table}" WHERE is_active = 1 ORDER BY code COLLATE NOCASE, id
   `).map((row) => String(row.code));
   return {
     foods: rows(db, 'SELECT id, name FROM foods ORDER BY name COLLATE NOCASE, id')
@@ -2298,7 +2298,7 @@ export function queryExerciseDashboard(
              JOIN exercise_sets AS set_row ON set_row.session_exercise_id = link.id
              WHERE link.session_id = session_row.id)), 0) AS set_count
     FROM sessions AS session_row
-    JOIN session_types AS session_type ON session_type.id = session_row.session_type_id
+    LEFT JOIN session_types AS session_type ON session_type.id = session_row.session_type_id
     WHERE ${workoutPredicate}
       AND (? IS NULL OR session_row.date >= ?)
       AND session_row.date <= ?
@@ -2327,7 +2327,7 @@ export function queryExerciseDashboard(
            MAX(session_row.date) AS last_date
     FROM session_exercises AS link
     JOIN sessions AS session_row ON session_row.id = link.session_id
-    JOIN session_types AS session_type ON session_type.id = session_row.session_type_id
+    LEFT JOIN session_types AS session_type ON session_type.id = session_row.session_type_id
     JOIN exercises AS exercise ON exercise.id = link.exercise_id
     LEFT JOIN exercise_sets AS set_row ON set_row.session_exercise_id = link.id
     WHERE ${workoutPredicate}
@@ -2359,7 +2359,7 @@ export function queryExerciseDashboard(
     JOIN muscles AS muscle ON muscle.id = mapping.muscle_id
     JOIN session_exercises AS link ON link.exercise_id = mapping.exercise_id
     JOIN sessions AS session_row ON session_row.id = link.session_id
-    JOIN session_types AS session_type ON session_type.id = session_row.session_type_id
+    LEFT JOIN session_types AS session_type ON session_type.id = session_row.session_type_id
     LEFT JOIN exercise_sets AS set_row ON set_row.session_exercise_id = link.id
     WHERE ${workoutPredicate}
       AND (? IS NULL OR session_row.date >= ?)
@@ -2388,7 +2388,7 @@ export function queryExerciseDashboard(
            COALESCE(SUM(set_row.distance), 0) AS total_distance,
            COALESCE(SUM(COALESCE(set_row.duration_minutes, set_row.duration_seconds / 60.0, 0)), 0) AS measured_duration_minutes
     FROM sessions AS session_row
-    JOIN session_types AS session_type ON session_type.id = session_row.session_type_id
+    LEFT JOIN session_types AS session_type ON session_type.id = session_row.session_type_id
     JOIN engagements AS engagement ON engagement.id = session_row.engagement_id
     LEFT JOIN session_exercises AS link ON link.session_id = session_row.id
     LEFT JOIN exercise_sets AS set_row ON set_row.session_exercise_id = link.id
@@ -2476,7 +2476,7 @@ export function querySessions(
            et.code AS engagement_type
     FROM sessions AS s
     JOIN engagements AS e ON e.id = s.engagement_id
-    JOIN session_types AS st ON st.id = s.session_type_id
+    LEFT JOIN session_types AS st ON st.id = s.session_type_id
     JOIN engagement_types AS et ON et.id = e.type_id
     WHERE s.date >= ? AND s.date <= ?
   `, [startDate, endDate]);

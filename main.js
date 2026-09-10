@@ -2237,7 +2237,40 @@ var SESSION_TYPES = [
   "work",
   "writing"
 ];
+var ENGAGEMENT_TYPES = [
+  "article",
+  "authorship",
+  "book",
+  "career",
+  "certification",
+  "course",
+  "exam",
+  "fitness",
+  "leisure",
+  "maintenance",
+  "practice",
+  "relationship",
+  "speech",
+  "startup"
+];
+var DEFAULT_ENGAGEMENT_COLORS = {
+  article: "#d946ef",
+  authorship: "#a855f7",
+  book: "#06b6d4",
+  career: "#22c55e",
+  certification: "#3b82f6",
+  course: "#2563eb",
+  exam: "#eab308",
+  fitness: "#f97316",
+  leisure: "#14b8a6",
+  maintenance: "#78716c",
+  practice: "#6366f1",
+  relationship: "#ec4899",
+  speech: "#f59e0b",
+  startup: "#10b981"
+};
 var DEFAULT_SESSION_COLORS = {
+  ...DEFAULT_ENGAGEMENT_COLORS,
   authorship: "#a855f7",
   chore: "#64748b",
   exercise: "#f97316",
@@ -2287,14 +2320,17 @@ function shouldShowSessionTypeFooter(renderedHeightPx, stacked) {
 function sessionFooterText(event) {
   var _a, _b;
   const milestoneCount = (_b = (_a = event.milestoneDetails) == null ? void 0 : _a.length) != null ? _b : 0;
-  if (milestoneCount === 0) return event.sessionType;
-  return `${event.sessionType}, ${milestoneCount} milestone${milestoneCount === 1 ? "" : "s"}`;
+  const parts = [];
+  if (event.sessionType.trim()) parts.push(event.sessionType);
+  if (milestoneCount > 0) parts.push(`${milestoneCount} milestone${milestoneCount === 1 ? "" : "s"}`);
+  return parts.join(", ");
 }
 function colorForSession(event, colors) {
   var _a;
   const sessionType = event.sessionType.trim().toLowerCase();
   if (sessionType === "chor") return UNKNOWN_TYPE_COLOR;
-  return (_a = colors[sessionType]) != null ? _a : UNKNOWN_TYPE_COLOR;
+  const engagementType = event.engagementType.trim().toLowerCase();
+  return (_a = colors[sessionType || engagementType]) != null ? _a : UNKNOWN_TYPE_COLOR;
 }
 
 // src/native-logger/database-utils.ts
@@ -2339,6 +2375,16 @@ function assertSchemaV1(db) {
   var _a, _b;
   const version = Number((_b = (_a = queryRows(db, "PRAGMA user_version")[0]) == null ? void 0 : _a.user_version) != null ? _b : 0);
   if (version !== 1) throw new Error(`Native EH import requires official Data Schema v1; this database reports v${version}.`);
+}
+function hasOptionalSessionTypeSchema(db) {
+  const column = queryRows(db, "PRAGMA table_info('sessions')").find((row) => String(row.name) === "session_type_id");
+  return Boolean(column) && Number(column == null ? void 0 : column.notnull) === 0;
+}
+function assertOptionalSessionTypeSchema(db) {
+  assertSchemaV1(db);
+  if (!hasOptionalSessionTypeSchema(db)) {
+    throw new Error("Optional session types are not enabled. Upgrade this official Data Schema v1 database in Examined Human settings before importing Daily Forms.");
+  }
 }
 function hasFinanceFoundationSchema(db) {
   const required = ["budget_plans", "budget_targets", "expected_financial_movements"];
@@ -3392,11 +3438,11 @@ function queryEngagementDashboard(db, requestedEngagementId, startDate, endDate)
     GROUP BY st.id, st.code
     ORDER BY total_minutes DESC, st.code COLLATE NOCASE
   `, [engagementId, startDate, startDate, endDate]).map((row) => {
-    var _a2, _b2;
+    var _a2, _b2, _c2;
     return {
-      sessionType: String(row.session_type),
-      sessionCount: Number((_a2 = row.session_count) != null ? _a2 : 0),
-      totalMinutes: Number((_b2 = row.total_minutes) != null ? _b2 : 0)
+      sessionType: (_a2 = nullableText(row.session_type)) != null ? _a2 : "",
+      sessionCount: Number((_b2 = row.session_count) != null ? _b2 : 0),
+      totalMinutes: Number((_c2 = row.total_minutes) != null ? _c2 : 0)
     };
   });
   const milestoneRows = rows(db, `
@@ -3501,21 +3547,21 @@ function queryEngagementDashboard(db, requestedEngagementId, startDate, endDate)
            st.code AS session_type,
            s.notes
     FROM sessions AS s
-    JOIN session_types AS st ON st.id = s.session_type_id
+    LEFT JOIN session_types AS st ON st.id = s.session_type_id
     WHERE s.engagement_id = ?
       AND (? IS NULL OR s.date >= ?)
       AND s.date <= ?
     ORDER BY s.date DESC, s.start_time DESC, s.id DESC
     LIMIT 12
   `, [engagementId, startDate, startDate, endDate]).map((row) => {
-    var _a2;
+    var _a2, _b2;
     return {
       id: Number(row.id),
       date: String(row.date),
       startTime: nullableText(row.start_time),
       endTime: nullableText(row.end_time),
       durationMinutes: Math.max(0, Number((_a2 = row.duration_minutes) != null ? _a2 : 0)),
-      sessionType: String(row.session_type),
+      sessionType: (_b2 = nullableText(row.session_type)) != null ? _b2 : "",
       notes: nullableText(row.notes)
     };
   });
@@ -4134,7 +4180,7 @@ function queryCommandCatalog(db) {
   const exerciseAliases = aliases("exercise_aliases", "exercise_id");
   const accountAliases = aliases("account_aliases", "account_id");
   const taxonomy = (table) => rows(db, `
-    SELECT code FROM "${table}" ORDER BY code COLLATE NOCASE, id
+    SELECT code FROM "${table}" WHERE is_active = 1 ORDER BY code COLLATE NOCASE, id
   `).map((row) => String(row.code));
   return {
     foods: rows(db, "SELECT id, name FROM foods ORDER BY name COLLATE NOCASE, id").map((row) => ({ id: Number(row.id), name: String(row.name) })),
@@ -4198,7 +4244,7 @@ function queryExerciseDashboard(db, startDate, endDate) {
              JOIN exercise_sets AS set_row ON set_row.session_exercise_id = link.id
              WHERE link.session_id = session_row.id)), 0) AS set_count
     FROM sessions AS session_row
-    JOIN session_types AS session_type ON session_type.id = session_row.session_type_id
+    LEFT JOIN session_types AS session_type ON session_type.id = session_row.session_type_id
     WHERE ${workoutPredicate}
       AND (? IS NULL OR session_row.date >= ?)
       AND session_row.date <= ?
@@ -4229,7 +4275,7 @@ function queryExerciseDashboard(db, startDate, endDate) {
            MAX(session_row.date) AS last_date
     FROM session_exercises AS link
     JOIN sessions AS session_row ON session_row.id = link.session_id
-    JOIN session_types AS session_type ON session_type.id = session_row.session_type_id
+    LEFT JOIN session_types AS session_type ON session_type.id = session_row.session_type_id
     JOIN exercises AS exercise ON exercise.id = link.exercise_id
     LEFT JOIN exercise_sets AS set_row ON set_row.session_exercise_id = link.id
     WHERE ${workoutPredicate}
@@ -4263,7 +4309,7 @@ function queryExerciseDashboard(db, startDate, endDate) {
     JOIN muscles AS muscle ON muscle.id = mapping.muscle_id
     JOIN session_exercises AS link ON link.exercise_id = mapping.exercise_id
     JOIN sessions AS session_row ON session_row.id = link.session_id
-    JOIN session_types AS session_type ON session_type.id = session_row.session_type_id
+    LEFT JOIN session_types AS session_type ON session_type.id = session_row.session_type_id
     LEFT JOIN exercise_sets AS set_row ON set_row.session_exercise_id = link.id
     WHERE ${workoutPredicate}
       AND (? IS NULL OR session_row.date >= ?)
@@ -4294,7 +4340,7 @@ function queryExerciseDashboard(db, startDate, endDate) {
            COALESCE(SUM(set_row.distance), 0) AS total_distance,
            COALESCE(SUM(COALESCE(set_row.duration_minutes, set_row.duration_seconds / 60.0, 0)), 0) AS measured_duration_minutes
     FROM sessions AS session_row
-    JOIN session_types AS session_type ON session_type.id = session_row.session_type_id
+    LEFT JOIN session_types AS session_type ON session_type.id = session_row.session_type_id
     JOIN engagements AS engagement ON engagement.id = session_row.engagement_id
     LEFT JOIN session_exercises AS link ON link.session_id = session_row.id
     LEFT JOIN exercise_sets AS set_row ON set_row.session_exercise_id = link.id
@@ -4373,7 +4419,7 @@ function querySessions(db, startDate, endDate, todayDate = startDate, includePla
            et.code AS engagement_type
     FROM sessions AS s
     JOIN engagements AS e ON e.id = s.engagement_id
-    JOIN session_types AS st ON st.id = s.session_type_id
+    LEFT JOIN session_types AS st ON st.id = s.session_type_id
     JOIN engagement_types AS et ON et.id = e.type_id
     WHERE s.date >= ? AND s.date <= ?
   `, [startDate, endDate]);
@@ -4773,7 +4819,7 @@ function layoutOverlappingEvents(events) {
 var import_obsidian3 = require("obsidian");
 
 // migrations/000_create_schema_v1.sql
-var create_schema_v1_default = "-- Empty official Examined Human Data Schema v1.\n-- This file contains structure and canonical taxonomy seeds only; it contains no user data.\n\nPRAGMA foreign_keys = OFF;\nBEGIN IMMEDIATE;\n\nCREATE TABLE schema_migrations (\n    version INTEGER PRIMARY KEY,\n    name TEXT NOT NULL,\n    applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP\n);\n\nCREATE TABLE session_types (\n    id INTEGER PRIMARY KEY,\n    code TEXT NOT NULL COLLATE NOCASE UNIQUE,\n    label TEXT NOT NULL,\n    description TEXT,\n    is_active INTEGER NOT NULL DEFAULT 1 CHECK (is_active IN (0, 1)),\n    sort_order INTEGER NOT NULL DEFAULT 0,\n    CHECK (code <> '' AND code = lower(trim(code)))\n);\n\nCREATE TABLE engagement_types (\n    id INTEGER PRIMARY KEY,\n    code TEXT NOT NULL COLLATE NOCASE UNIQUE,\n    label TEXT NOT NULL,\n    description TEXT,\n    is_active INTEGER NOT NULL DEFAULT 1 CHECK (is_active IN (0, 1)),\n    sort_order INTEGER NOT NULL DEFAULT 0,\n    CHECK (code <> '' AND code = lower(trim(code)))\n);\n\nCREATE TABLE engagement_statuses (\n    id INTEGER PRIMARY KEY,\n    code TEXT NOT NULL COLLATE NOCASE UNIQUE,\n    label TEXT NOT NULL,\n    description TEXT,\n    is_active INTEGER NOT NULL DEFAULT 1 CHECK (is_active IN (0, 1)),\n    sort_order INTEGER NOT NULL DEFAULT 0,\n    CHECK (code <> '' AND code = lower(trim(code)))\n);\n\nCREATE TABLE engagements (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    name TEXT NOT NULL,\n    type_id INTEGER NOT NULL REFERENCES engagement_types(id),\n    status_id INTEGER REFERENCES engagement_statuses(id),\n    start_date DATE,\n    target_date DATE,\n    completion_date DATE,\n    notes TEXT\n);\n\nCREATE TABLE sessions (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    engagement_id INTEGER NOT NULL REFERENCES engagements(id),\n    date DATE NOT NULL,\n    start_time TEXT,\n    end_time TEXT,\n    duration_minutes INTEGER,\n    session_type_id INTEGER NOT NULL REFERENCES session_types(id),\n    notes TEXT\n);\n\nCREATE TABLE note_sources (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    note_date TEXT NOT NULL UNIQUE,\n    file_name TEXT NOT NULL,\n    file_path TEXT NOT NULL UNIQUE,\n    content_checksum TEXT NOT NULL,\n    lifecycle_state TEXT NOT NULL,\n    parse_status TEXT NOT NULL,\n    last_error TEXT,\n    first_seen_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,\n    last_scanned_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,\n    last_import_attempt_at TEXT,\n    finalized_at TEXT\n);\n\nCREATE TABLE planned_sessions (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    source_note_id INTEGER NOT NULL REFERENCES note_sources(id) ON DELETE CASCADE,\n    source_ordinal INTEGER NOT NULL,\n    date TEXT NOT NULL,\n    interval_raw TEXT,\n    start_time TEXT NOT NULL,\n    end_time TEXT NOT NULL,\n    duration_minutes INTEGER NOT NULL,\n    time_is_estimated INTEGER NOT NULL DEFAULT 0,\n    session_type_raw TEXT NOT NULL,\n    resolved_session_type_id INTEGER REFERENCES session_types(id) ON DELETE SET NULL,\n    engagement_raw TEXT NOT NULL,\n    resolved_engagement_id INTEGER REFERENCES engagements(id) ON DELETE SET NULL,\n    notes TEXT,\n    warning_text TEXT,\n    UNIQUE (source_note_id, source_ordinal)\n);\n\nCREATE TABLE daily_metrics (\n    date DATE PRIMARY KEY,\n    mood REAL,\n    energy REAL,\n    stress REAL,\n    weight_kg REAL,\n    sleep_hours REAL,\n    calories INTEGER,\n    protein_g INTEGER,\n    fasted INTEGER DEFAULT 0,\n    dieted INTEGER DEFAULT 0,\n    studied INTEGER DEFAULT 0,\n    worked INTEGER DEFAULT 0,\n    exercised INTEGER DEFAULT 0,\n    notes TEXT\n);\n\nCREATE TABLE imported_notes (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    note_date DATE NOT NULL,\n    file_name TEXT NOT NULL,\n    file_path TEXT NOT NULL,\n    imported_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,\n    checksum TEXT,\n    UNIQUE (file_name)\n);\n\nCREATE TABLE accounts (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    name TEXT NOT NULL,\n    type TEXT,\n    address TEXT,\n    currency TEXT DEFAULT NULL\n);\n\nCREATE TABLE account_aliases (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    account_id INTEGER NOT NULL REFERENCES accounts(id),\n    alias TEXT NOT NULL UNIQUE\n);\n\nCREATE TABLE transactions (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    account_id INTEGER NOT NULL REFERENCES accounts(id),\n    date DATE NOT NULL,\n    amount REAL NOT NULL,\n    category TEXT,\n    description TEXT\n);\n\nCREATE TABLE budget_plans (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    period_start DATE NOT NULL,\n    period_end DATE NOT NULL,\n    source_file_name TEXT NOT NULL,\n    source_file_path TEXT NOT NULL,\n    source_checksum TEXT NOT NULL,\n    imported_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,\n    CHECK (julianday(period_end) - julianday(period_start) >= 3),\n    UNIQUE (period_start, period_end)\n);\n\nCREATE TABLE budget_targets (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    budget_plan_id INTEGER NOT NULL REFERENCES budget_plans(id) ON DELETE CASCADE,\n    source_ordinal INTEGER NOT NULL,\n    currency TEXT NOT NULL CHECK (trim(currency) <> ''),\n    amount REAL NOT NULL CHECK (amount <> 0),\n    engagement_id INTEGER NOT NULL REFERENCES engagements(id),\n    engagement_raw TEXT NOT NULL,\n    UNIQUE (budget_plan_id, source_ordinal)\n);\n\nCREATE TABLE expected_financial_movements (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    budget_plan_id INTEGER NOT NULL REFERENCES budget_plans(id) ON DELETE CASCADE,\n    source_ordinal INTEGER NOT NULL,\n    due_date DATE NOT NULL,\n    currency TEXT NOT NULL CHECK (trim(currency) <> ''),\n    amount REAL NOT NULL CHECK (amount <> 0),\n    account_id INTEGER NOT NULL REFERENCES accounts(id),\n    engagement_id INTEGER NOT NULL REFERENCES engagements(id),\n    engagement_raw TEXT NOT NULL,\n    description TEXT,\n    UNIQUE (budget_plan_id, source_ordinal)\n);\n\nCREATE TABLE valuation_rate_sets (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    rate_date DATE NOT NULL UNIQUE,\n    source_file_name TEXT NOT NULL,\n    source_file_path TEXT NOT NULL,\n    source_checksum TEXT NOT NULL,\n    imported_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP\n);\n\nCREATE TABLE valuation_rates (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    rate_set_id INTEGER NOT NULL REFERENCES valuation_rate_sets(id) ON DELETE CASCADE,\n    source_ordinal INTEGER NOT NULL,\n    unit_key TEXT NOT NULL,\n    unit_label TEXT NOT NULL,\n    value REAL NOT NULL CHECK (value > 0),\n    UNIQUE (rate_set_id, source_ordinal),\n    UNIQUE (rate_set_id, unit_key)\n);\n\nCREATE TABLE engagement_aliases (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    engagement_id INTEGER NOT NULL REFERENCES engagements(id),\n    alias TEXT NOT NULL UNIQUE\n);\n\nCREATE TABLE engagement_milestones (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    engagement_id INTEGER NOT NULL REFERENCES engagements(id),\n    name TEXT NOT NULL,\n    date DATE,\n    notes TEXT,\n    session_id INTEGER NOT NULL REFERENCES sessions(id) ON DELETE RESTRICT\n);\n\nCREATE TABLE engagement_measurements (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    milestone_id INTEGER NOT NULL REFERENCES engagement_milestones(id),\n    metric_name TEXT NOT NULL,\n    metric_value TEXT NOT NULL,\n    measurement_date DATE,\n    notes TEXT\n);\n\nCREATE TABLE exercises (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    name TEXT NOT NULL,\n    category TEXT\n);\n\nCREATE TABLE exercise_aliases (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    exercise_id INTEGER NOT NULL REFERENCES exercises(id),\n    alias TEXT NOT NULL UNIQUE\n);\n\nCREATE TABLE session_exercises (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    session_id INTEGER NOT NULL REFERENCES sessions(id),\n    exercise_id INTEGER NOT NULL REFERENCES exercises(id),\n    order_index INTEGER\n);\n\nCREATE TABLE exercise_sets (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    session_exercise_id INTEGER NOT NULL REFERENCES session_exercises(id),\n    set_number INTEGER,\n    weight REAL,\n    reps INTEGER,\n    distance REAL,\n    duration_minutes REAL,\n    notes TEXT,\n    pain_level REAL,\n    duration_seconds REAL\n);\n\nCREATE TABLE muscles (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    name TEXT NOT NULL UNIQUE,\n    body_region TEXT,\n    notes TEXT\n);\n\nCREATE TABLE exercise_muscles (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    exercise_id INTEGER NOT NULL REFERENCES exercises(id),\n    muscle_id INTEGER NOT NULL REFERENCES muscles(id),\n    role TEXT\n);\n\nCREATE TABLE people (\n    id INTEGER PRIMARY KEY,\n    name TEXT NOT NULL\n);\n\nCREATE TABLE reports (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    person_id INTEGER NOT NULL REFERENCES people(id),\n    report_timestamp TEXT NOT NULL,\n    report_type TEXT NOT NULL,\n    provider TEXT,\n    title TEXT,\n    relative_path TEXT NOT NULL\n);\n\nCREATE TABLE markers (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    name TEXT NOT NULL UNIQUE,\n    unit TEXT,\n    textbook_normal_range TEXT\n);\n\nCREATE TABLE measurements (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    report_id INTEGER NOT NULL REFERENCES reports(id),\n    marker_id INTEGER NOT NULL REFERENCES markers(id),\n    value REAL NOT NULL,\n    notes TEXT,\n    reference_range_at_time TEXT,\n    flag TEXT\n);\n\nCREATE TABLE stoicism_entries (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    date DATE NOT NULL,\n    score REAL,\n    notes TEXT\n);\n\nCREATE TABLE weekly_plans (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    week_start_date DATE NOT NULL UNIQUE,\n    source_file_name TEXT NOT NULL,\n    source_file_path TEXT NOT NULL UNIQUE,\n    source_checksum TEXT NOT NULL,\n    main_outcome TEXT,\n    important_deadline TEXT,\n    constraint_or_risk TEXT,\n    imported_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP\n);\n\nCREATE TABLE weekly_plan_sessions (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    weekly_plan_id INTEGER NOT NULL REFERENCES weekly_plans(id) ON DELETE CASCADE,\n    date DATE NOT NULL,\n    start_time TEXT NOT NULL,\n    end_time TEXT NOT NULL,\n    duration_minutes INTEGER NOT NULL CHECK (duration_minutes > 0),\n    session_type_id INTEGER REFERENCES session_types(id),\n    engagement_id INTEGER REFERENCES engagements(id),\n    original_cell_text TEXT NOT NULL,\n    notes TEXT,\n    source_row INTEGER NOT NULL,\n    source_column_start INTEGER NOT NULL,\n    source_column_end INTEGER NOT NULL,\n    UNIQUE (weekly_plan_id, date, start_time, end_time)\n);\n\nCREATE TABLE weekly_commitments (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    weekly_plan_id INTEGER NOT NULL REFERENCES weekly_plans(id) ON DELETE CASCADE,\n    source_ordinal INTEGER NOT NULL,\n    target_minutes INTEGER NOT NULL CHECK (target_minutes > 0),\n    engagement_id INTEGER NOT NULL REFERENCES engagements(id),\n    engagement_raw TEXT NOT NULL,\n    commitment_text TEXT NOT NULL,\n    UNIQUE (weekly_plan_id, source_ordinal)\n);\n\nCREATE TABLE meal_events (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    day DATE NOT NULL,\n    meal_type TEXT NOT NULL COLLATE NOCASE,\n    is_leisure INTEGER NOT NULL DEFAULT 0 CHECK (is_leisure IN (0, 1)),\n    classification_source TEXT NOT NULL DEFAULT 'default'\n        CHECK (classification_source IN ('default', 'manual', 'meal_limit', 'manual_and_meal_limit')),\n    calorie_limit_kcal REAL CHECK (calorie_limit_kcal IS NULL OR calorie_limit_kcal > 0),\n    notes TEXT,\n    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,\n    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,\n    CHECK (meal_type IN ('breakfast', 'lunch', 'dinner', 'snacks')),\n    UNIQUE (day, meal_type)\n);\n\nCREATE TABLE daily_meals (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    day DATE NOT NULL,\n    food TEXT NOT NULL CHECK (trim(food) <> ''),\n    calories INTEGER,\n    protein_g REAL,\n    meal_event_id INTEGER REFERENCES meal_events(id) ON DELETE CASCADE,\n    item_ordinal INTEGER CHECK (item_ordinal IS NULL OR item_ordinal > 0),\n    food_id INTEGER REFERENCES foods(id) ON DELETE SET NULL,\n    amount_g REAL CHECK (amount_g IS NULL OR amount_g > 0),\n    carbs_g REAL CHECK (carbs_g IS NULL OR carbs_g >= 0),\n    fat_g REAL CHECK (fat_g IS NULL OR fat_g >= 0),\n    salt_g REAL CHECK (salt_g IS NULL OR salt_g >= 0),\n    fiber_g REAL CHECK (fiber_g IS NULL OR fiber_g >= 0),\n    cholesterol_mg REAL CHECK (cholesterol_mg IS NULL OR cholesterol_mg >= 0)\n);\n\nCREATE TABLE foods (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    name TEXT NOT NULL COLLATE NOCASE UNIQUE CHECK (trim(name) <> ''),\n    category TEXT,\n    calories_kcal_per_100g REAL NOT NULL CHECK (calories_kcal_per_100g >= 0),\n    protein_g_per_100g REAL NOT NULL CHECK (protein_g_per_100g >= 0),\n    carbs_g_per_100g REAL NOT NULL CHECK (carbs_g_per_100g >= 0),\n    fat_g_per_100g REAL NOT NULL CHECK (fat_g_per_100g >= 0),\n    salt_g_per_100g REAL NOT NULL CHECK (salt_g_per_100g >= 0),\n    fiber_g_per_100g REAL CHECK (fiber_g_per_100g IS NULL OR fiber_g_per_100g >= 0),\n    cholesterol_mg_per_100g REAL CHECK (cholesterol_mg_per_100g IS NULL OR cholesterol_mg_per_100g >= 0),\n    notes TEXT,\n    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,\n    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP\n);\n\nCREATE TABLE food_aliases (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    food_id INTEGER NOT NULL REFERENCES foods(id) ON DELETE CASCADE,\n    alias TEXT NOT NULL COLLATE NOCASE UNIQUE CHECK (trim(alias) <> '')\n);\n\nCREATE TABLE daily_meal_assessments (\n    day DATE PRIMARY KEY,\n    daily_calorie_limit_kcal REAL NOT NULL CHECK (daily_calorie_limit_kcal >= 0),\n    minimum_protein_g REAL NOT NULL DEFAULT 0 CHECK (minimum_protein_g >= 0),\n    daily_calories_kcal REAL CHECK (daily_calories_kcal IS NULL OR daily_calories_kcal >= 0),\n    daily_metrics_calories_kcal REAL CHECK (daily_metrics_calories_kcal IS NULL OR daily_metrics_calories_kcal >= 0),\n    meal_items_calories_kcal REAL NOT NULL DEFAULT 0 CHECK (meal_items_calories_kcal >= 0),\n    daily_calorie_source TEXT NOT NULL DEFAULT 'missing'\n        CHECK (daily_calorie_source IN ('daily_metrics', 'meal_items', 'higher_of_both', 'missing')),\n    protein_g REAL CHECK (protein_g IS NULL OR protein_g >= 0),\n    recorded_dieted INTEGER CHECK (recorded_dieted IS NULL OR recorded_dieted IN (0, 1)),\n    evaluated_dieted INTEGER CHECK (evaluated_dieted IS NULL OR evaluated_dieted IN (0, 1)),\n    evaluated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP\n);\n\nCREATE TABLE note_import_components (\n    note_date DATE NOT NULL,\n    component TEXT NOT NULL CHECK (trim(component) <> ''),\n    lifecycle_state TEXT NOT NULL CHECK (lifecycle_state IN ('ephemeral', 'finalized')),\n    source_file_path TEXT NOT NULL CHECK (trim(source_file_path) <> ''),\n    source_checksum TEXT NOT NULL CHECK (trim(source_checksum) <> ''),\n    plugin_version TEXT NOT NULL CHECK (trim(plugin_version) <> ''),\n    row_count INTEGER NOT NULL DEFAULT 0 CHECK (row_count >= 0),\n    imported_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,\n    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,\n    PRIMARY KEY (note_date, component)\n);\n\nCREATE UNIQUE INDEX uq_accounts_name_nocase ON accounts(name COLLATE NOCASE);\nCREATE UNIQUE INDEX uq_account_aliases_alias_nocase ON account_aliases(alias COLLATE NOCASE);\nCREATE UNIQUE INDEX uq_engagements_name_nocase ON engagements(name COLLATE NOCASE);\nCREATE UNIQUE INDEX uq_engagement_aliases_alias_nocase ON engagement_aliases(alias COLLATE NOCASE);\nCREATE UNIQUE INDEX uq_exercise_aliases_alias_nocase ON exercise_aliases(alias COLLATE NOCASE);\nCREATE UNIQUE INDEX uq_muscles_name_nocase ON muscles(name COLLATE NOCASE);\nCREATE INDEX idx_sessions_date ON sessions(date);\nCREATE INDEX idx_sessions_engagement ON sessions(engagement_id);\nCREATE INDEX idx_sessions_type ON sessions(session_type_id);\nCREATE INDEX idx_engagements_type ON engagements(type_id);\nCREATE INDEX idx_engagements_status ON engagements(status_id);\nCREATE INDEX idx_note_sources_date ON note_sources(note_date);\nCREATE INDEX idx_note_sources_state ON note_sources(lifecycle_state);\nCREATE INDEX idx_planned_sessions_date ON planned_sessions(date);\nCREATE INDEX idx_planned_sessions_source ON planned_sessions(source_note_id);\nCREATE INDEX idx_planned_sessions_type ON planned_sessions(resolved_session_type_id);\nCREATE INDEX idx_transactions_date ON transactions(date);\nCREATE INDEX idx_budget_plans_period ON budget_plans(period_start, period_end);\nCREATE INDEX idx_budget_targets_plan_currency ON budget_targets(budget_plan_id, currency);\nCREATE INDEX idx_budget_targets_engagement ON budget_targets(engagement_id);\nCREATE INDEX idx_expected_financial_movements_plan_due ON expected_financial_movements(budget_plan_id, due_date);\nCREATE INDEX idx_expected_financial_movements_account ON expected_financial_movements(account_id, due_date);\nCREATE INDEX idx_valuation_rate_sets_date ON valuation_rate_sets(rate_date);\nCREATE INDEX idx_valuation_rates_unit ON valuation_rates(unit_key, rate_set_id);\nCREATE INDEX idx_engagement_milestones_session ON engagement_milestones(session_id);\nCREATE INDEX idx_exercise_sets_session ON exercise_sets(session_exercise_id);\nCREATE INDEX idx_weekly_plan_sessions_plan ON weekly_plan_sessions(weekly_plan_id);\nCREATE INDEX idx_weekly_plan_sessions_date ON weekly_plan_sessions(date);\nCREATE INDEX idx_weekly_plan_sessions_type ON weekly_plan_sessions(session_type_id);\nCREATE INDEX idx_weekly_plan_sessions_engagement ON weekly_plan_sessions(engagement_id);\nCREATE INDEX idx_weekly_commitments_plan ON weekly_commitments(weekly_plan_id);\nCREATE INDEX idx_weekly_commitments_engagement ON weekly_commitments(engagement_id);\nCREATE INDEX idx_meal_events_day ON meal_events(day);\nCREATE INDEX idx_meal_events_type ON meal_events(meal_type);\nCREATE INDEX idx_daily_meals_day ON daily_meals(day);\nCREATE INDEX idx_daily_meals_meal_event ON daily_meals(meal_event_id, item_ordinal);\nCREATE INDEX idx_daily_meals_food ON daily_meals(food_id, day);\nCREATE INDEX idx_food_aliases_food ON food_aliases(food_id);\nCREATE INDEX idx_note_import_components_state ON note_import_components(lifecycle_state, note_date);\n\nCREATE TRIGGER sessions_require_active_type_insert\nBEFORE INSERT ON sessions\nWHEN NOT EXISTS (SELECT 1 FROM session_types WHERE id = NEW.session_type_id AND is_active = 1)\nBEGIN SELECT RAISE(ABORT, 'unknown or inactive session type'); END;\n\nCREATE TRIGGER sessions_require_active_type_update\nBEFORE UPDATE OF session_type_id ON sessions\nWHEN NOT EXISTS (SELECT 1 FROM session_types WHERE id = NEW.session_type_id AND is_active = 1)\nBEGIN SELECT RAISE(ABORT, 'unknown or inactive session type'); END;\n\nCREATE TRIGGER engagements_require_active_type_insert\nBEFORE INSERT ON engagements\nWHEN NOT EXISTS (SELECT 1 FROM engagement_types WHERE id = NEW.type_id AND is_active = 1)\nBEGIN SELECT RAISE(ABORT, 'unknown or inactive engagement type'); END;\n\nCREATE TRIGGER engagements_require_active_type_update\nBEFORE UPDATE OF type_id ON engagements\nWHEN NOT EXISTS (SELECT 1 FROM engagement_types WHERE id = NEW.type_id AND is_active = 1)\nBEGIN SELECT RAISE(ABORT, 'unknown or inactive engagement type'); END;\n\nCREATE TRIGGER engagements_require_active_status_insert\nBEFORE INSERT ON engagements\nWHEN NEW.status_id IS NOT NULL\n AND NOT EXISTS (SELECT 1 FROM engagement_statuses WHERE id = NEW.status_id AND is_active = 1)\nBEGIN SELECT RAISE(ABORT, 'unknown or inactive engagement status'); END;\n\nCREATE TRIGGER engagements_require_active_status_update\nBEFORE UPDATE OF status_id ON engagements\nWHEN NEW.status_id IS NOT NULL\n AND NOT EXISTS (SELECT 1 FROM engagement_statuses WHERE id = NEW.status_id AND is_active = 1)\nBEGIN SELECT RAISE(ABORT, 'unknown or inactive engagement status'); END;\n\nCREATE TRIGGER daily_meals_meal_event_day_insert\nBEFORE INSERT ON daily_meals\nWHEN NEW.meal_event_id IS NOT NULL\n AND NOT EXISTS (SELECT 1 FROM meal_events WHERE id = NEW.meal_event_id AND day = NEW.day)\nBEGIN SELECT RAISE(ABORT, 'daily_meals.day must match its meal event day'); END;\n\nCREATE TRIGGER daily_meals_meal_event_day_update\nBEFORE UPDATE OF meal_event_id, day ON daily_meals\nWHEN NEW.meal_event_id IS NOT NULL\n AND NOT EXISTS (SELECT 1 FROM meal_events WHERE id = NEW.meal_event_id AND day = NEW.day)\nBEGIN SELECT RAISE(ABORT, 'daily_meals.day must match its meal event day'); END;\n\nCREATE TRIGGER trg_exercises_name_nocase_insert\nBEFORE INSERT ON exercises\nWHEN EXISTS (SELECT 1 FROM exercises WHERE name = NEW.name COLLATE NOCASE)\nBEGIN SELECT RAISE(ABORT, 'exercise name already exists (case-insensitive)'); END;\n\nCREATE TRIGGER trg_exercises_name_nocase_update\nBEFORE UPDATE OF name ON exercises\nWHEN EXISTS (SELECT 1 FROM exercises WHERE id <> OLD.id AND name = NEW.name COLLATE NOCASE)\nBEGIN SELECT RAISE(ABORT, 'exercise name already exists (case-insensitive)'); END;\n\nCREATE VIEW meal_event_totals AS\nSELECT\n    me.id AS meal_event_id,\n    me.day,\n    me.meal_type,\n    me.is_leisure AS recorded_is_leisure,\n    me.classification_source,\n    me.calorie_limit_kcal,\n    COUNT(dm.id) AS item_count,\n    COALESCE(SUM(dm.calories), 0) AS total_calories_kcal,\n    COALESCE(SUM(dm.protein_g), 0.0) AS total_protein_g,\n    SUM(CASE WHEN dm.id IS NOT NULL AND dm.calories IS NULL THEN 1 ELSE 0 END) AS items_missing_calories,\n    CASE\n        WHEN me.meal_type = 'snacks' THEN 0\n        WHEN me.is_leisure = 1 THEN 1\n        WHEN me.calorie_limit_kcal IS NOT NULL\n         AND COALESCE(SUM(dm.calories), 0) > me.calorie_limit_kcal THEN 1\n        ELSE 0\n    END AS evaluated_is_leisure\nFROM meal_events AS me\nLEFT JOIN daily_meals AS dm ON dm.meal_event_id = me.id\nGROUP BY me.id, me.day, me.meal_type, me.is_leisure, me.classification_source, me.calorie_limit_kcal;\n\nCREATE VIEW daily_leisure_meal_summary AS\nWITH evaluated_days AS (\n    SELECT\n        dma.day,\n        dma.daily_calorie_limit_kcal,\n        dma.daily_calories_kcal,\n        COALESCE(SUM(CASE\n            WHEN met.meal_type IN ('breakfast', 'lunch', 'dinner') THEN met.evaluated_is_leisure\n            ELSE 0\n        END), 0) AS direct_leisure_meals\n    FROM daily_meal_assessments AS dma\n    LEFT JOIN meal_event_totals AS met ON met.day = dma.day\n    GROUP BY dma.day, dma.daily_calorie_limit_kcal, dma.daily_calories_kcal\n)\nSELECT\n    day,\n    3 AS counted_meals,\n    direct_leisure_meals,\n    daily_calories_kcal,\n    daily_calorie_limit_kcal,\n    CASE\n        WHEN daily_calories_kcal IS NOT NULL\n         AND daily_calories_kcal > daily_calorie_limit_kcal\n         AND daily_calorie_limit_kcal > 0 THEN 1\n        ELSE 0\n    END AS daily_limit_exceeded,\n    CASE\n        WHEN daily_calories_kcal IS NOT NULL\n         AND daily_calories_kcal > daily_calorie_limit_kcal\n         AND daily_calorie_limit_kcal > 0\n         AND direct_leisure_meals < 2 THEN 2\n        ELSE direct_leisure_meals\n    END AS leisure_meals\nFROM evaluated_days;\n\nINSERT INTO session_types (code, label, description, sort_order) VALUES\n('authorship', 'Authorship', 'Creating an authored work', 10),\n('chore', 'Chore', 'Routine personal or household work', 20),\n('exercise', 'Exercise', 'Physical training', 30),\n('leisure', 'Leisure', 'Recreation and unstructured leisure', 40),\n('maintenance', 'Maintenance', 'Maintaining systems, spaces, or obligations', 50),\n('meditation', 'Meditation', 'Meditation or contemplative practice', 60),\n('reading', 'Reading', 'Reading not classified as study or research', 70),\n('research', 'Research', 'Exploratory search and evidence gathering', 80),\n('social', 'Social', 'Social and relationship time', 90),\n('study', 'Study', 'Structured learning toward mastery', 100),\n('thinking', 'Thinking', 'Deliberate reflection or problem framing', 110),\n('work', 'Work', 'Professional execution', 120),\n('writing', 'Writing', 'Writing not classified as authorship', 130);\n\nINSERT INTO engagement_types (code, label, sort_order) VALUES\n('article', 'Article', 10), ('authorship', 'Authorship', 20), ('book', 'Book', 30),\n('career', 'Career', 40), ('certification', 'Certification', 50), ('course', 'Course', 60),\n('exam', 'Exam', 70), ('fitness', 'Fitness', 80), ('leisure', 'Leisure', 90),\n('maintenance', 'Maintenance', 100), ('practice', 'Practice', 110),\n('relationship', 'Relationship', 120), ('speech', 'Speech', 130), ('startup', 'Startup', 140);\n\nINSERT INTO engagement_statuses (code, label, sort_order) VALUES\n('planned', 'Planned', 10), ('pending', 'Pending', 20), ('active', 'Active', 30),\n('paused', 'Paused', 40), ('completed', 'Completed', 50), ('abandoned', 'Abandoned', 60);\n\nINSERT INTO schema_migrations (version, name) VALUES\n(1, 'official schema v1: food, finance, valuation, and mutable budget foundations');\n\nPRAGMA user_version = 1;\nCOMMIT;\nPRAGMA foreign_keys = ON;\n";
+var create_schema_v1_default = "-- Empty official Examined Human Data Schema v1.\n-- This file contains structure and canonical taxonomy seeds only; it contains no user data.\n\nPRAGMA foreign_keys = OFF;\nBEGIN IMMEDIATE;\n\nCREATE TABLE schema_migrations (\n    version INTEGER PRIMARY KEY,\n    name TEXT NOT NULL,\n    applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP\n);\n\nCREATE TABLE session_types (\n    id INTEGER PRIMARY KEY,\n    code TEXT NOT NULL COLLATE NOCASE UNIQUE,\n    label TEXT NOT NULL,\n    description TEXT,\n    is_active INTEGER NOT NULL DEFAULT 1 CHECK (is_active IN (0, 1)),\n    sort_order INTEGER NOT NULL DEFAULT 0,\n    CHECK (code <> '' AND code = lower(trim(code)))\n);\n\nCREATE TABLE engagement_types (\n    id INTEGER PRIMARY KEY,\n    code TEXT NOT NULL COLLATE NOCASE UNIQUE,\n    label TEXT NOT NULL,\n    description TEXT,\n    is_active INTEGER NOT NULL DEFAULT 1 CHECK (is_active IN (0, 1)),\n    sort_order INTEGER NOT NULL DEFAULT 0,\n    CHECK (code <> '' AND code = lower(trim(code)))\n);\n\nCREATE TABLE engagement_statuses (\n    id INTEGER PRIMARY KEY,\n    code TEXT NOT NULL COLLATE NOCASE UNIQUE,\n    label TEXT NOT NULL,\n    description TEXT,\n    is_active INTEGER NOT NULL DEFAULT 1 CHECK (is_active IN (0, 1)),\n    sort_order INTEGER NOT NULL DEFAULT 0,\n    CHECK (code <> '' AND code = lower(trim(code)))\n);\n\nCREATE TABLE engagements (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    name TEXT NOT NULL,\n    type_id INTEGER NOT NULL REFERENCES engagement_types(id),\n    status_id INTEGER REFERENCES engagement_statuses(id),\n    start_date DATE,\n    target_date DATE,\n    completion_date DATE,\n    notes TEXT\n);\n\nCREATE TABLE sessions (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    engagement_id INTEGER NOT NULL REFERENCES engagements(id),\n    date DATE NOT NULL,\n    start_time TEXT,\n    end_time TEXT,\n    duration_minutes INTEGER,\n    session_type_id INTEGER REFERENCES session_types(id),\n    notes TEXT\n);\n\nCREATE TABLE note_sources (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    note_date TEXT NOT NULL UNIQUE,\n    file_name TEXT NOT NULL,\n    file_path TEXT NOT NULL UNIQUE,\n    content_checksum TEXT NOT NULL,\n    lifecycle_state TEXT NOT NULL,\n    parse_status TEXT NOT NULL,\n    last_error TEXT,\n    first_seen_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,\n    last_scanned_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,\n    last_import_attempt_at TEXT,\n    finalized_at TEXT\n);\n\nCREATE TABLE planned_sessions (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    source_note_id INTEGER NOT NULL REFERENCES note_sources(id) ON DELETE CASCADE,\n    source_ordinal INTEGER NOT NULL,\n    date TEXT NOT NULL,\n    interval_raw TEXT,\n    start_time TEXT NOT NULL,\n    end_time TEXT NOT NULL,\n    duration_minutes INTEGER NOT NULL,\n    time_is_estimated INTEGER NOT NULL DEFAULT 0,\n    session_type_raw TEXT NOT NULL,\n    resolved_session_type_id INTEGER REFERENCES session_types(id) ON DELETE SET NULL,\n    engagement_raw TEXT NOT NULL,\n    resolved_engagement_id INTEGER REFERENCES engagements(id) ON DELETE SET NULL,\n    notes TEXT,\n    warning_text TEXT,\n    UNIQUE (source_note_id, source_ordinal)\n);\n\nCREATE TABLE daily_metrics (\n    date DATE PRIMARY KEY,\n    mood REAL,\n    energy REAL,\n    stress REAL,\n    weight_kg REAL,\n    sleep_hours REAL,\n    calories INTEGER,\n    protein_g INTEGER,\n    fasted INTEGER DEFAULT 0,\n    dieted INTEGER DEFAULT 0,\n    studied INTEGER DEFAULT 0,\n    worked INTEGER DEFAULT 0,\n    exercised INTEGER DEFAULT 0,\n    notes TEXT\n);\n\nCREATE TABLE imported_notes (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    note_date DATE NOT NULL,\n    file_name TEXT NOT NULL,\n    file_path TEXT NOT NULL,\n    imported_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,\n    checksum TEXT,\n    UNIQUE (file_name)\n);\n\nCREATE TABLE accounts (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    name TEXT NOT NULL,\n    type TEXT,\n    address TEXT,\n    currency TEXT DEFAULT NULL\n);\n\nCREATE TABLE account_aliases (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    account_id INTEGER NOT NULL REFERENCES accounts(id),\n    alias TEXT NOT NULL UNIQUE\n);\n\nCREATE TABLE transactions (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    account_id INTEGER NOT NULL REFERENCES accounts(id),\n    date DATE NOT NULL,\n    amount REAL NOT NULL,\n    category TEXT,\n    description TEXT\n);\n\nCREATE TABLE budget_plans (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    period_start DATE NOT NULL,\n    period_end DATE NOT NULL,\n    source_file_name TEXT NOT NULL,\n    source_file_path TEXT NOT NULL,\n    source_checksum TEXT NOT NULL,\n    imported_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,\n    CHECK (julianday(period_end) - julianday(period_start) >= 3),\n    UNIQUE (period_start, period_end)\n);\n\nCREATE TABLE budget_targets (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    budget_plan_id INTEGER NOT NULL REFERENCES budget_plans(id) ON DELETE CASCADE,\n    source_ordinal INTEGER NOT NULL,\n    currency TEXT NOT NULL CHECK (trim(currency) <> ''),\n    amount REAL NOT NULL CHECK (amount <> 0),\n    engagement_id INTEGER NOT NULL REFERENCES engagements(id),\n    engagement_raw TEXT NOT NULL,\n    UNIQUE (budget_plan_id, source_ordinal)\n);\n\nCREATE TABLE expected_financial_movements (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    budget_plan_id INTEGER NOT NULL REFERENCES budget_plans(id) ON DELETE CASCADE,\n    source_ordinal INTEGER NOT NULL,\n    due_date DATE NOT NULL,\n    currency TEXT NOT NULL CHECK (trim(currency) <> ''),\n    amount REAL NOT NULL CHECK (amount <> 0),\n    account_id INTEGER NOT NULL REFERENCES accounts(id),\n    engagement_id INTEGER NOT NULL REFERENCES engagements(id),\n    engagement_raw TEXT NOT NULL,\n    description TEXT,\n    UNIQUE (budget_plan_id, source_ordinal)\n);\n\nCREATE TABLE valuation_rate_sets (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    rate_date DATE NOT NULL UNIQUE,\n    source_file_name TEXT NOT NULL,\n    source_file_path TEXT NOT NULL,\n    source_checksum TEXT NOT NULL,\n    imported_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP\n);\n\nCREATE TABLE valuation_rates (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    rate_set_id INTEGER NOT NULL REFERENCES valuation_rate_sets(id) ON DELETE CASCADE,\n    source_ordinal INTEGER NOT NULL,\n    unit_key TEXT NOT NULL,\n    unit_label TEXT NOT NULL,\n    value REAL NOT NULL CHECK (value > 0),\n    UNIQUE (rate_set_id, source_ordinal),\n    UNIQUE (rate_set_id, unit_key)\n);\n\nCREATE TABLE engagement_aliases (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    engagement_id INTEGER NOT NULL REFERENCES engagements(id),\n    alias TEXT NOT NULL UNIQUE\n);\n\nCREATE TABLE engagement_milestones (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    engagement_id INTEGER NOT NULL REFERENCES engagements(id),\n    name TEXT NOT NULL,\n    date DATE,\n    notes TEXT,\n    session_id INTEGER NOT NULL REFERENCES sessions(id) ON DELETE RESTRICT\n);\n\nCREATE TABLE engagement_measurements (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    milestone_id INTEGER NOT NULL REFERENCES engagement_milestones(id),\n    metric_name TEXT NOT NULL,\n    metric_value TEXT NOT NULL,\n    measurement_date DATE,\n    notes TEXT\n);\n\nCREATE TABLE exercises (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    name TEXT NOT NULL,\n    category TEXT\n);\n\nCREATE TABLE exercise_aliases (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    exercise_id INTEGER NOT NULL REFERENCES exercises(id),\n    alias TEXT NOT NULL UNIQUE\n);\n\nCREATE TABLE session_exercises (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    session_id INTEGER NOT NULL REFERENCES sessions(id),\n    exercise_id INTEGER NOT NULL REFERENCES exercises(id),\n    order_index INTEGER\n);\n\nCREATE TABLE exercise_sets (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    session_exercise_id INTEGER NOT NULL REFERENCES session_exercises(id),\n    set_number INTEGER,\n    weight REAL,\n    reps INTEGER,\n    distance REAL,\n    duration_minutes REAL,\n    notes TEXT,\n    pain_level REAL,\n    duration_seconds REAL\n);\n\nCREATE TABLE muscles (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    name TEXT NOT NULL UNIQUE,\n    body_region TEXT,\n    notes TEXT\n);\n\nCREATE TABLE exercise_muscles (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    exercise_id INTEGER NOT NULL REFERENCES exercises(id),\n    muscle_id INTEGER NOT NULL REFERENCES muscles(id),\n    role TEXT\n);\n\nCREATE TABLE people (\n    id INTEGER PRIMARY KEY,\n    name TEXT NOT NULL\n);\n\nCREATE TABLE reports (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    person_id INTEGER NOT NULL REFERENCES people(id),\n    report_timestamp TEXT NOT NULL,\n    report_type TEXT NOT NULL,\n    provider TEXT,\n    title TEXT,\n    relative_path TEXT NOT NULL\n);\n\nCREATE TABLE markers (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    name TEXT NOT NULL UNIQUE,\n    unit TEXT,\n    textbook_normal_range TEXT\n);\n\nCREATE TABLE measurements (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    report_id INTEGER NOT NULL REFERENCES reports(id),\n    marker_id INTEGER NOT NULL REFERENCES markers(id),\n    value REAL NOT NULL,\n    notes TEXT,\n    reference_range_at_time TEXT,\n    flag TEXT\n);\n\nCREATE TABLE stoicism_entries (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    date DATE NOT NULL,\n    score REAL,\n    notes TEXT\n);\n\nCREATE TABLE weekly_plans (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    week_start_date DATE NOT NULL UNIQUE,\n    source_file_name TEXT NOT NULL,\n    source_file_path TEXT NOT NULL UNIQUE,\n    source_checksum TEXT NOT NULL,\n    main_outcome TEXT,\n    important_deadline TEXT,\n    constraint_or_risk TEXT,\n    imported_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP\n);\n\nCREATE TABLE weekly_plan_sessions (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    weekly_plan_id INTEGER NOT NULL REFERENCES weekly_plans(id) ON DELETE CASCADE,\n    date DATE NOT NULL,\n    start_time TEXT NOT NULL,\n    end_time TEXT NOT NULL,\n    duration_minutes INTEGER NOT NULL CHECK (duration_minutes > 0),\n    session_type_id INTEGER REFERENCES session_types(id),\n    engagement_id INTEGER REFERENCES engagements(id),\n    original_cell_text TEXT NOT NULL,\n    notes TEXT,\n    source_row INTEGER NOT NULL,\n    source_column_start INTEGER NOT NULL,\n    source_column_end INTEGER NOT NULL,\n    UNIQUE (weekly_plan_id, date, start_time, end_time)\n);\n\nCREATE TABLE weekly_commitments (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    weekly_plan_id INTEGER NOT NULL REFERENCES weekly_plans(id) ON DELETE CASCADE,\n    source_ordinal INTEGER NOT NULL,\n    target_minutes INTEGER NOT NULL CHECK (target_minutes > 0),\n    engagement_id INTEGER NOT NULL REFERENCES engagements(id),\n    engagement_raw TEXT NOT NULL,\n    commitment_text TEXT NOT NULL,\n    UNIQUE (weekly_plan_id, source_ordinal)\n);\n\nCREATE TABLE meal_events (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    day DATE NOT NULL,\n    meal_type TEXT NOT NULL COLLATE NOCASE,\n    is_leisure INTEGER NOT NULL DEFAULT 0 CHECK (is_leisure IN (0, 1)),\n    classification_source TEXT NOT NULL DEFAULT 'default'\n        CHECK (classification_source IN ('default', 'manual', 'meal_limit', 'manual_and_meal_limit')),\n    calorie_limit_kcal REAL CHECK (calorie_limit_kcal IS NULL OR calorie_limit_kcal > 0),\n    notes TEXT,\n    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,\n    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,\n    CHECK (meal_type IN ('breakfast', 'lunch', 'dinner', 'snacks')),\n    UNIQUE (day, meal_type)\n);\n\nCREATE TABLE daily_meals (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    day DATE NOT NULL,\n    food TEXT NOT NULL CHECK (trim(food) <> ''),\n    calories INTEGER,\n    protein_g REAL,\n    meal_event_id INTEGER REFERENCES meal_events(id) ON DELETE CASCADE,\n    item_ordinal INTEGER CHECK (item_ordinal IS NULL OR item_ordinal > 0),\n    food_id INTEGER REFERENCES foods(id) ON DELETE SET NULL,\n    amount_g REAL CHECK (amount_g IS NULL OR amount_g > 0),\n    carbs_g REAL CHECK (carbs_g IS NULL OR carbs_g >= 0),\n    fat_g REAL CHECK (fat_g IS NULL OR fat_g >= 0),\n    salt_g REAL CHECK (salt_g IS NULL OR salt_g >= 0),\n    fiber_g REAL CHECK (fiber_g IS NULL OR fiber_g >= 0),\n    cholesterol_mg REAL CHECK (cholesterol_mg IS NULL OR cholesterol_mg >= 0)\n);\n\nCREATE TABLE foods (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    name TEXT NOT NULL COLLATE NOCASE UNIQUE CHECK (trim(name) <> ''),\n    category TEXT,\n    calories_kcal_per_100g REAL NOT NULL CHECK (calories_kcal_per_100g >= 0),\n    protein_g_per_100g REAL NOT NULL CHECK (protein_g_per_100g >= 0),\n    carbs_g_per_100g REAL NOT NULL CHECK (carbs_g_per_100g >= 0),\n    fat_g_per_100g REAL NOT NULL CHECK (fat_g_per_100g >= 0),\n    salt_g_per_100g REAL NOT NULL CHECK (salt_g_per_100g >= 0),\n    fiber_g_per_100g REAL CHECK (fiber_g_per_100g IS NULL OR fiber_g_per_100g >= 0),\n    cholesterol_mg_per_100g REAL CHECK (cholesterol_mg_per_100g IS NULL OR cholesterol_mg_per_100g >= 0),\n    notes TEXT,\n    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,\n    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP\n);\n\nCREATE TABLE food_aliases (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    food_id INTEGER NOT NULL REFERENCES foods(id) ON DELETE CASCADE,\n    alias TEXT NOT NULL COLLATE NOCASE UNIQUE CHECK (trim(alias) <> '')\n);\n\nCREATE TABLE daily_meal_assessments (\n    day DATE PRIMARY KEY,\n    daily_calorie_limit_kcal REAL NOT NULL CHECK (daily_calorie_limit_kcal >= 0),\n    minimum_protein_g REAL NOT NULL DEFAULT 0 CHECK (minimum_protein_g >= 0),\n    daily_calories_kcal REAL CHECK (daily_calories_kcal IS NULL OR daily_calories_kcal >= 0),\n    daily_metrics_calories_kcal REAL CHECK (daily_metrics_calories_kcal IS NULL OR daily_metrics_calories_kcal >= 0),\n    meal_items_calories_kcal REAL NOT NULL DEFAULT 0 CHECK (meal_items_calories_kcal >= 0),\n    daily_calorie_source TEXT NOT NULL DEFAULT 'missing'\n        CHECK (daily_calorie_source IN ('daily_metrics', 'meal_items', 'higher_of_both', 'missing')),\n    protein_g REAL CHECK (protein_g IS NULL OR protein_g >= 0),\n    recorded_dieted INTEGER CHECK (recorded_dieted IS NULL OR recorded_dieted IN (0, 1)),\n    evaluated_dieted INTEGER CHECK (evaluated_dieted IS NULL OR evaluated_dieted IN (0, 1)),\n    evaluated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP\n);\n\nCREATE TABLE note_import_components (\n    note_date DATE NOT NULL,\n    component TEXT NOT NULL CHECK (trim(component) <> ''),\n    lifecycle_state TEXT NOT NULL CHECK (lifecycle_state IN ('ephemeral', 'finalized')),\n    source_file_path TEXT NOT NULL CHECK (trim(source_file_path) <> ''),\n    source_checksum TEXT NOT NULL CHECK (trim(source_checksum) <> ''),\n    plugin_version TEXT NOT NULL CHECK (trim(plugin_version) <> ''),\n    row_count INTEGER NOT NULL DEFAULT 0 CHECK (row_count >= 0),\n    imported_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,\n    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,\n    PRIMARY KEY (note_date, component)\n);\n\nCREATE UNIQUE INDEX uq_accounts_name_nocase ON accounts(name COLLATE NOCASE);\nCREATE UNIQUE INDEX uq_account_aliases_alias_nocase ON account_aliases(alias COLLATE NOCASE);\nCREATE UNIQUE INDEX uq_engagements_name_nocase ON engagements(name COLLATE NOCASE);\nCREATE UNIQUE INDEX uq_engagement_aliases_alias_nocase ON engagement_aliases(alias COLLATE NOCASE);\nCREATE UNIQUE INDEX uq_exercise_aliases_alias_nocase ON exercise_aliases(alias COLLATE NOCASE);\nCREATE UNIQUE INDEX uq_muscles_name_nocase ON muscles(name COLLATE NOCASE);\nCREATE INDEX idx_sessions_date ON sessions(date);\nCREATE INDEX idx_sessions_engagement ON sessions(engagement_id);\nCREATE INDEX idx_sessions_type ON sessions(session_type_id);\nCREATE INDEX idx_engagements_type ON engagements(type_id);\nCREATE INDEX idx_engagements_status ON engagements(status_id);\nCREATE INDEX idx_note_sources_date ON note_sources(note_date);\nCREATE INDEX idx_note_sources_state ON note_sources(lifecycle_state);\nCREATE INDEX idx_planned_sessions_date ON planned_sessions(date);\nCREATE INDEX idx_planned_sessions_source ON planned_sessions(source_note_id);\nCREATE INDEX idx_planned_sessions_type ON planned_sessions(resolved_session_type_id);\nCREATE INDEX idx_transactions_date ON transactions(date);\nCREATE INDEX idx_budget_plans_period ON budget_plans(period_start, period_end);\nCREATE INDEX idx_budget_targets_plan_currency ON budget_targets(budget_plan_id, currency);\nCREATE INDEX idx_budget_targets_engagement ON budget_targets(engagement_id);\nCREATE INDEX idx_expected_financial_movements_plan_due ON expected_financial_movements(budget_plan_id, due_date);\nCREATE INDEX idx_expected_financial_movements_account ON expected_financial_movements(account_id, due_date);\nCREATE INDEX idx_valuation_rate_sets_date ON valuation_rate_sets(rate_date);\nCREATE INDEX idx_valuation_rates_unit ON valuation_rates(unit_key, rate_set_id);\nCREATE INDEX idx_engagement_milestones_session ON engagement_milestones(session_id);\nCREATE INDEX idx_exercise_sets_session ON exercise_sets(session_exercise_id);\nCREATE INDEX idx_weekly_plan_sessions_plan ON weekly_plan_sessions(weekly_plan_id);\nCREATE INDEX idx_weekly_plan_sessions_date ON weekly_plan_sessions(date);\nCREATE INDEX idx_weekly_plan_sessions_type ON weekly_plan_sessions(session_type_id);\nCREATE INDEX idx_weekly_plan_sessions_engagement ON weekly_plan_sessions(engagement_id);\nCREATE INDEX idx_weekly_commitments_plan ON weekly_commitments(weekly_plan_id);\nCREATE INDEX idx_weekly_commitments_engagement ON weekly_commitments(engagement_id);\nCREATE INDEX idx_meal_events_day ON meal_events(day);\nCREATE INDEX idx_meal_events_type ON meal_events(meal_type);\nCREATE INDEX idx_daily_meals_day ON daily_meals(day);\nCREATE INDEX idx_daily_meals_meal_event ON daily_meals(meal_event_id, item_ordinal);\nCREATE INDEX idx_daily_meals_food ON daily_meals(food_id, day);\nCREATE INDEX idx_food_aliases_food ON food_aliases(food_id);\nCREATE INDEX idx_note_import_components_state ON note_import_components(lifecycle_state, note_date);\n\nCREATE TRIGGER sessions_require_active_type_insert\nBEFORE INSERT ON sessions\nWHEN NEW.session_type_id IS NOT NULL\n AND NOT EXISTS (SELECT 1 FROM session_types WHERE id = NEW.session_type_id AND is_active = 1)\nBEGIN SELECT RAISE(ABORT, 'unknown or inactive session type'); END;\n\nCREATE TRIGGER sessions_require_active_type_update\nBEFORE UPDATE OF session_type_id ON sessions\nWHEN NEW.session_type_id IS NOT NULL\n AND NOT EXISTS (SELECT 1 FROM session_types WHERE id = NEW.session_type_id AND is_active = 1)\nBEGIN SELECT RAISE(ABORT, 'unknown or inactive session type'); END;\n\nCREATE TRIGGER engagements_require_active_type_insert\nBEFORE INSERT ON engagements\nWHEN NOT EXISTS (SELECT 1 FROM engagement_types WHERE id = NEW.type_id AND is_active = 1)\nBEGIN SELECT RAISE(ABORT, 'unknown or inactive engagement type'); END;\n\nCREATE TRIGGER engagements_require_active_type_update\nBEFORE UPDATE OF type_id ON engagements\nWHEN NOT EXISTS (SELECT 1 FROM engagement_types WHERE id = NEW.type_id AND is_active = 1)\nBEGIN SELECT RAISE(ABORT, 'unknown or inactive engagement type'); END;\n\nCREATE TRIGGER engagements_require_active_status_insert\nBEFORE INSERT ON engagements\nWHEN NEW.status_id IS NOT NULL\n AND NOT EXISTS (SELECT 1 FROM engagement_statuses WHERE id = NEW.status_id AND is_active = 1)\nBEGIN SELECT RAISE(ABORT, 'unknown or inactive engagement status'); END;\n\nCREATE TRIGGER engagements_require_active_status_update\nBEFORE UPDATE OF status_id ON engagements\nWHEN NEW.status_id IS NOT NULL\n AND NOT EXISTS (SELECT 1 FROM engagement_statuses WHERE id = NEW.status_id AND is_active = 1)\nBEGIN SELECT RAISE(ABORT, 'unknown or inactive engagement status'); END;\n\nCREATE TRIGGER daily_meals_meal_event_day_insert\nBEFORE INSERT ON daily_meals\nWHEN NEW.meal_event_id IS NOT NULL\n AND NOT EXISTS (SELECT 1 FROM meal_events WHERE id = NEW.meal_event_id AND day = NEW.day)\nBEGIN SELECT RAISE(ABORT, 'daily_meals.day must match its meal event day'); END;\n\nCREATE TRIGGER daily_meals_meal_event_day_update\nBEFORE UPDATE OF meal_event_id, day ON daily_meals\nWHEN NEW.meal_event_id IS NOT NULL\n AND NOT EXISTS (SELECT 1 FROM meal_events WHERE id = NEW.meal_event_id AND day = NEW.day)\nBEGIN SELECT RAISE(ABORT, 'daily_meals.day must match its meal event day'); END;\n\nCREATE TRIGGER trg_exercises_name_nocase_insert\nBEFORE INSERT ON exercises\nWHEN EXISTS (SELECT 1 FROM exercises WHERE name = NEW.name COLLATE NOCASE)\nBEGIN SELECT RAISE(ABORT, 'exercise name already exists (case-insensitive)'); END;\n\nCREATE TRIGGER trg_exercises_name_nocase_update\nBEFORE UPDATE OF name ON exercises\nWHEN EXISTS (SELECT 1 FROM exercises WHERE id <> OLD.id AND name = NEW.name COLLATE NOCASE)\nBEGIN SELECT RAISE(ABORT, 'exercise name already exists (case-insensitive)'); END;\n\nCREATE VIEW meal_event_totals AS\nSELECT\n    me.id AS meal_event_id,\n    me.day,\n    me.meal_type,\n    me.is_leisure AS recorded_is_leisure,\n    me.classification_source,\n    me.calorie_limit_kcal,\n    COUNT(dm.id) AS item_count,\n    COALESCE(SUM(dm.calories), 0) AS total_calories_kcal,\n    COALESCE(SUM(dm.protein_g), 0.0) AS total_protein_g,\n    SUM(CASE WHEN dm.id IS NOT NULL AND dm.calories IS NULL THEN 1 ELSE 0 END) AS items_missing_calories,\n    CASE\n        WHEN me.meal_type = 'snacks' THEN 0\n        WHEN me.is_leisure = 1 THEN 1\n        WHEN me.calorie_limit_kcal IS NOT NULL\n         AND COALESCE(SUM(dm.calories), 0) > me.calorie_limit_kcal THEN 1\n        ELSE 0\n    END AS evaluated_is_leisure\nFROM meal_events AS me\nLEFT JOIN daily_meals AS dm ON dm.meal_event_id = me.id\nGROUP BY me.id, me.day, me.meal_type, me.is_leisure, me.classification_source, me.calorie_limit_kcal;\n\nCREATE VIEW daily_leisure_meal_summary AS\nWITH evaluated_days AS (\n    SELECT\n        dma.day,\n        dma.daily_calorie_limit_kcal,\n        dma.daily_calories_kcal,\n        COALESCE(SUM(CASE\n            WHEN met.meal_type IN ('breakfast', 'lunch', 'dinner') THEN met.evaluated_is_leisure\n            ELSE 0\n        END), 0) AS direct_leisure_meals\n    FROM daily_meal_assessments AS dma\n    LEFT JOIN meal_event_totals AS met ON met.day = dma.day\n    GROUP BY dma.day, dma.daily_calorie_limit_kcal, dma.daily_calories_kcal\n)\nSELECT\n    day,\n    3 AS counted_meals,\n    direct_leisure_meals,\n    daily_calories_kcal,\n    daily_calorie_limit_kcal,\n    CASE\n        WHEN daily_calories_kcal IS NOT NULL\n         AND daily_calories_kcal > daily_calorie_limit_kcal\n         AND daily_calorie_limit_kcal > 0 THEN 1\n        ELSE 0\n    END AS daily_limit_exceeded,\n    CASE\n        WHEN daily_calories_kcal IS NOT NULL\n         AND daily_calories_kcal > daily_calorie_limit_kcal\n         AND daily_calorie_limit_kcal > 0\n         AND direct_leisure_meals < 2 THEN 2\n        ELSE direct_leisure_meals\n    END AS leisure_meals\nFROM evaluated_days;\n\nINSERT INTO session_types (code, label, description, sort_order) VALUES\n('authorship', 'Authorship', 'Creating an authored work', 10),\n('chore', 'Chore', 'Routine personal or household work', 20),\n('exercise', 'Exercise', 'Physical training', 30),\n('leisure', 'Leisure', 'Recreation and unstructured leisure', 40),\n('maintenance', 'Maintenance', 'Maintaining systems, spaces, or obligations', 50),\n('meditation', 'Meditation', 'Meditation or contemplative practice', 60),\n('reading', 'Reading', 'Reading not classified as study or research', 70),\n('research', 'Research', 'Exploratory search and evidence gathering', 80),\n('social', 'Social', 'Social and relationship time', 90),\n('study', 'Study', 'Structured learning toward mastery', 100),\n('thinking', 'Thinking', 'Deliberate reflection or problem framing', 110),\n('work', 'Work', 'Professional execution', 120),\n('writing', 'Writing', 'Writing not classified as authorship', 130);\n\nINSERT INTO engagement_types (code, label, sort_order) VALUES\n('article', 'Article', 10), ('authorship', 'Authorship', 20), ('book', 'Book', 30),\n('career', 'Career', 40), ('certification', 'Certification', 50), ('course', 'Course', 60),\n('exam', 'Exam', 70), ('fitness', 'Fitness', 80), ('leisure', 'Leisure', 90),\n('maintenance', 'Maintenance', 100), ('practice', 'Practice', 110),\n('relationship', 'Relationship', 120), ('speech', 'Speech', 130), ('startup', 'Startup', 140);\n\nINSERT INTO engagement_statuses (code, label, sort_order) VALUES\n('planned', 'Planned', 10), ('pending', 'Pending', 20), ('active', 'Active', 30),\n('paused', 'Paused', 40), ('completed', 'Completed', 50), ('abandoned', 'Abandoned', 60);\n\nINSERT INTO schema_migrations (version, name) VALUES\n(1, 'official schema v1: food, finance, valuation, mutable budgets, and optional session types');\n\nPRAGMA user_version = 1;\nCOMMIT;\nPRAGMA foreign_keys = ON;\n";
 
 // src/native-logger/checksum.ts
 function toHex(bytes) {
@@ -5309,6 +5355,10 @@ var METRIC_FIELDS = [
   "dieted"
 ];
 var ADMIN_ARGUMENTS = {
+  SESSION_TYPE_ADD: [2, 3],
+  SESSION_TYPE_REMOVE: 1,
+  ENGAGEMENT_TYPE_ADD: [2, 3],
+  ENGAGEMENT_TYPE_REMOVE: 1,
   ENGAGEMENT_CREATE: 4,
   ENGAGEMENT_COMPLETE: 1,
   ENGAGEMENT_PAUSE: 1,
@@ -5347,6 +5397,37 @@ var ADMIN_ARGUMENTS = {
   FOOD_ALIAS_REMOVE: 2,
   FOOD_ALIAS_MOVE: 2
 };
+function addType(db, table, args, command) {
+  var _a;
+  const code = args[0].trim().toLowerCase();
+  const label = args[1].trim();
+  const description = ((_a = args[2]) == null ? void 0 : _a.trim()) || null;
+  if (!code) throw new Error(`${command} code is empty.`);
+  if (!label) throw new Error(`${command} label is empty.`);
+  const existing = queryRows(db, `SELECT id FROM ${table} WHERE code = ? COLLATE NOCASE`, [code])[0];
+  if (existing) {
+    db.run(`UPDATE ${table} SET label = ?, description = ?, is_active = 1 WHERE id = ?`, [
+      label,
+      description,
+      Number(existing.id)
+    ]);
+    return;
+  }
+  db.run(`INSERT INTO ${table} (code, label, description, is_active, sort_order)
+    VALUES (?, ?, ?, 1, COALESCE((SELECT MAX(sort_order) + 10 FROM ${table}), 10))`, [
+    code,
+    label,
+    description
+  ]);
+}
+function removeType(db, table, rawCode, command) {
+  const code = rawCode.trim().toLowerCase();
+  if (!code) throw new Error(`${command} code is empty.`);
+  const existing = queryRows(db, `SELECT id, is_active FROM ${table} WHERE code = ? COLLATE NOCASE`, [code])[0];
+  if (!existing) throw new Error(`Unknown type '${rawCode}'.`);
+  if (Number(existing.is_active) === 0) throw new Error(`Type '${code}' is already inactive.`);
+  db.run(`UPDATE ${table} SET is_active = 0 WHERE id = ?`, [Number(existing.id)]);
+}
 function acceptsArgumentCount(expected, received) {
   return Array.isArray(expected) ? expected.includes(received) : expected === received;
 }
@@ -5591,7 +5672,7 @@ function parseDaily(db, sourceText, noteDate, thresholds, errors) {
   const metrics = metricMap(sections2.get("daily metrics"), errors);
   const sessions = entries(sections2.get("sessions")).map((line, index) => {
     const parts = splitFields(line, 4);
-    if (parts.length !== 4) errors.push(`Invalid session row '${line}'; expected interval | type | engagement | notes.`);
+    if (parts.length !== 4) errors.push(`Invalid session row '${line}'; expected interval | type (optional) | engagement | notes.`);
     const [interval = "", type = "", engagement = "", notes2 = ""] = parts;
     return {
       ordinal: index + 1,
@@ -5675,7 +5756,15 @@ function applyAdminEvents(db, parsed, noteDate, errors) {
     }
     try {
       const args = event.args;
-      if (event.command === "ENGAGEMENT_CREATE") {
+      if (event.command === "SESSION_TYPE_ADD") {
+        addType(db, "session_types", args, event.command);
+      } else if (event.command === "SESSION_TYPE_REMOVE") {
+        removeType(db, "session_types", args[0], event.command);
+      } else if (event.command === "ENGAGEMENT_TYPE_ADD") {
+        addType(db, "engagement_types", args, event.command);
+      } else if (event.command === "ENGAGEMENT_TYPE_REMOVE") {
+        removeType(db, "engagement_types", args[0], event.command);
+      } else if (event.command === "ENGAGEMENT_CREATE") {
         const [name, typeRaw, statusRaw, notes] = args;
         if (!name) throw new Error("ENGAGEMENT_CREATE name is empty.");
         if (resolveEntity(db, name, "engagements")) throw new Error(`Engagement already exists: ${name}`);
@@ -5930,9 +6019,8 @@ function validateFacts(db, parsed, errors, warnings) {
     session.parsedInterval = parseSessionInterval(session.interval);
     if (!session.parsedInterval) errors.push(`Session #${session.ordinal} has an invalid interval '${session.interval}'.`);
     else intervals.push({ start: session.parsedInterval.start, end: session.parsedInterval.end, ordinal: session.ordinal });
-    session.sessionType = resolveTaxonomy(db, "session_types", session.type);
-    if (!session.type) errors.push(`Session #${session.ordinal} has an empty type.`);
-    else if (!session.sessionType) errors.push(`Unknown session type '${session.type}'. Supported: ${taxonomyCodes(db, "session_types").join(", ")}.`);
+    session.sessionType = session.type ? resolveTaxonomy(db, "session_types", session.type) : null;
+    if (session.type && !session.sessionType) errors.push(`Unknown session type '${session.type}'. Supported: ${taxonomyCodes(db, "session_types").join(", ")}.`);
     session.resolvedEngagement = resolveEntity(db, session.engagement, "engagements");
     if (!session.engagement) errors.push(`Session #${session.ordinal} has an empty engagement.`);
     else if (!session.resolvedEngagement) errors.push(`Unknown engagement in session #${session.ordinal}: '${session.engagement}'.`);
@@ -5959,8 +6047,10 @@ function validateFacts(db, parsed, errors, warnings) {
     var _a;
     return ((_a = session.sessionType) == null ? void 0 : _a.code) === "exercise";
   });
-  if (parsed.exercises.length > 0 && exerciseSessions.length !== 1) {
-    errors.push(`Exercise details require exactly one exercise session; found ${exerciseSessions.length}.`);
+  if (parsed.exercises.length > 0 && exerciseSessions.length === 0) {
+    errors.push("Exercise Details require one owning session. Add 'exercise' to the optional type field of that session.");
+  } else if (parsed.exercises.length > 0 && exerciseSessions.length > 1) {
+    errors.push(`Exercise Details require exactly one owning session, but ${exerciseSessions.length} sessions use type 'exercise'. Leave 'exercise' on only one session.`);
   }
   for (const exercise of parsed.exercises) {
     exercise.resolvedExercise = resolveEntity(db, exercise.exercise, "exercises");
@@ -6067,7 +6157,7 @@ function inspectionFor(input, parsed, imported, errors, warnings) {
   };
 }
 function prepareDaily(db, input) {
-  assertSchemaV1(db);
+  assertOptionalSessionTypeSchema(db);
   requireIsoDate(input.noteDate, "Note date");
   requireIsoDate(input.todayDate, "Today date");
   const errors = [];
@@ -6128,7 +6218,7 @@ function insertComponent(db, input, component, rowCount) {
   `, [input.noteDate, component, input.filePath, input.sourceChecksum, input.pluginVersion, rowCount]);
 }
 function writeHistoricalDailyNote(db, input) {
-  var _a, _b, _c, _d, _e, _f;
+  var _a, _b, _c, _d, _e, _f, _g, _h;
   if (input.noteDate >= input.todayDate) throw new Error("Canonical Daily Note import is historical-only. Use planning sync for today and future notes.");
   const prepared = prepareDaily(db, input);
   if (!prepared.inspection.ready) throw new Error(prepared.inspection.errors.join("\n\n"));
@@ -6189,7 +6279,7 @@ function writeHistoricalDailyNote(db, input) {
       session.parsedInterval.start,
       session.parsedInterval.end,
       session.parsedInterval.durationMinutes,
-      session.sessionType.id,
+      (_h = (_g = session.sessionType) == null ? void 0 : _g.id) != null ? _h : null,
       session.notes || null
     ]);
     sessionIds.push(lastInsertId(db));
@@ -6458,7 +6548,6 @@ function inspectPlannedNote(text, expectedDate) {
       if (estimatedIndex > ESTIMATED_SLOTS_PER_DAY) warnings.push("Estimated hourly slots were reused because the day is full.");
       timeIsEstimated = true;
     }
-    if (!sessionTypeRaw) warnings.push("Session type is missing.");
     if (!engagementRaw) warnings.push("Engagement is missing.");
     sessions.push({
       ordinal: sourceIndex + 1,
@@ -6701,8 +6790,8 @@ function parseHeaderInterval(value) {
 }
 function parseSessionCell(value) {
   const parts = value.split(";").map((part) => part.trim());
-  if (parts.length !== 2 && parts.length !== 3 || !parts[0] || !parts[1]) {
-    throw new Error(`Invalid weekly grid cell '${value}'; use type ; engagement ; optional notes.`);
+  if (parts.length !== 2 && parts.length !== 3 || !parts[1]) {
+    throw new Error(`Invalid weekly grid cell '${value}'; use optional type ; engagement ; optional notes.`);
   }
   return { type: parts[0], engagement: parts[1], notes: parts.length === 3 ? parts[2] || null : null };
 }
@@ -6730,11 +6819,12 @@ function parseGrid(db, text, weekStart) {
     const date = addIsoDays(weekStart, DAY_OFFSETS[dayName]);
     const rowSessions = [];
     cells.slice(1).forEach((rawCell, index) => {
+      var _a;
       const cell = rawCell.trim();
       if (!cell) return;
       const parsed = parseSessionCell(cell);
-      const sessionType = resolveTaxonomy(db, "session_types", parsed.type);
-      if (!sessionType) throw new Error(`Unknown session type in weekly grid: '${parsed.type}'.`);
+      const sessionType = parsed.type ? resolveTaxonomy(db, "session_types", parsed.type) : null;
+      if (parsed.type && !sessionType) throw new Error(`Unknown session type in weekly grid: '${parsed.type}'.`);
       const engagement = resolveEntity(db, parsed.engagement, "engagements");
       if (!engagement) throw new Error(`Unknown engagement in weekly grid: '${parsed.engagement}'.`);
       const interval = intervals[index];
@@ -6743,7 +6833,7 @@ function parseGrid(db, text, weekStart) {
         startTime: interval.startTime,
         endTime: interval.endTime,
         durationMinutes: interval.duration,
-        sessionTypeId: sessionType.id,
+        sessionTypeId: (_a = sessionType == null ? void 0 : sessionType.id) != null ? _a : null,
         engagementId: engagement.id,
         originalCellText: cell,
         notes: parsed.notes,
@@ -6893,7 +6983,7 @@ function sessionRows(db, planId) {
   for (const record of records) {
     const original = String(record.original_cell_text);
     const parts = original.split(";").map((part) => part.trim());
-    if (parts.length !== 2 && parts.length !== 3 || !parts[0] || !parts[1]) {
+    if (parts.length !== 2 && parts.length !== 3 || !parts[1]) {
       throw new Error(`Stored weekly session has invalid source text: '${original}'.`);
     }
     const date = String(record.date);
@@ -7147,6 +7237,9 @@ var add_valuation_history_schema_v1_default = "-- Additive official Data Schema 
 // migrations/004_make_budget_plans_mutable_schema_v1.sql
 var make_budget_plans_mutable_schema_v1_default = "-- Replace the retired single-active Budget Form storage with dated mutable\n-- non-overlapping plans. This is still official Data Schema v1.\n\nCREATE TABLE budget_plans (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    period_start DATE NOT NULL,\n    period_end DATE NOT NULL,\n    source_file_name TEXT NOT NULL,\n    source_file_path TEXT NOT NULL,\n    source_checksum TEXT NOT NULL,\n    imported_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,\n    CHECK (julianday(period_end) - julianday(period_start) >= 3),\n    UNIQUE (period_start, period_end)\n);\n\nCREATE TABLE budget_targets_next (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    budget_plan_id INTEGER NOT NULL REFERENCES budget_plans(id) ON DELETE CASCADE,\n    source_ordinal INTEGER NOT NULL,\n    currency TEXT NOT NULL CHECK (trim(currency) <> ''),\n    amount REAL NOT NULL CHECK (amount <> 0),\n    engagement_id INTEGER NOT NULL REFERENCES engagements(id),\n    engagement_raw TEXT NOT NULL,\n    UNIQUE (budget_plan_id, source_ordinal)\n);\n\nCREATE TABLE expected_financial_movements_next (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    budget_plan_id INTEGER NOT NULL REFERENCES budget_plans(id) ON DELETE CASCADE,\n    source_ordinal INTEGER NOT NULL,\n    due_date DATE NOT NULL,\n    currency TEXT NOT NULL CHECK (trim(currency) <> ''),\n    amount REAL NOT NULL CHECK (amount <> 0),\n    account_id INTEGER NOT NULL REFERENCES accounts(id),\n    engagement_id INTEGER NOT NULL REFERENCES engagements(id),\n    engagement_raw TEXT NOT NULL,\n    description TEXT,\n    UNIQUE (budget_plan_id, source_ordinal)\n);\n\nINSERT INTO budget_plans (\n    id, period_start, period_end, source_file_name, source_file_path, source_checksum, imported_at\n)\nSELECT id, period_start, period_end, source_file_name, source_file_path, source_checksum, imported_at\nFROM active_budget_plan;\n\nINSERT INTO budget_targets_next (\n    id, budget_plan_id, source_ordinal, currency, amount, engagement_id, engagement_raw\n)\nSELECT id, budget_plan_id, source_ordinal, currency, amount, engagement_id, engagement_raw\nFROM budget_targets;\n\nINSERT INTO expected_financial_movements_next (\n    id, budget_plan_id, source_ordinal, due_date, currency, amount, account_id,\n    engagement_id, engagement_raw, description\n)\nSELECT id, budget_plan_id, source_ordinal, due_date, currency, amount, account_id,\n       engagement_id, engagement_raw, description\nFROM expected_financial_movements;\n\nDROP TABLE expected_financial_movements;\nDROP TABLE budget_targets;\nDROP TABLE active_budget_plan;\n\nALTER TABLE budget_targets_next RENAME TO budget_targets;\nALTER TABLE expected_financial_movements_next RENAME TO expected_financial_movements;\n\nCREATE INDEX idx_budget_plans_period ON budget_plans(period_start, period_end);\nCREATE INDEX idx_budget_targets_plan_currency ON budget_targets(budget_plan_id, currency);\nCREATE INDEX idx_budget_targets_engagement ON budget_targets(engagement_id);\nCREATE INDEX idx_expected_financial_movements_plan_due ON expected_financial_movements(budget_plan_id, due_date);\nCREATE INDEX idx_expected_financial_movements_account ON expected_financial_movements(account_id, due_date);\n\nUPDATE schema_migrations\nSET name = 'official schema v1: food, finance, valuation, and mutable budget foundations'\nWHERE version = 1;\n";
 
+// migrations/005_make_session_type_optional_schema_v1.sql
+var make_session_type_optional_schema_v1_default = "-- EH-0016: preserve existing session types while allowing ordinary sessions to omit one.\n-- The guarded writer executes this table rebuild with foreign-key enforcement disabled,\n-- then runs explicit foreign_key_check verification before and after commit.\n\nDROP TRIGGER IF EXISTS sessions_require_active_type_insert;\nDROP TRIGGER IF EXISTS sessions_require_active_type_update;\nDROP INDEX IF EXISTS idx_sessions_date;\nDROP INDEX IF EXISTS idx_sessions_engagement;\nDROP INDEX IF EXISTS idx_sessions_type;\n\nCREATE TABLE sessions_optional_type (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    engagement_id INTEGER NOT NULL REFERENCES engagements(id),\n    date DATE NOT NULL,\n    start_time TEXT,\n    end_time TEXT,\n    duration_minutes INTEGER,\n    session_type_id INTEGER REFERENCES session_types(id),\n    notes TEXT\n);\n\nINSERT INTO sessions_optional_type (\n    id, engagement_id, date, start_time, end_time, duration_minutes, session_type_id, notes\n)\nSELECT id, engagement_id, date, start_time, end_time, duration_minutes, session_type_id, notes\nFROM sessions;\n\nDROP TABLE sessions;\nALTER TABLE sessions_optional_type RENAME TO sessions;\n\nCREATE INDEX idx_sessions_date ON sessions(date);\nCREATE INDEX idx_sessions_engagement ON sessions(engagement_id);\nCREATE INDEX idx_sessions_type ON sessions(session_type_id);\n\nCREATE TRIGGER sessions_require_active_type_insert\nBEFORE INSERT ON sessions\nWHEN NEW.session_type_id IS NOT NULL\n AND NOT EXISTS (SELECT 1 FROM session_types WHERE id = NEW.session_type_id AND is_active = 1)\nBEGIN SELECT RAISE(ABORT, 'unknown or inactive session type'); END;\n\nCREATE TRIGGER sessions_require_active_type_update\nBEFORE UPDATE OF session_type_id ON sessions\nWHEN NEW.session_type_id IS NOT NULL\n AND NOT EXISTS (SELECT 1 FROM session_types WHERE id = NEW.session_type_id AND is_active = 1)\nBEGIN SELECT RAISE(ABORT, 'unknown or inactive session type'); END;\n\nUPDATE schema_migrations\nSET name = 'official schema v1: food, finance, valuation, mutable budgets, and optional session types'\nWHERE version = 1;\n";
+
 // src/native-logger/schema-upgrade-core.ts
 function rows3(db, sql, params = []) {
   const statement = db.prepare(sql);
@@ -7171,10 +7264,11 @@ function previewSchemaV1Upgrade(db) {
       needsFoodDictionary: true,
       needsFinanceFoundation: true,
       needsValuationHistory: true,
-      needsMutableBudgets: true
+      needsMutableBudgets: true,
+      needsOptionalSessionTypes: true
     };
   }
-  if (currentSchemaVersion === 1 && (!hasFinanceFoundationSchema(db) || !hasValuationHistorySchema(db))) {
+  if (currentSchemaVersion === 1 && (!hasFinanceFoundationSchema(db) || !hasValuationHistorySchema(db) || !hasOptionalSessionTypeSchema(db))) {
     return {
       currentSchemaVersion,
       targetSchemaVersion: 1,
@@ -7182,31 +7276,41 @@ function previewSchemaV1Upgrade(db) {
       needsFoodDictionary: false,
       needsFinanceFoundation: !hasFinanceFoundationSchema(db) && !hasRetiredSingleBudgetSchema(db),
       needsValuationHistory: !hasValuationHistorySchema(db),
-      needsMutableBudgets: !hasFinanceFoundationSchema(db)
+      needsMutableBudgets: !hasFinanceFoundationSchema(db),
+      needsOptionalSessionTypes: !hasOptionalSessionTypeSchema(db)
     };
   }
   {
     throw new Error(
-      currentSchemaVersion === 1 ? "This database already includes the current official Data Schema v1 finance, valuation, and mutable budget foundations." : `This one-time upgrade supports only the retired pre-Schema-v1 database; this database reports v${currentSchemaVersion}.`
+      currentSchemaVersion === 1 ? "This database already includes the current official Data Schema v1 foundations and optional session types." : `This one-time upgrade supports only the retired pre-Schema-v1 database; this database reports v${currentSchemaVersion}.`
     );
   }
 }
-function applyV5ToOfficialSchemaV1(db, foodUpgradeSql, financeUpgradeSql, valuationUpgradeSql, mutableBudgetUpgradeSql) {
+function applyV5ToOfficialSchemaV1(db, foodUpgradeSql, financeUpgradeSql, valuationUpgradeSql, mutableBudgetUpgradeSql, optionalSessionTypeUpgradeSql) {
   const preview = previewSchemaV1Upgrade(db);
   if (preview.needsFoodDictionary) db.run(foodUpgradeSql);
   if (preview.needsFinanceFoundation) db.run(financeUpgradeSql);
   if (preview.needsValuationHistory) db.run(valuationUpgradeSql);
   if (preview.needsMutableBudgets) db.run(mutableBudgetUpgradeSql);
+  if (preview.needsOptionalSessionTypes) db.run(optionalSessionTypeUpgradeSql);
   assertSchemaV1(db);
   assertMealImportSchema(db);
   assertFinanceFoundationSchema(db);
   assertValuationHistorySchema(db);
+  assertOptionalSessionTypeSchema(db);
   return preview;
 }
 
 // src/native-logger/schema-upgrade.ts
 function upgradeV5ToOfficialSchemaV1(db) {
-  return applyV5ToOfficialSchemaV1(db, upgrade_v5_to_schema_v1_default, add_finance_foundation_schema_v1_default, add_valuation_history_schema_v1_default, make_budget_plans_mutable_schema_v1_default);
+  return applyV5ToOfficialSchemaV1(
+    db,
+    upgrade_v5_to_schema_v1_default,
+    add_finance_foundation_schema_v1_default,
+    add_valuation_history_schema_v1_default,
+    make_budget_plans_mutable_schema_v1_default,
+    make_session_type_optional_schema_v1_default
+  );
 }
 
 // src/native-logger/budget.ts
@@ -7628,7 +7732,9 @@ var NativeLoggerWriteService = class {
       const mutation = await this.mutateDatabase(
         databasePathSetting,
         "schema-v1-upgrade",
-        upgradeV5ToOfficialSchemaV1
+        upgradeV5ToOfficialSchemaV1,
+        "durable",
+        false
       );
       return {
         ...mutation.value,
@@ -7964,7 +8070,7 @@ var NativeLoggerWriteService = class {
       db.close();
     }
   }
-  async mutateDatabase(databasePathSetting, backupLabel, operation, durability = "durable") {
+  async mutateDatabase(databasePathSetting, backupLabel, operation, durability = "durable", enforceForeignKeysDuringMutation = true) {
     const databasePath = normalizeVaultDatabasePath(databasePathSetting);
     const databaseFile = this.requireFile(databasePath, "Examined Human database");
     await this.assertNoUncheckpointedWal(databasePath);
@@ -7973,13 +8079,14 @@ var NativeLoggerWriteService = class {
     const SQL = await getSqlJs();
     const db = new SQL.Database(originalBytes);
     try {
-      db.run("PRAGMA foreign_keys = ON");
+      db.run(`PRAGMA foreign_keys = ${enforceForeignKeysDuringMutation ? "ON" : "OFF"}`);
       db.run("BEGIN IMMEDIATE");
       let value;
       try {
         value = operation(db);
         verifyIntegrity(db);
         db.run("COMMIT");
+        if (!enforceForeignKeysDuringMutation) db.run("PRAGMA foreign_keys = ON");
       } catch (error) {
         try {
           db.run("ROLLBACK");
@@ -8924,7 +9031,7 @@ function createSessionElement(app, event, overlapColumn, overlapCount, vertical,
   const milestoneLabel = milestoneCount > 0 ? `, ${milestoneCount} milestone${milestoneCount === 1 ? "" : "s"} achieved` : "";
   element.setAttribute(
     "aria-label",
-    `${event.title}, ${event.sessionType}, ${formatMinutesAsClock(event.durationMinutes)}${sourceLabel}${estimatedLabel}${milestoneLabel}`
+    [event.title, event.sessionType, formatMinutesAsClock(event.durationMinutes)].filter(Boolean).join(", ") + sourceLabel + estimatedLabel + milestoneLabel
   );
   const tooltipLines = [
     event.title,
@@ -8950,8 +9057,9 @@ function createSessionElement(app, event, overlapColumn, overlapCount, vertical,
   duration.textContent = formatMinutesAsClock(event.durationMinutes);
   element.appendChild(duration);
   const renderedHeightPx = vertical.durationMinutes * pxPerMinute;
-  if (shouldShowSessionTypeFooter(renderedHeightPx, vertical.stacked)) {
-    element.createSpan({ cls: "examined-human-event-type", text: sessionFooterText(event) });
+  const footerText = sessionFooterText(event);
+  if (footerText && shouldShowSessionTypeFooter(renderedHeightPx, vertical.stacked)) {
+    element.createSpan({ cls: "examined-human-event-type", text: footerText });
   }
   element.addEventListener("click", () => new SessionDetailsModal(app, event).open());
   return element;
@@ -10387,7 +10495,7 @@ var CommandCenterView = class extends import_obsidian10.ItemView {
       cls: "examined-human-daily-section-subtitle",
       text: "Paste one valid Admin Event per line. The commands are shown for confirmation, written into a chosen unimported Daily Note, and then validated by the normal note import workflow."
     });
-    const input = panel.createEl("textarea", { attr: { rows: "12", placeholder: "FOOD_CREATE | \u2026\nENGAGEMENT_CREATE | \u2026" } });
+    const input = panel.createEl("textarea", { attr: { rows: "12", placeholder: "SESSION_TYPE_ADD | code | label | description\nENGAGEMENT_TYPE_REMOVE | code\nFOOD_CREATE | \u2026\nENGAGEMENT_CREATE | \u2026" } });
     const actions = panel.createDiv({ cls: "examined-human-modal-actions" });
     actions.createEl("button", { cls: "mod-cta", text: "Review and stage batch" }).addEventListener("click", () => {
       const commands = input.value.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
@@ -11179,10 +11287,10 @@ var EngagementDashboardView = class extends import_obsidian12.ItemView {
       }
     }
     const mixSection = grid.createEl("section", { cls: "examined-human-engagement-panel" });
-    mixSection.createEl("h3", { text: "Session type mix" });
-    mixSection.createDiv({ cls: "examined-human-engagement-panel-subtitle", text: "Logged time by canonical session type" });
+    mixSection.createEl("h3", { text: "Optional session type mix" });
+    mixSection.createDiv({ cls: "examined-human-engagement-panel-subtitle", text: "Logged time for sessions that have a canonical session type" });
     if (this.result.sessionTypes.length === 0) {
-      mixSection.createDiv({ cls: "examined-human-engagement-empty-inline", text: "No session types in this period." });
+      mixSection.createDiv({ cls: "examined-human-engagement-empty-inline", text: "No typed sessions in this period." });
     } else {
       const maxMinutes = Math.max(...this.result.sessionTypes.map((item) => item.totalMinutes), 1);
       const chart = mixSection.createDiv({ cls: "examined-human-engagement-type-chart" });
@@ -13377,7 +13485,7 @@ var WeeklyAssessmentView = class extends import_obsidian19.ItemView {
     copy.createEl("h3", { text: "Commitment assessment" });
     copy.createDiv({
       cls: "examined-human-weekly-chart-subtitle",
-      text: `Hours for ${formatWeekRange(result.weekStartDate, result.weekEndDate)} \xB7 all logged session types`
+      text: `Hours for ${formatWeekRange(result.weekStartDate, result.weekEndDate)} \xB7 all logged sessions`
     });
     const legend = heading.createDiv({ cls: "examined-human-weekly-legend", attr: { "aria-label": "Chart legend" } });
     this.renderLegendItem(legend, "Committed target", "target");
@@ -13647,13 +13755,13 @@ var ExaminedHumanSettingTab = class extends import_obsidian20.PluginSettingTab {
       await this.plugin.saveSettings();
       await this.plugin.refreshViews();
     }));
-    new import_obsidian20.Setting(containerEl).setName("Upgrade legacy database to Schema v1").setDesc("One-time pre-1.0 upgrade for the Food Dictionary, Finance, and Valuation foundations. It preserves existing meal rows, adds canonical foods/aliases, budget tables, and valuation history, resets retired migration metadata to official Data Schema v1, and creates a verified backup.").addButton((button) => button.setButtonText("Preview upgrade").onClick(async () => {
+    new import_obsidian20.Setting(containerEl).setName("Upgrade database to current Schema v1").setDesc("Adds any missing Food Dictionary, Finance, Valuation, mutable-budget, and optional-session-type foundations. It preserves existing rows and creates a verified backup.").addButton((button) => button.setButtonText("Preview upgrade").onClick(async () => {
       button.setDisabled(true);
       try {
         const preview = await this.plugin.nativeLogger.inspectSchemaV1Upgrade(this.plugin.settings.databasePath);
         const confirmed = await confirmWeeklyAction(this.app, {
           title: "Upgrade to official Data Schema v1",
-          explanation: "This one-time upgrade adds the Food Dictionary, Finance, and Valuation foundations. It keeps existing meal rows unchanged, but replaces retired schema migration history with one official Schema v1 record.",
+          explanation: "This guarded upgrade adds any missing official Schema v1 foundations, including optional canonical session types. Existing session type values and linked exercise details are preserved.",
           confirmLabel: "Upgrade database",
           dryRunOutput: `Current SQLite schema marker: v${preview.currentSchemaVersion}
 Target official schema marker: v${preview.targetSchemaVersion}
@@ -13662,6 +13770,7 @@ Food Dictionary needed: ${preview.needsFoodDictionary ? "yes" : "already present
 Finance foundation needed: ${preview.needsFinanceFoundation ? "yes" : "already present"}
 Mutable dated budgets needed: ${preview.needsMutableBudgets ? "yes" : "already present"}
 Valuation history needed: ${preview.needsValuationHistory ? "yes" : "already present"}
+Optional canonical session types needed: ${preview.needsOptionalSessionTypes ? "yes" : "already present"}
 New tables when needed: foods, food_aliases, budget_plans, budget_targets, expected_financial_movements, valuation_rate_sets, valuation_rates
 New daily_meals links when needed: food_id, amount_g, nutrient snapshots`,
           warning: "A backup, transaction, integrity checks, and post-write verification will run before the upgraded database becomes the source of truth."
@@ -13788,12 +13897,12 @@ New daily_meals links when needed: food_id, amount_g, nutrient snapshots`,
       await this.plugin.saveSettings();
       await this.plugin.refreshViews();
     }));
-    new import_obsidian20.Setting(containerEl).setName("Session colors").setHeading();
+    new import_obsidian20.Setting(containerEl).setName("Calendar type colors").setHeading();
     containerEl.createEl("p", {
-      text: "Colors are keyed by the canonical session_types.code referenced by sessions.session_type_id. Unknown values render in gray.",
+      text: "An optional session type controls the color when present. Otherwise the engagement type controls it. Unknown values render in gray.",
       cls: "setting-item-description"
     });
-    for (const type of SESSION_TYPES) {
+    for (const type of [.../* @__PURE__ */ new Set([...SESSION_TYPES, ...ENGAGEMENT_TYPES])]) {
       new import_obsidian20.Setting(containerEl).setName(type).addColorPicker((picker) => {
         var _a;
         return picker.setValue((_a = this.plugin.settings.sessionColors[type]) != null ? _a : DEFAULT_SESSION_COLORS[type]).onChange(async (value) => {

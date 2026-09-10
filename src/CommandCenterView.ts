@@ -312,7 +312,7 @@ export class CommandCenterView extends ItemView {
       cls: 'examined-human-daily-section-subtitle',
       text: 'Paste one valid Admin Event per line. The commands are shown for confirmation, written into a chosen unimported Daily Note, and then validated by the normal note import workflow.',
     });
-    const input = panel.createEl('textarea', { attr: { rows: '12', placeholder: 'FOOD_CREATE | …\nENGAGEMENT_CREATE | …' } });
+    const input = panel.createEl('textarea', { attr: { rows: '12', placeholder: 'SESSION_TYPE_ADD | code | label | description\nENGAGEMENT_TYPE_REMOVE | code\nFOOD_CREATE | …\nENGAGEMENT_CREATE | …' } });
     const actions = panel.createDiv({ cls: 'examined-human-modal-actions' });
     actions.createEl('button', { cls: 'mod-cta', text: 'Review and stage batch' }).addEventListener('click', () => {
       const commands = input.value.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);

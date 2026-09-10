@@ -67,7 +67,7 @@ dieted: 1
 ##### Sessions
 ENTRIES:
 07:00-08:00 | exercise | Project Alpha | morning run
-09:00-10:30 | study | Project Alpha | reading
+09:00-10:30 |  | Project Alpha | reading
 
 ##### Meals
 ###### Breakfast
@@ -151,6 +151,7 @@ test('native historical validation and import cover every Daily Note component',
   assert.equal(String(db.exec('SELECT category FROM transactions')[0].values[0][0]), '1');
   assert.equal(db.exec('SELECT COUNT(*) FROM engagement_measurements')[0].values[0][0], 1);
   assert.deepEqual(db.exec('SELECT unit_key, value FROM valuation_rates ORDER BY source_ordinal')[0].values, [['USD', 1], ['APARTMENT', 2300000]]);
+  assert.deepEqual(db.exec('SELECT session_type_id FROM sessions ORDER BY id')[0].values, [[3], [null]]);
   assert.throws(() => writeHistoricalDailyNote(db, input), /already represented/);
   db.close();
 });
@@ -161,6 +162,10 @@ test('focused Admin Events safely maintain aliases, engagements, exercises, and 
     .replace('12.5 | Cash | Alpha spending | lunch', '12.5 | Pocket cash | Project Alpha | lunch')
     .replace('ACCOUNT_ALIAS | Cash | Wallet', [
     'ENGAGEMENT_CREATE | Project Beta | course | active |',
+    'SESSION_TYPE_ADD | deep-work | Deep Work | Deliberate focus',
+    'SESSION_TYPE_REMOVE | writing',
+    'ENGAGEMENT_TYPE_ADD | laboratory | Laboratory | Experimental work',
+    'ENGAGEMENT_TYPE_REMOVE | article',
     'ENGAGEMENT_ALIAS_ADD | Project Alpha | Alpha alt',
     'ENGAGEMENT_ALIAS_MOVE | Alpha spending | Project Beta',
     'ENGAGEMENT_ALIAS_REMOVE | Project Beta | Alpha spending',
@@ -229,6 +234,34 @@ test('focused Admin Events safely maintain aliases, engagements, exercises, and 
   assert.equal(db.exec("SELECT COUNT(*) FROM food_aliases WHERE alias = 'yogurt'")[0].values[0][0], 1);
   assert.equal(db.exec("SELECT COUNT(*) FROM food_aliases WHERE alias = 'greek'")[0].values[0][0], 0);
   assert.equal(db.exec("SELECT COUNT(*) FROM foods WHERE name = 'Temporary food'")[0].values[0][0], 0);
+  assert.deepEqual(db.exec("SELECT code, label, is_active FROM session_types WHERE code IN ('deep-work', 'writing') ORDER BY code")[0].values, [
+    ['deep-work', 'Deep Work', 1], ['writing', 'Writing', 0],
+  ]);
+  assert.deepEqual(db.exec("SELECT code, label, is_active FROM engagement_types WHERE code IN ('article', 'laboratory') ORDER BY code")[0].values, [
+    ['article', 'Article', 0], ['laboratory', 'Laboratory', 1],
+  ]);
+  db.close();
+});
+
+test('Exercise Details require exactly one session typed exercise', () => {
+  const db = database();
+  const input = {
+    noteDate: '2026-08-20', todayDate: '2026-08-21', fileName: '2026-08-20.md',
+    filePath: 'Journal/2026-08-20.md',
+    sourceText: dailyNote().replace('07:00-08:00 | exercise |', '07:00-08:00 |  |'),
+    sourceChecksum: 'missing-exercise-owner', pluginVersion: '0.9.4', nutritionThresholds: thresholds,
+  };
+  const inspection = inspectDailyNote(db, input);
+  assert.equal(inspection.ready, false);
+  assert.match(inspection.errors.join('\n'), /Add 'exercise' to the optional type field/);
+  const duplicate = inspectDailyNote(db, {
+    ...input,
+    sourceText: dailyNote().replace('09:00-10:30 |  |', '09:00-10:30 | exercise |'),
+    sourceChecksum: 'duplicate-exercise-owner',
+  });
+  assert.equal(duplicate.ready, false);
+  assert.match(duplicate.errors.join('\n'), /Leave 'exercise' on only one session/);
+  assert.equal(db.exec('SELECT COUNT(*) FROM sessions')[0].values[0][0], 0);
   db.close();
 });
 
@@ -465,7 +498,7 @@ test('current and future planning ignores examples and instructional ENTRIES men
 date: 2026-08-21
 ##### Sessions
 FORMAT:
-\`interval | session type | engagement | notes\`
+\`interval | type (optional) | engagement | notes\`
 
 EXAMPLES (do not copy these below \`ENTRIES:\` unless they are real):
 \`09:00-10:30 | study | Jannach German for Reading | studied Kapitel 4\`
@@ -498,7 +531,7 @@ end date: 2026-08-28
 
 | Day | 07-08 | 08-09 | 09-10 | 10-11 |
 | --- | --- | --- | --- | --- |
-| Saturday | study ; Project Alpha | study ; Project Alpha | | |
+| Saturday | ; Project Alpha | ; Project Alpha | | |
 | Sunday |${empty}
 | Monday |${empty}
 | Tuesday |${empty}
@@ -548,6 +581,6 @@ test('weekly plans import, collapse adjacent cells, and prepare guarded Daily No
   const writePreview = prepareWeeklyDailyNoteWrites(db, '2026-08-22', '2026-08-22', notes);
   assert.equal(writePreview.writableNoteCount, 1);
   assert.equal(writePreview.writtenSessionCount, 1);
-  assert.match(writePreview.notes[0].updatedText, /07:00-09:00 \| study \| Project Alpha \|/);
+  assert.match(writePreview.notes[0].updatedText, /07:00-09:00 \|\s*\| Project Alpha \|/);
   db.close();
 });

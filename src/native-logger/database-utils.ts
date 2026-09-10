@@ -74,6 +74,19 @@ export function assertSchemaV1(db: Database): void {
   if (version !== 1) throw new Error(`Native EH import requires official Data Schema v1; this database reports v${version}.`);
 }
 
+export function hasOptionalSessionTypeSchema(db: Database): boolean {
+  const column = queryRows(db, "PRAGMA table_info('sessions')")
+    .find((row) => String(row.name) === 'session_type_id');
+  return Boolean(column) && Number(column?.notnull) === 0;
+}
+
+export function assertOptionalSessionTypeSchema(db: Database): void {
+  assertSchemaV1(db);
+  if (!hasOptionalSessionTypeSchema(db)) {
+    throw new Error('Optional session types are not enabled. Upgrade this official Data Schema v1 database in Examined Human settings before importing Daily Forms.');
+  }
+}
+
 export function hasFinanceFoundationSchema(db: Database): boolean {
   const required = ['budget_plans', 'budget_targets', 'expected_financial_movements'];
   return required.every((name) => queryRows(

@@ -56,7 +56,7 @@ function fixture() {
 
     INSERT INTO sessions (id, engagement_id, date, start_time, end_time, duration_minutes, session_type_id) VALUES
       (1, 1, '2026-07-01', '08:00', '09:00', 60, (SELECT id FROM session_types WHERE code = 'exercise')),
-      (2, 1, '2026-07-02', '08:00', '08:30', 30, (SELECT id FROM session_types WHERE code = 'study')),
+      (2, 1, '2026-07-02', '08:00', '08:30', 30, NULL),
       (3, 1, '2026-07-03', '08:00', '08:30', 30, (SELECT id FROM session_types WHERE code = 'study'));
     INSERT INTO exercises (id, name, category) VALUES
       (1, 'Squat', 'strength'),
@@ -272,6 +272,8 @@ test('Food Library exposes canonical values, aliases, usage, and command choices
     assert.equal(catalog.engagements[0].name, 'Health Project');
     assert.equal(catalog.exercises[0].name, 'Squat');
     assert.equal(catalog.accounts[0].name, 'Cash');
+    db.run("UPDATE engagement_types SET is_active = 0 WHERE code = 'article'");
+    assert.equal(queryCommandCatalog(db).engagementTypes.includes('article'), false);
   } finally {
     db.close();
   }

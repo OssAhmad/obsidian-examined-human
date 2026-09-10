@@ -14,7 +14,42 @@ export const SESSION_TYPES = [
   'writing',
 ] as const;
 
+export const ENGAGEMENT_TYPES = [
+  'article',
+  'authorship',
+  'book',
+  'career',
+  'certification',
+  'course',
+  'exam',
+  'fitness',
+  'leisure',
+  'maintenance',
+  'practice',
+  'relationship',
+  'speech',
+  'startup',
+] as const;
+
+export const DEFAULT_ENGAGEMENT_COLORS: Record<string, string> = {
+  article: '#d946ef',
+  authorship: '#a855f7',
+  book: '#06b6d4',
+  career: '#22c55e',
+  certification: '#3b82f6',
+  course: '#2563eb',
+  exam: '#eab308',
+  fitness: '#f97316',
+  leisure: '#14b8a6',
+  maintenance: '#78716c',
+  practice: '#6366f1',
+  relationship: '#ec4899',
+  speech: '#f59e0b',
+  startup: '#10b981',
+};
+
 export const DEFAULT_SESSION_COLORS: Record<string, string> = {
+  ...DEFAULT_ENGAGEMENT_COLORS,
   authorship: '#a855f7',
   chore: '#64748b',
   exercise: '#f97316',
@@ -134,12 +169,15 @@ export function shouldShowSessionTypeFooter(renderedHeightPx: number, stacked: b
 
 export function sessionFooterText(event: CalendarEvent): string {
   const milestoneCount = event.milestoneDetails?.length ?? 0;
-  if (milestoneCount === 0) return event.sessionType;
-  return `${event.sessionType}, ${milestoneCount} milestone${milestoneCount === 1 ? '' : 's'}`;
+  const parts: string[] = [];
+  if (event.sessionType.trim()) parts.push(event.sessionType);
+  if (milestoneCount > 0) parts.push(`${milestoneCount} milestone${milestoneCount === 1 ? '' : 's'}`);
+  return parts.join(', ');
 }
 
 export function colorForSession(event: CalendarEvent, colors: Record<string, string>): string {
   const sessionType = event.sessionType.trim().toLowerCase();
   if (sessionType === 'chor') return UNKNOWN_TYPE_COLOR;
-  return colors[sessionType] ?? UNKNOWN_TYPE_COLOR;
+  const engagementType = event.engagementType.trim().toLowerCase();
+  return colors[sessionType || engagementType] ?? UNKNOWN_TYPE_COLOR;
 }

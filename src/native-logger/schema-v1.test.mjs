@@ -25,6 +25,14 @@ test('native database creation SQL builds official Data Schema v1', () => {
     assert.equal(db.exec('SELECT COUNT(*) FROM schema_migrations')[0].values[0][0], 1);
     assert.equal(db.exec('SELECT COUNT(*) FROM session_types')[0].values[0][0], 13);
     assert.equal(db.exec('SELECT COUNT(*) FROM sessions')[0].values[0][0], 0);
+    const sessionColumns = db.exec("PRAGMA table_info('sessions')")[0];
+    const sessionTypeRow = sessionColumns.values.find((row) => row[1] === 'session_type_id');
+    assert.equal(sessionTypeRow[3], 0);
+    db.run(`INSERT INTO engagements (name, type_id, status_id)
+      SELECT 'Typeless test', et.id, es.id FROM engagement_types et, engagement_statuses es
+      WHERE et.code = 'practice' AND es.code = 'active'`);
+    db.run("INSERT INTO sessions (engagement_id, date, session_type_id) VALUES (1, '2026-08-20', NULL)");
+    assert.equal(db.exec('SELECT session_type_id FROM sessions')[0].values[0][0], null);
     const milestoneColumns = db.exec("PRAGMA table_info('engagement_milestones')")[0];
     const sessionIdRow = milestoneColumns.values.find((row) => row[1] === 'session_id');
     assert.equal(sessionIdRow[3], 1);

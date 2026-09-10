@@ -42,7 +42,8 @@ export function createSessionElement(
     : '';
   element.setAttribute(
     'aria-label',
-    `${event.title}, ${event.sessionType}, ${formatMinutesAsClock(event.durationMinutes)}${sourceLabel}${estimatedLabel}${milestoneLabel}`,
+    [event.title, event.sessionType, formatMinutesAsClock(event.durationMinutes)]
+      .filter(Boolean).join(', ') + sourceLabel + estimatedLabel + milestoneLabel,
   );
   const tooltipLines = [
     event.title,
@@ -71,8 +72,9 @@ export function createSessionElement(
   duration.textContent = formatMinutesAsClock(event.durationMinutes);
   element.appendChild(duration);
   const renderedHeightPx = vertical.durationMinutes * pxPerMinute;
-  if (shouldShowSessionTypeFooter(renderedHeightPx, vertical.stacked)) {
-    element.createSpan({ cls: 'examined-human-event-type', text: sessionFooterText(event) });
+  const footerText = sessionFooterText(event);
+  if (footerText && shouldShowSessionTypeFooter(renderedHeightPx, vertical.stacked)) {
+    element.createSpan({ cls: 'examined-human-event-type', text: footerText });
   }
   element.addEventListener('click', () => new SessionDetailsModal(app, event).open());
   return element;

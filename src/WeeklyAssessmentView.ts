@@ -437,7 +437,7 @@ export class WeeklyAssessmentView extends ItemView {
     copy.createEl('h3', { text: 'Commitment assessment' });
     copy.createDiv({
       cls: 'examined-human-weekly-chart-subtitle',
-      text: `Hours for ${formatWeekRange(result.weekStartDate, result.weekEndDate)} · all logged session types`,
+      text: `Hours for ${formatWeekRange(result.weekStartDate, result.weekEndDate)} · all logged sessions`,
     });
     const legend = heading.createDiv({ cls: 'examined-human-weekly-legend', attr: { 'aria-label': 'Chart legend' } });
     this.renderLegendItem(legend, 'Committed target', 'target');

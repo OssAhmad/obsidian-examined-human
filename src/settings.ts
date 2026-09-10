@@ -1,5 +1,5 @@
 import { App, Notice, PluginSettingTab, Setting } from 'obsidian';
-import { DEFAULT_SESSION_COLORS, SESSION_TYPES } from './events.ts';
+import { DEFAULT_SESSION_COLORS, ENGAGEMENT_TYPES, SESSION_TYPES } from './events.ts';
 import type { FormDiscoveryCache, FormDiscoveryMode } from './form-discovery.ts';
 import { DEFAULT_JOURNAL_FOLDER, normalizeJournalFolder } from './journal-folder.ts';
 import { confirmWeeklyAction } from './WeeklyActionConfirmationModal.ts';
@@ -126,8 +126,8 @@ export class ExaminedHumanSettingTab extends PluginSettingTab {
         }));
 
     new Setting(containerEl)
-      .setName('Upgrade legacy database to Schema v1')
-      .setDesc('One-time pre-1.0 upgrade for the Food Dictionary, Finance, and Valuation foundations. It preserves existing meal rows, adds canonical foods/aliases, budget tables, and valuation history, resets retired migration metadata to official Data Schema v1, and creates a verified backup.')
+      .setName('Upgrade database to current Schema v1')
+      .setDesc('Adds any missing Food Dictionary, Finance, Valuation, mutable-budget, and optional-session-type foundations. It preserves existing rows and creates a verified backup.')
       .addButton((button) => button
         .setButtonText('Preview upgrade')
         .onClick(async () => {
@@ -136,9 +136,9 @@ export class ExaminedHumanSettingTab extends PluginSettingTab {
             const preview = await this.plugin.nativeLogger.inspectSchemaV1Upgrade(this.plugin.settings.databasePath);
             const confirmed = await confirmWeeklyAction(this.app, {
               title: 'Upgrade to official Data Schema v1',
-              explanation: 'This one-time upgrade adds the Food Dictionary, Finance, and Valuation foundations. It keeps existing meal rows unchanged, but replaces retired schema migration history with one official Schema v1 record.',
+              explanation: 'This guarded upgrade adds any missing official Schema v1 foundations, including optional canonical session types. Existing session type values and linked exercise details are preserved.',
               confirmLabel: 'Upgrade database',
-              dryRunOutput: `Current SQLite schema marker: v${preview.currentSchemaVersion}\nTarget official schema marker: v${preview.targetSchemaVersion}\nRetired migration records to replace: ${preview.migrationEntryCount}\nFood Dictionary needed: ${preview.needsFoodDictionary ? 'yes' : 'already present'}\nFinance foundation needed: ${preview.needsFinanceFoundation ? 'yes' : 'already present'}\nMutable dated budgets needed: ${preview.needsMutableBudgets ? 'yes' : 'already present'}\nValuation history needed: ${preview.needsValuationHistory ? 'yes' : 'already present'}\nNew tables when needed: foods, food_aliases, budget_plans, budget_targets, expected_financial_movements, valuation_rate_sets, valuation_rates\nNew daily_meals links when needed: food_id, amount_g, nutrient snapshots`,
+              dryRunOutput: `Current SQLite schema marker: v${preview.currentSchemaVersion}\nTarget official schema marker: v${preview.targetSchemaVersion}\nRetired migration records to replace: ${preview.migrationEntryCount}\nFood Dictionary needed: ${preview.needsFoodDictionary ? 'yes' : 'already present'}\nFinance foundation needed: ${preview.needsFinanceFoundation ? 'yes' : 'already present'}\nMutable dated budgets needed: ${preview.needsMutableBudgets ? 'yes' : 'already present'}\nValuation history needed: ${preview.needsValuationHistory ? 'yes' : 'already present'}\nOptional canonical session types needed: ${preview.needsOptionalSessionTypes ? 'yes' : 'already present'}\nNew tables when needed: foods, food_aliases, budget_plans, budget_targets, expected_financial_movements, valuation_rate_sets, valuation_rates\nNew daily_meals links when needed: food_id, amount_g, nutrient snapshots`,
               warning: 'A backup, transaction, integrity checks, and post-write verification will run before the upgraded database becomes the source of truth.',
             });
             if (!confirmed) return;
@@ -337,13 +337,13 @@ export class ExaminedHumanSettingTab extends PluginSettingTab {
           await this.plugin.refreshViews();
         }));
 
-    new Setting(containerEl).setName('Session colors').setHeading();
+    new Setting(containerEl).setName('Calendar type colors').setHeading();
     containerEl.createEl('p', {
-      text: 'Colors are keyed by the canonical session_types.code referenced by sessions.session_type_id. Unknown values render in gray.',
+      text: 'An optional session type controls the color when present. Otherwise the engagement type controls it. Unknown values render in gray.',
       cls: 'setting-item-description',
     });
 
-    for (const type of SESSION_TYPES) {
+    for (const type of [...new Set([...SESSION_TYPES, ...ENGAGEMENT_TYPES])]) {
       new Setting(containerEl)
         .setName(type)
         .addColorPicker((picker) => picker

@@ -2,6 +2,7 @@ import type { Database, SqlValue } from 'sql.js';
 import { inspectMeals, type MealInspection, type NutritionThresholds } from './meals.ts';
 import { mealComponentMatchesInspection, queryMealComponentState, writeMealInspection } from './meal-import.ts';
 import {
+  assertOptionalSessionTypeSchema,
   assertSchemaV1,
   assertValuationHistorySchema,
   ensureAlias,
@@ -201,6 +202,10 @@ const METRIC_FIELDS = [
   'calories', 'protein_g', 'fasted', 'dieted',
 ] as const;
 const ADMIN_ARGUMENTS: Record<string, number | readonly number[]> = {
+  SESSION_TYPE_ADD: [2, 3],
+  SESSION_TYPE_REMOVE: 1,
+  ENGAGEMENT_TYPE_ADD: [2, 3],
+  ENGAGEMENT_TYPE_REMOVE: 1,
   ENGAGEMENT_CREATE: 4,
   ENGAGEMENT_COMPLETE: 1,
   ENGAGEMENT_PAUSE: 1,
@@ -239,6 +244,36 @@ const ADMIN_ARGUMENTS: Record<string, number | readonly number[]> = {
   FOOD_ALIAS_REMOVE: 2,
   FOOD_ALIAS_MOVE: 2,
 };
+
+type MutableTypeTable = 'session_types' | 'engagement_types';
+
+function addType(db: Database, table: MutableTypeTable, args: string[], command: string): void {
+  const code = args[0].trim().toLowerCase();
+  const label = args[1].trim();
+  const description = args[2]?.trim() || null;
+  if (!code) throw new Error(`${command} code is empty.`);
+  if (!label) throw new Error(`${command} label is empty.`);
+  const existing = queryRows(db, `SELECT id FROM ${table} WHERE code = ? COLLATE NOCASE`, [code])[0];
+  if (existing) {
+    db.run(`UPDATE ${table} SET label = ?, description = ?, is_active = 1 WHERE id = ?`, [
+      label, description, Number(existing.id),
+    ]);
+    return;
+  }
+  db.run(`INSERT INTO ${table} (code, label, description, is_active, sort_order)
+    VALUES (?, ?, ?, 1, COALESCE((SELECT MAX(sort_order) + 10 FROM ${table}), 10))`, [
+    code, label, description,
+  ]);
+}
+
+function removeType(db: Database, table: MutableTypeTable, rawCode: string, command: string): void {
+  const code = rawCode.trim().toLowerCase();
+  if (!code) throw new Error(`${command} code is empty.`);
+  const existing = queryRows(db, `SELECT id, is_active FROM ${table} WHERE code = ? COLLATE NOCASE`, [code])[0];
+  if (!existing) throw new Error(`Unknown type '${rawCode}'.`);
+  if (Number(existing.is_active) === 0) throw new Error(`Type '${code}' is already inactive.`);
+  db.run(`UPDATE ${table} SET is_active = 0 WHERE id = ?`, [Number(existing.id)]);
+}
 
 function acceptsArgumentCount(expected: number | readonly number[], received: number): boolean {
   return Array.isArray(expected) ? expected.includes(received) : expected === received;
@@ -500,7 +535,7 @@ function parseDaily(db: Database, sourceText: string, noteDate: string, threshol
   const metrics = metricMap(sections.get('daily metrics'), errors);
   const sessions: ParsedSession[] = entries(sections.get('sessions')).map((line, index) => {
     const parts = splitFields(line, 4);
-    if (parts.length !== 4) errors.push(`Invalid session row '${line}'; expected interval | type | engagement | notes.`);
+    if (parts.length !== 4) errors.push(`Invalid session row '${line}'; expected interval | type (optional) | engagement | notes.`);
     const [interval = '', type = '', engagement = '', notes = ''] = parts;
     return {
       ordinal: index + 1, interval, type, engagement, notes,
@@ -567,7 +602,15 @@ function applyAdminEvents(db: Database, parsed: ParsedDailyNote, noteDate: strin
     }
     try {
       const args = event.args;
-      if (event.command === 'ENGAGEMENT_CREATE') {
+      if (event.command === 'SESSION_TYPE_ADD') {
+        addType(db, 'session_types', args, event.command);
+      } else if (event.command === 'SESSION_TYPE_REMOVE') {
+        removeType(db, 'session_types', args[0], event.command);
+      } else if (event.command === 'ENGAGEMENT_TYPE_ADD') {
+        addType(db, 'engagement_types', args, event.command);
+      } else if (event.command === 'ENGAGEMENT_TYPE_REMOVE') {
+        removeType(db, 'engagement_types', args[0], event.command);
+      } else if (event.command === 'ENGAGEMENT_CREATE') {
         const [name, typeRaw, statusRaw, notes] = args;
         if (!name) throw new Error('ENGAGEMENT_CREATE name is empty.');
         if (resolveEntity(db, name, 'engagements')) throw new Error(`Engagement already exists: ${name}`);
@@ -820,9 +863,8 @@ function validateFacts(db: Database, parsed: ParsedDailyNote, errors: string[], 
     session.parsedInterval = parseSessionInterval(session.interval);
     if (!session.parsedInterval) errors.push(`Session #${session.ordinal} has an invalid interval '${session.interval}'.`);
     else intervals.push({ start: session.parsedInterval.start, end: session.parsedInterval.end, ordinal: session.ordinal });
-    session.sessionType = resolveTaxonomy(db, 'session_types', session.type);
-    if (!session.type) errors.push(`Session #${session.ordinal} has an empty type.`);
-    else if (!session.sessionType) errors.push(`Unknown session type '${session.type}'. Supported: ${taxonomyCodes(db, 'session_types').join(', ')}.`);
+    session.sessionType = session.type ? resolveTaxonomy(db, 'session_types', session.type) : null;
+    if (session.type && !session.sessionType) errors.push(`Unknown session type '${session.type}'. Supported: ${taxonomyCodes(db, 'session_types').join(', ')}.`);
     session.resolvedEngagement = resolveEntity(db, session.engagement, 'engagements');
     if (!session.engagement) errors.push(`Session #${session.ordinal} has an empty engagement.`);
     else if (!session.resolvedEngagement) errors.push(`Unknown engagement in session #${session.ordinal}: '${session.engagement}'.`);
@@ -846,8 +888,10 @@ function validateFacts(db: Database, parsed: ParsedDailyNote, errors: string[], 
     }
   }
   const exerciseSessions = parsed.sessions.filter((session) => session.sessionType?.code === 'exercise');
-  if (parsed.exercises.length > 0 && exerciseSessions.length !== 1) {
-    errors.push(`Exercise details require exactly one exercise session; found ${exerciseSessions.length}.`);
+  if (parsed.exercises.length > 0 && exerciseSessions.length === 0) {
+    errors.push("Exercise Details require one owning session. Add 'exercise' to the optional type field of that session.");
+  } else if (parsed.exercises.length > 0 && exerciseSessions.length > 1) {
+    errors.push(`Exercise Details require exactly one owning session, but ${exerciseSessions.length} sessions use type 'exercise'. Leave 'exercise' on only one session.`);
   }
   for (const exercise of parsed.exercises) {
     exercise.resolvedExercise = resolveEntity(db, exercise.exercise, 'exercises');
@@ -949,7 +993,7 @@ function inspectionFor(
 }
 
 function prepareDaily(db: Database, input: NativeDailyNoteInput): PreparedDailyNote {
-  assertSchemaV1(db);
+  assertOptionalSessionTypeSchema(db);
   requireIsoDate(input.noteDate, 'Note date');
   requireIsoDate(input.todayDate, 'Today date');
   const errors: string[] = [];
@@ -1066,7 +1110,7 @@ export function writeHistoricalDailyNote(db: Database, input: NativeDailyNoteInp
     ) VALUES (?, ?, ?, ?, ?, ?, ?)`, [
       session.resolvedEngagement!.id, input.noteDate,
       session.parsedInterval!.start, session.parsedInterval!.end,
-      session.parsedInterval!.durationMinutes, session.sessionType!.id, session.notes || null,
+      session.parsedInterval!.durationMinutes, session.sessionType?.id ?? null, session.notes || null,
     ]);
     sessionIds.push(lastInsertId(db));
   }

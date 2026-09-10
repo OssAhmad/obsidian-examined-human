@@ -33,16 +33,16 @@ exercised:
 ##### Sessions
 
 FORMAT:
-`interval | session type | engagement | notes`
+`interval | type (optional) | engagement | notes`
 
 EXAMPLES (do not copy these below `ENTRIES:` unless they are real):
-`09:00-10:30 | study | Jannach German for Reading | studied Kapitel 4`
-`14:00-15:30 | work | Mensonaut Paper | wrote related zettels`
+`09:00-10:30 |  | Jannach German for Reading | studied Kapitel 4`
+`14:00-15:30 |  | Mensonaut Paper | wrote related zettels`
 
 SESSION TYPES:
 `authorship, chore, exercise, leisure, maintenance, meditation, reading, research, social, study, thinking, work, writing`
 
-Use an existing canonical engagement name or one of its aliases. Overlapping sessions are allowed but reported as a warning.
+Use an existing canonical engagement name or one of its aliases. The type field is normally blank; when supplied, it must use an active session type. Overlapping sessions are allowed but reported as a warning.
 
 ENTRIES:
 
@@ -127,7 +127,7 @@ EXAMPLES (do not copy these below `ENTRIES:` unless they are real):
 `Pull Up | [+10x6, +10x5] | first time adding 10 kg`
 `Running | [30min, 5km] | zone 2`
 
-Supported set tokens are `weightxreps`, `+weightxreps`, `BWxreps`, `minutesmin`, and `distancekm`. Exercise Details require exactly one `exercise` session in the Sessions section. Use an existing exercise name or alias.
+Supported set tokens are `weightxreps`, `+weightxreps`, `BWxreps`, `minutesmin`, and `distancekm`. When Exercise Details contains rows, exactly one Sessions row must use the optional type `exercise`; every exercise and set in this form attaches to that owning session. If no session is typed `exercise`, the importer asks you to add it. Use an existing exercise name or alias.
 
 ENTRIES:
 
@@ -161,6 +161,9 @@ The Command Dashboard is the easiest way to create these rows. Use the formats b
 
 ENGAGEMENT COMMANDS:
 
+- `ENGAGEMENT_TYPE_ADD | code | label | optional description`
+- `ENGAGEMENT_TYPE_REMOVE | code`
+
 - `ENGAGEMENT_CREATE | name | type | status | notes`
 - `ENGAGEMENT_COMPLETE | engagement`
 - `ENGAGEMENT_PAUSE | engagement`
@@ -177,6 +180,13 @@ ENGAGEMENT COMMANDS:
 Engagement types: `article, authorship, book, career, certification, course, exam, fitness, leisure, maintenance, practice, relationship, speech, startup`.
 
 Engagement statuses: `planned, pending, active, paused, completed, abandoned`.
+
+SESSION TYPE COMMANDS:
+
+- `SESSION_TYPE_ADD | code | label | optional description`
+- `SESSION_TYPE_REMOVE | code`
+
+Removing a session or engagement type makes it inactive for new imports and choices; it does not delete historical rows that already reference that type. Adding an existing inactive code reactivates it and updates its label and description.
 
 EXERCISE COMMANDS:
 

@@ -20,7 +20,7 @@ FORMAT:
 Total:
 
 FORMAT:
-`session type ; engagement ; optional notes`
+`optional type ; engagement ; optional notes`
 
 SESSION TYPES:
 `authorship, chore, exercise, leisure, maintenance, meditation, reading, research, social, study, thinking, work, writing`

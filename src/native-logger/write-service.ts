@@ -263,6 +263,8 @@ export class NativeLoggerWriteService {
         databasePathSetting,
         'schema-v1-upgrade',
         upgradeV5ToOfficialSchemaV1,
+        'durable',
+        false,
       );
       return {
         ...mutation.value,
@@ -651,6 +653,7 @@ export class NativeLoggerWriteService {
     backupLabel: string,
     operation: (db: Database) => T,
     durability: DatabaseMutationDurability = 'durable',
+    enforceForeignKeysDuringMutation = true,
   ): Promise<{ value: T; backupPath: string | null; databasePath: string; backupsPruned: number; backupRetentionWarning: string | null }> {
     const databasePath = normalizeVaultDatabasePath(databasePathSetting);
     const databaseFile = this.requireFile(databasePath, 'Examined Human database');
@@ -660,13 +663,14 @@ export class NativeLoggerWriteService {
     const SQL = await getSqlJs();
     const db = new SQL.Database(originalBytes);
     try {
-      db.run('PRAGMA foreign_keys = ON');
+      db.run(`PRAGMA foreign_keys = ${enforceForeignKeysDuringMutation ? 'ON' : 'OFF'}`);
       db.run('BEGIN IMMEDIATE');
       let value: T;
       try {
         value = operation(db);
         verifyIntegrity(db);
         db.run('COMMIT');
+        if (!enforceForeignKeysDuringMutation) db.run('PRAGMA foreign_keys = ON');
       } catch (error) {
         try {
           db.run('ROLLBACK');

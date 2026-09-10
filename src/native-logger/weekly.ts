@@ -30,7 +30,7 @@ export interface WeeklySession {
   startTime: string;
   endTime: string;
   durationMinutes: number;
-  sessionTypeId: number;
+  sessionTypeId: number | null;
   engagementId: number;
   originalCellText: string;
   notes: string | null;
@@ -170,8 +170,8 @@ function parseHeaderInterval(value: string): { startTime: string; endTime: strin
 
 function parseSessionCell(value: string): { type: string; engagement: string; notes: string | null } {
   const parts = value.split(';').map((part) => part.trim());
-  if ((parts.length !== 2 && parts.length !== 3) || !parts[0] || !parts[1]) {
-    throw new Error(`Invalid weekly grid cell '${value}'; use type ; engagement ; optional notes.`);
+  if ((parts.length !== 2 && parts.length !== 3) || !parts[1]) {
+    throw new Error(`Invalid weekly grid cell '${value}'; use optional type ; engagement ; optional notes.`);
   }
   return { type: parts[0], engagement: parts[1], notes: parts.length === 3 ? parts[2] || null : null };
 }
@@ -209,8 +209,8 @@ function parseGrid(db: Database, text: string, weekStart: string): WeeklySession
       const cell = rawCell.trim();
       if (!cell) return;
       const parsed = parseSessionCell(cell);
-      const sessionType = resolveTaxonomy(db, 'session_types', parsed.type);
-      if (!sessionType) throw new Error(`Unknown session type in weekly grid: '${parsed.type}'.`);
+      const sessionType = parsed.type ? resolveTaxonomy(db, 'session_types', parsed.type) : null;
+      if (parsed.type && !sessionType) throw new Error(`Unknown session type in weekly grid: '${parsed.type}'.`);
       const engagement = resolveEntity(db, parsed.engagement, 'engagements');
       if (!engagement) throw new Error(`Unknown engagement in weekly grid: '${parsed.engagement}'.`);
       const interval = intervals[index];
@@ -219,7 +219,7 @@ function parseGrid(db: Database, text: string, weekStart: string): WeeklySession
         startTime: interval.startTime,
         endTime: interval.endTime,
         durationMinutes: interval.duration,
-        sessionTypeId: sessionType.id,
+        sessionTypeId: sessionType?.id ?? null,
         engagementId: engagement.id,
         originalCellText: cell,
         notes: parsed.notes,
@@ -349,7 +349,7 @@ function sessionRows(db: Database, planId: number): Map<string, string[]> {
   for (const record of records) {
     const original = String(record.original_cell_text);
     const parts = original.split(';').map((part) => part.trim());
-    if ((parts.length !== 2 && parts.length !== 3) || !parts[0] || !parts[1]) {
+    if ((parts.length !== 2 && parts.length !== 3) || !parts[1]) {
       throw new Error(`Stored weekly session has invalid source text: '${original}'.`);
     }
     const date = String(record.date);

@@ -149,7 +149,6 @@ export function inspectPlannedNote(text: string, expectedDate?: string): Planned
       if (estimatedIndex > ESTIMATED_SLOTS_PER_DAY) warnings.push('Estimated hourly slots were reused because the day is full.');
       timeIsEstimated = true;
     }
-    if (!sessionTypeRaw) warnings.push('Session type is missing.');
     if (!engagementRaw) warnings.push('Engagement is missing.');
     sessions.push({
       ordinal: sourceIndex + 1,

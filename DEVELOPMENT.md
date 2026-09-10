@@ -89,6 +89,8 @@ Keep discovery, parsing, validation, and persistence separate:
 
 Admin Events are applied to the in-memory transaction before dependent session, meal, exercise, transaction, milestone, or valuation references are validated. This lets one historical Daily Form introduce canonical records and use them in the same confirmed import.
 
+Canonical session rows use `interval | type (optional) | engagement | notes`. Ordinary rows store a null `session_type_id`; a form with Exercise Details must resolve exactly one `exercise`-typed owner session. Session and engagement type removal commands set `is_active = 0` so existing foreign-key references remain valid, and their add counterparts create or reactivate codes.
+
 The forms in `EH Forms/` are part of the user-facing grammar. Update explained and minimal variants together when a field, command, or format changes.
 
 ## Build and verification

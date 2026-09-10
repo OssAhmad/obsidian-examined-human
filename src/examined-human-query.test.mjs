@@ -30,7 +30,7 @@ function fixture(withExerciseDetails = false, withMilestoneDetails = false) {
       start_time TEXT,
       end_time TEXT,
       duration_minutes INTEGER,
-      session_type_id INTEGER NOT NULL,
+      session_type_id INTEGER,
       notes TEXT
     );
     INSERT INTO engagement_types VALUES (1, 'academic');
@@ -182,13 +182,16 @@ test('database inspection verifies the schema and profile', () => {
 test('session query maps geometry, display data, and chor warnings', () => {
   const db = fixture();
   try {
+    db.run("INSERT INTO sessions VALUES (13, 1, '2026-07-20', '13:00', '14:00', 60, NULL, 'typeless')");
     const result = querySessions(db, '2026-07-20', '2026-07-20');
-    assert.equal(result.events.length, 3);
+    assert.equal(result.events.length, 4);
     assert.equal(result.events[0].title, 'MIT Differential Equations');
     assert.equal(result.events[0].startMinutes, 575);
     assert.equal(result.events[0].durationMinutes, 84);
     assert.match(result.events[1].dataWarning, /invalid type "chor"/);
     assert.equal(result.events[2].exerciseDetails, undefined);
+    assert.equal(result.events[3].sessionType, '');
+    assert.equal(result.events[3].engagementType, 'academic');
     assert.equal(result.issues.length, 1);
   } finally {
     db.close();
@@ -224,6 +227,19 @@ test('exercise sessions include ordered exercises and their recorded sets', () =
         ],
       },
     ]);
+  } finally {
+    db.close();
+  }
+});
+
+test('structured exercise details remain visible when their session type is absent', () => {
+  const db = fixture(true);
+  try {
+    db.run('UPDATE sessions SET session_type_id = NULL WHERE id = 12');
+    const result = querySessions(db, '2026-07-20', '2026-07-20');
+    const workout = result.events.find((event) => event.id === '12');
+    assert.equal(workout.sessionType, '');
+    assert.equal(workout.exerciseDetails.length, 2);
   } finally {
     db.close();
   }

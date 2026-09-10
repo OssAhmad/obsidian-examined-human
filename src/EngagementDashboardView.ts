@@ -460,10 +460,10 @@ export class EngagementDashboardView extends ItemView {
     }
 
     const mixSection = grid.createEl('section', { cls: 'examined-human-engagement-panel' });
-    mixSection.createEl('h3', { text: 'Session type mix' });
-    mixSection.createDiv({ cls: 'examined-human-engagement-panel-subtitle', text: 'Logged time by canonical session type' });
+    mixSection.createEl('h3', { text: 'Optional session type mix' });
+    mixSection.createDiv({ cls: 'examined-human-engagement-panel-subtitle', text: 'Logged time for sessions that have a canonical session type' });
     if (this.result.sessionTypes.length === 0) {
-      mixSection.createDiv({ cls: 'examined-human-engagement-empty-inline', text: 'No session types in this period.' });
+      mixSection.createDiv({ cls: 'examined-human-engagement-empty-inline', text: 'No typed sessions in this period.' });
     } else {
       const maxMinutes = Math.max(...this.result.sessionTypes.map((item) => item.totalMinutes), 1);
       const chart = mixSection.createDiv({ cls: 'examined-human-engagement-type-chart' });

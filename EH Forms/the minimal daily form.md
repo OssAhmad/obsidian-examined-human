@@ -28,7 +28,7 @@ exercised:
 ##### Sessions
 
 FORMAT:
-`interval | session type | engagement | notes`
+`interval | type (optional) | engagement | notes`
 
 SESSION TYPES:
 `authorship, chore, exercise, leisure, maintenance, meditation, reading, research, social, study, thinking, work, writing`

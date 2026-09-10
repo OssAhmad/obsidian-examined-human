@@ -1,9 +1,11 @@
 import type { Database, SqlValue } from 'sql.js';
 import {
   assertFinanceFoundationSchema,
+  assertOptionalSessionTypeSchema,
   assertSchemaV1,
   assertValuationHistorySchema,
   hasFinanceFoundationSchema,
+  hasOptionalSessionTypeSchema,
   hasRetiredSingleBudgetSchema,
   hasValuationHistorySchema,
 } from './database-utils.ts';
@@ -17,6 +19,7 @@ export interface SchemaV1UpgradePreview {
   needsFinanceFoundation: boolean;
   needsValuationHistory: boolean;
   needsMutableBudgets: boolean;
+  needsOptionalSessionTypes: boolean;
 }
 
 function rows(db: Database, sql: string, params: SqlValue[] = []): Record<string, SqlValue>[] {
@@ -43,9 +46,14 @@ export function previewSchemaV1Upgrade(db: Database): SchemaV1UpgradePreview {
       needsFinanceFoundation: true,
       needsValuationHistory: true,
       needsMutableBudgets: true,
+      needsOptionalSessionTypes: true,
     };
   }
-  if (currentSchemaVersion === 1 && (!hasFinanceFoundationSchema(db) || !hasValuationHistorySchema(db))) {
+  if (currentSchemaVersion === 1 && (
+    !hasFinanceFoundationSchema(db)
+    || !hasValuationHistorySchema(db)
+    || !hasOptionalSessionTypeSchema(db)
+  )) {
     return {
       currentSchemaVersion,
       targetSchemaVersion: 1,
@@ -54,12 +62,13 @@ export function previewSchemaV1Upgrade(db: Database): SchemaV1UpgradePreview {
       needsFinanceFoundation: !hasFinanceFoundationSchema(db) && !hasRetiredSingleBudgetSchema(db),
       needsValuationHistory: !hasValuationHistorySchema(db),
       needsMutableBudgets: !hasFinanceFoundationSchema(db),
+      needsOptionalSessionTypes: !hasOptionalSessionTypeSchema(db),
     };
   }
   {
     throw new Error(
       currentSchemaVersion === 1
-        ? 'This database already includes the current official Data Schema v1 finance, valuation, and mutable budget foundations.'
+        ? 'This database already includes the current official Data Schema v1 foundations and optional session types.'
         : `This one-time upgrade supports only the retired pre-Schema-v1 database; this database reports v${currentSchemaVersion}.`,
     );
   }
@@ -71,15 +80,18 @@ export function applyV5ToOfficialSchemaV1(
   financeUpgradeSql: string,
   valuationUpgradeSql: string,
   mutableBudgetUpgradeSql: string,
+  optionalSessionTypeUpgradeSql: string,
 ): SchemaV1UpgradePreview {
   const preview = previewSchemaV1Upgrade(db);
   if (preview.needsFoodDictionary) db.run(foodUpgradeSql);
   if (preview.needsFinanceFoundation) db.run(financeUpgradeSql);
   if (preview.needsValuationHistory) db.run(valuationUpgradeSql);
   if (preview.needsMutableBudgets) db.run(mutableBudgetUpgradeSql);
+  if (preview.needsOptionalSessionTypes) db.run(optionalSessionTypeUpgradeSql);
   assertSchemaV1(db);
   assertMealImportSchema(db);
   assertFinanceFoundationSchema(db);
   assertValuationHistorySchema(db);
+  assertOptionalSessionTypeSchema(db);
   return preview;
 }

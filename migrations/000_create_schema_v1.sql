@@ -58,7 +58,7 @@ CREATE TABLE sessions (
     start_time TEXT,
     end_time TEXT,
     duration_minutes INTEGER,
-    session_type_id INTEGER NOT NULL REFERENCES session_types(id),
+    session_type_id INTEGER REFERENCES session_types(id),
     notes TEXT
 );
 
@@ -476,12 +476,14 @@ CREATE INDEX idx_note_import_components_state ON note_import_components(lifecycl
 
 CREATE TRIGGER sessions_require_active_type_insert
 BEFORE INSERT ON sessions
-WHEN NOT EXISTS (SELECT 1 FROM session_types WHERE id = NEW.session_type_id AND is_active = 1)
+WHEN NEW.session_type_id IS NOT NULL
+ AND NOT EXISTS (SELECT 1 FROM session_types WHERE id = NEW.session_type_id AND is_active = 1)
 BEGIN SELECT RAISE(ABORT, 'unknown or inactive session type'); END;
 
 CREATE TRIGGER sessions_require_active_type_update
 BEFORE UPDATE OF session_type_id ON sessions
-WHEN NOT EXISTS (SELECT 1 FROM session_types WHERE id = NEW.session_type_id AND is_active = 1)
+WHEN NEW.session_type_id IS NOT NULL
+ AND NOT EXISTS (SELECT 1 FROM session_types WHERE id = NEW.session_type_id AND is_active = 1)
 BEGIN SELECT RAISE(ABORT, 'unknown or inactive session type'); END;
 
 CREATE TRIGGER engagements_require_active_type_insert
@@ -613,7 +615,7 @@ INSERT INTO engagement_statuses (code, label, sort_order) VALUES
 ('paused', 'Paused', 40), ('completed', 'Completed', 50), ('abandoned', 'Abandoned', 60);
 
 INSERT INTO schema_migrations (version, name) VALUES
-(1, 'official schema v1: food, finance, valuation, and mutable budget foundations');
+(1, 'official schema v1: food, finance, valuation, mutable budgets, and optional session types');
 
 PRAGMA user_version = 1;
 COMMIT;

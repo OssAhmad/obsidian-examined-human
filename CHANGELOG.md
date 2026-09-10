@@ -4,6 +4,10 @@
 
 ### Changed
 
+- Made session type optional across Daily Forms, Weekly Forms, planning projections, canonical imports, queries, and calendar rendering; typeless sessions use engagement type colors
+- Required exactly one `exercise`-typed owner session whenever a Daily Form contains Exercise Details, while preserving the existing one-session ownership model for all exercises and sets
+- Added soft-deactivation/reactivation Admin Events for session and engagement types: `SESSION_TYPE_ADD`, `SESSION_TYPE_REMOVE`, `ENGAGEMENT_TYPE_ADD`, and `ENGAGEMENT_TYPE_REMOVE`
+- Added a backup- and confirmation-gated Schema v1 upgrade that makes `sessions.session_type_id` nullable while preserving session IDs and linked exercise or milestone rows
 - Made the Calendar render current and future sessions directly from the latest imported version of the covering Weekly Form when no canonical Daily history or Daily Form projection owns that date; Sync week is now optional for note materialization rather than required for calendar visibility
 - Made Calendar open and refresh automatically reconcile the eligible Daily Form dated today into the backup-free `planned_sessions` projection, without changing projections for other dates
 

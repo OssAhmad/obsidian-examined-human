@@ -52,6 +52,13 @@ test('session footer includes milestone counts only when milestones exist', () =
     { name: 'Problem Set 3', date: '2026-07-20', notes: null, measurements: [] },
     { name: 'Exam 1', date: '2026-07-20', notes: null, measurements: [] },
   ] }), 'study, 2 milestones');
+  assert.equal(sessionFooterText({ ...event(''), milestoneDetails: [{
+    name: 'Problem Set 3', date: '2026-07-20', notes: null, measurements: [],
+  }] }), '1 milestone');
+});
+
+test('typeless sessions use their engagement type color', () => {
+  assert.equal(colorForSession({ ...event(''), engagementType: 'fitness' }, { fitness: '#f97316' }), '#f97316');
 });
 
 test('chor stays distinct and gray', () => {

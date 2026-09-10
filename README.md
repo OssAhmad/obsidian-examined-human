@@ -192,6 +192,8 @@ Dashboard buttons that say **Stage** do not finish an import. They add reviewabl
 
 A Daily Form can contain metrics, sessions, meals, transactions, valuation rates, exercise details, milestones, Stoicism notes, and Admin Events.
 
+Session rows use `interval | type (optional) | engagement | notes`. Leave the type field blank for ordinary sessions. If the form contains Exercise Details, exactly one session must use type `exercise`; all of that form's exercises and sets attach to that session.
+
 - For **today**, opening or refreshing the Calendar automatically imports the eligible Daily Form's Sessions into the replaceable `planned_sessions` projection. It does not finalize the day or create a backup.
 - For a **future date**, importing synchronizes a replaceable planning view after preview and confirmation. It does not finalize the day.
 - For a **past date**, importing creates the canonical historical record after validation and confirmation.
@@ -284,7 +286,7 @@ Use it to answer: **How consistently am I training, and what does the recorded p
 
 ### Command Center
 
-The Command Center is the maintenance workspace for engagements, foods, exercises, accounts, aliases, valuation rates, and batches of Admin Events. Search existing records, prepare changes, choose an unimported Daily Form, review the proposed rows, and stage them.
+The Command Center is the maintenance workspace for engagements, foods, exercises, accounts, aliases, valuation rates, and batches of Admin Events. Search existing records, prepare changes, choose an unimported Daily Form, review the proposed rows, and stage them. Raw Admin Events can also maintain the type vocabularies with `SESSION_TYPE_ADD`, `SESSION_TYPE_REMOVE`, `ENGAGEMENT_TYPE_ADD`, and `ENGAGEMENT_TYPE_REMOVE`; removal deactivates a type for new input without deleting historical references.
 
 Use it to answer: **What canonical names does my system know, and what correction should I stage next?**
 
