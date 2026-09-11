@@ -39,13 +39,24 @@ export interface DailyMetricsRecord {
   proteinG: number | null;
   fasted: number | null;
   dieted: number | null;
+  studied: number | null;
+  worked: number | null;
+  exercised: number | null;
+  notes: string | null;
 }
 
 export interface DailyMealRecord {
   id: number;
+  mealType: string | null;
   food: string;
+  amountG: number | null;
   calories: number | null;
   proteinG: number | null;
+  carbsG: number | null;
+  fatG: number | null;
+  saltG: number | null;
+  fiberG: number | null;
+  cholesterolMg: number | null;
 }
 
 export interface DailyTransactionRecord {
@@ -54,6 +65,8 @@ export interface DailyTransactionRecord {
   amount: number;
   engagement: string;
   description: string;
+  currency: string;
+  valuationAmount: number | null;
 }
 
 export interface DailyAssessmentQueryResult {

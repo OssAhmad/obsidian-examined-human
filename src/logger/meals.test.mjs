@@ -76,7 +76,10 @@ test('evaluates canonical-food totals, includes snacks, and applies the two-meal
   assert.equal(result.leisureMeals, 2);
   assert.equal(result.nutrition.evaluatedDieted, 0);
   assert.equal(result.nutrition.mealItemsCaloriesKcal, 3726);
-  assert.equal(result.nutrition.dailyCaloriesKcal, 4000);
+  assert.equal(result.nutrition.dailyCaloriesKcal, 3726);
+  assert.equal(result.nutrition.proteinG, 127);
+  assert.equal(result.nutrition.dailyCalorieSource, 'meal_items');
+  assert.match(result.warnings.join('\n'), /calculated food total was used/);
 });
 
 test('accepts an optional g suffix and canonical food aliases', () => {

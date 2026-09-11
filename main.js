@@ -2196,7 +2196,7 @@ __export(main_exports, {
   default: () => ExaminedHumanPlugin
 });
 module.exports = __toCommonJS(main_exports);
-var import_obsidian21 = require("obsidian");
+var import_obsidian22 = require("obsidian");
 
 // src/database-path.ts
 function normalizeVaultDatabasePath(value) {
@@ -2515,6 +2515,84 @@ function colorForSession(event, colors) {
 // src/domain/valuation.ts
 function normalizeValuationUnit(value) {
   return value.trim().replace(/\s+/g, " ").toLocaleUpperCase();
+}
+
+// src/daily-inference.ts
+function code(value) {
+  return value.trim().toLocaleLowerCase();
+}
+function isSleepSession(session) {
+  return code(session.sessionType) === "sleep" || code(session.engagementType) === "sleep" || code(session.engagementName) === "sleep";
+}
+function inferDailyActivity(sessions) {
+  const studied = sessions.some((session) => {
+    const sessionType = code(session.sessionType);
+    const engagementType = code(session.engagementType);
+    return sessionType === "study" || engagementType === "study" || engagementType === "course";
+  });
+  const worked = sessions.some((session) => code(session.sessionType) === "work" || code(session.engagementType) === "work");
+  const exercised = sessions.some((session) => {
+    const sessionType = code(session.sessionType);
+    const engagementType = code(session.engagementType);
+    return session.hasExerciseDetails === true || sessionType === "exercise" || engagementType === "exercise" || engagementType === "fitness";
+  });
+  return { studied: studied ? 1 : 0, worked: worked ? 1 : 0, exercised: exercised ? 1 : 0 };
+}
+function previousIsoDate(date) {
+  const [year, month, day] = date.split("-").map(Number);
+  const previous = new Date(Date.UTC(year, month - 1, day - 1));
+  return [
+    previous.getUTCFullYear(),
+    String(previous.getUTCMonth() + 1).padStart(2, "0"),
+    String(previous.getUTCDate()).padStart(2, "0")
+  ].join("-");
+}
+function inferSleepHours(assessmentDate, sessions) {
+  const previousDate = previousIsoDate(assessmentDate);
+  const windowStart = 21 * 60;
+  const windowEnd = 24 * 60 + 21 * 60;
+  const intervals = sessions.flatMap((session) => {
+    if (!isSleepSession(session)) return [];
+    const dayOffset = session.date === previousDate ? 0 : session.date === assessmentDate ? 24 * 60 : null;
+    if (dayOffset == null) return [];
+    const adjustedEnd = session.endMinutes === 23 * 60 + 59 ? 24 * 60 : session.endMinutes;
+    const start = Math.max(windowStart, dayOffset + session.startMinutes);
+    const end = Math.min(windowEnd, dayOffset + adjustedEnd);
+    return end > start ? [[start, end]] : [];
+  }).sort((left, right) => left[0] - right[0] || left[1] - right[1]);
+  let totalMinutes = 0;
+  let current = null;
+  for (const interval of intervals) {
+    if (!current) current = [...interval];
+    else if (interval[0] <= current[1]) current[1] = Math.max(current[1], interval[1]);
+    else {
+      totalMinutes += current[1] - current[0];
+      current = [...interval];
+    }
+  }
+  if (current) totalMinutes += current[1] - current[0];
+  return totalMinutes / 60;
+}
+function eventSignal(event) {
+  var _a, _b;
+  return {
+    date: event.date,
+    startMinutes: event.startMinutes,
+    endMinutes: event.endMinutes,
+    sessionType: event.sessionType,
+    engagementType: event.engagementType,
+    engagementName: event.engagementName,
+    hasExerciseDetails: ((_b = (_a = event.exerciseDetails) == null ? void 0 : _a.length) != null ? _b : 0) > 0
+  };
+}
+function overlaps(left, right) {
+  return left.date === right.date && left.startMinutes < right.endMinutes && right.startMinutes < left.endMinutes;
+}
+function mergeTodayWithWeekly(primary, weekly) {
+  return [
+    ...primary,
+    ...weekly.filter((candidate) => !primary.some((event) => overlaps(event, candidate)))
+  ];
 }
 
 // src/read-models/core-schema.ts
@@ -3124,8 +3202,9 @@ function queryPlanningState(db, startDate, endDate, todayDate, importedDates) {
     SELECT note_date, lifecycle_state, parse_status, last_error
     FROM note_sources
     WHERE note_date >= ? AND note_date <= ?
+      AND note_date = ?
       AND lifecycle_state NOT IN ('finalized', 'deleted')
-  `, [startDate, endDate]);
+  `, [startDate, endDate, todayDate]);
   for (const row of sourceRows) {
     const date = String(row.note_date);
     if (importedDates.has(date)) continue;
@@ -3139,7 +3218,7 @@ function queryPlanningState(db, startDate, endDate, todayDate, importedDates) {
   }
   return { dayStates, unfinalizedDates };
 }
-function queryPlannedEvents(db, startDate, endDate, importedDates, issues) {
+function queryPlannedEvents(db, startDate, endDate, importedDates, todayDate, issues) {
   var _a, _b, _c, _d, _e, _f, _g, _h;
   if (!hasPlanningSchema(db)) return [];
   const plannedRows = queryRows(db, `
@@ -3162,9 +3241,10 @@ function queryPlannedEvents(db, startDate, endDate, importedDates, issues) {
     LEFT JOIN engagement_types AS et ON et.id = e.type_id
     LEFT JOIN session_types AS st ON st.id = ps.resolved_session_type_id
     WHERE ps.date >= ? AND ps.date <= ?
+      AND ps.date = ?
       AND ns.lifecycle_state NOT IN ('finalized', 'deleted')
     ORDER BY ps.date, ps.start_time, ps.source_ordinal, ps.id
-  `, [startDate, endDate]);
+  `, [startDate, endDate, todayDate]);
   const events = [];
   for (const row of plannedRows) {
     const date = String(row.date);
@@ -3199,7 +3279,7 @@ function queryPlannedEvents(db, startDate, endDate, importedDates, issues) {
   }
   return events;
 }
-function queryWeeklyPlannedEvents(db, startDate, endDate, todayDate, excludedDates, issues) {
+function queryWeeklyPlannedEvents(db, startDate, endDate, todayDate, primaryTodayEvents, issues) {
   var _a, _b, _c, _d, _e, _f, _g, _h;
   const events = [];
   const dayStates = {};
@@ -3226,7 +3306,6 @@ function queryWeeklyPlannedEvents(db, startDate, endDate, todayDate, excludedDat
   `, [startDate, endDate, todayDate]);
   for (const row of weeklyRows) {
     const date = String(row.date);
-    if (excludedDates.has(date)) continue;
     const id = `weekly:${String(row.id)}`;
     const start = parseDatabaseTime(String((_a = row.start_time) != null ? _a : ""));
     const end = parseDatabaseTime(String((_b = row.end_time) != null ? _b : ""));
@@ -3260,7 +3339,10 @@ function queryWeeklyPlannedEvents(db, startDate, endDate, todayDate, excludedDat
       message: `Imported Weekly Form ${sourceFileName} supplies this date directly; no Daily Note is required.`
     };
   }
-  return { events, dayStates };
+  const todayWeekly = events.filter((event) => event.date === todayDate);
+  const futureWeekly = events.filter((event) => event.date > todayDate);
+  const mergedToday = mergeTodayWithWeekly(primaryTodayEvents, todayWeekly).filter((event) => event.planningSource === "weekly-plan");
+  return { events: [...mergedToday, ...futureWeekly], dayStates };
 }
 function nullableNumber2(value) {
   if (value == null) return null;
@@ -3411,10 +3493,11 @@ function queryDailyNoteIndex(db) {
   })) : [];
   return { importedNotes, noteSources };
 }
-function queryDailyAssessment(db, date, todayDate) {
+function queryDailyAssessment(db, date, todayDate, valuationOptions = { label: "EHM", referenceUnit: "USD" }) {
+  var _a, _b, _c, _d, _e, _f, _g, _h, _i;
   validateSchema(db);
   const sessionResult = querySessions(db, date, date, todayDate);
-  const metricRows = hasTableColumns(db, "daily_metrics", [
+  const hasCoreMetrics = hasTableColumns(db, "daily_metrics", [
     "date",
     "mood",
     "energy",
@@ -3425,14 +3508,18 @@ function queryDailyAssessment(db, date, todayDate) {
     "protein_g",
     "fasted",
     "dieted"
-  ]) ? queryRows(db, `
+  ]);
+  const metricField = (field) => hasTableColumns(db, "daily_metrics", [field]) ? field : `NULL AS ${field}`;
+  const metricRows = hasCoreMetrics ? queryRows(db, `
     SELECT mood, energy, stress, weight_kg, sleep_hours,
-           calories, protein_g, fasted, dieted
+           calories, protein_g, fasted, dieted,
+           ${metricField("studied")}, ${metricField("worked")},
+           ${metricField("exercised")}, ${metricField("notes")}
     FROM daily_metrics
     WHERE date = ?
   `, [date]) : [];
   const metricRow = metricRows[0];
-  const metrics = metricRow ? {
+  let metrics = metricRow ? {
     mood: nullableNumber2(metricRow.mood),
     energy: nullableNumber2(metricRow.energy),
     stress: nullableNumber2(metricRow.stress),
@@ -3441,21 +3528,121 @@ function queryDailyAssessment(db, date, todayDate) {
     calories: nullableNumber2(metricRow.calories),
     proteinG: nullableNumber2(metricRow.protein_g),
     fasted: nullableNumber2(metricRow.fasted),
-    dieted: nullableNumber2(metricRow.dieted)
+    dieted: nullableNumber2(metricRow.dieted),
+    studied: nullableNumber2(metricRow.studied),
+    worked: nullableNumber2(metricRow.worked),
+    exercised: nullableNumber2(metricRow.exercised),
+    notes: nullableText2(metricRow.notes)
   } : null;
-  const meals = hasTableColumns(db, "daily_meals", ["id", "day", "food", "calories", "protein_g"]) ? queryRows(db, `
-        SELECT id, food, calories, protein_g
-        FROM daily_meals
-        WHERE day = ?
-        ORDER BY id
+  const detailedMeals = hasTableColumns(db, "daily_meals", [
+    "id",
+    "day",
+    "food",
+    "amount_g",
+    "calories",
+    "protein_g",
+    "carbs_g",
+    "fat_g",
+    "salt_g",
+    "fiber_g",
+    "cholesterol_mg",
+    "meal_event_id"
+  ]) && hasTableColumns(db, "meal_events", ["id", "meal_type"]);
+  const meals = detailedMeals ? queryRows(db, `
+        SELECT daily_meal.id, meal_event.meal_type, daily_meal.food, daily_meal.amount_g,
+               daily_meal.calories, daily_meal.protein_g, daily_meal.carbs_g,
+               daily_meal.fat_g, daily_meal.salt_g, daily_meal.fiber_g,
+               daily_meal.cholesterol_mg
+        FROM daily_meals AS daily_meal
+        LEFT JOIN meal_events AS meal_event ON meal_event.id = daily_meal.meal_event_id
+        WHERE daily_meal.day = ?
+        ORDER BY daily_meal.id
       `, [date]).map((row) => ({
     id: Number(row.id),
+    mealType: nullableText2(row.meal_type),
     food: String(row.food),
+    amountG: nullableNumber2(row.amount_g),
     calories: nullableNumber2(row.calories),
-    proteinG: nullableNumber2(row.protein_g)
+    proteinG: nullableNumber2(row.protein_g),
+    carbsG: nullableNumber2(row.carbs_g),
+    fatG: nullableNumber2(row.fat_g),
+    saltG: nullableNumber2(row.salt_g),
+    fiberG: nullableNumber2(row.fiber_g),
+    cholesterolMg: nullableNumber2(row.cholesterol_mg)
+  })) : hasTableColumns(db, "daily_meals", ["id", "day", "food", "calories", "protein_g"]) ? queryRows(db, `SELECT id, food, calories, protein_g FROM daily_meals WHERE day = ? ORDER BY id`, [date]).map((row) => ({
+    id: Number(row.id),
+    mealType: null,
+    food: String(row.food),
+    amountG: null,
+    calories: nullableNumber2(row.calories),
+    proteinG: nullableNumber2(row.protein_g),
+    carbsG: null,
+    fatG: null,
+    saltG: null,
+    fiberG: null,
+    cholesterolMg: null
   })) : [];
+  const mealAssessment = hasTableColumns(db, "daily_meal_assessments", ["day", "daily_calories_kcal", "protein_g"]) ? queryRows(db, "SELECT daily_calories_kcal, protein_g FROM daily_meal_assessments WHERE day = ? LIMIT 1", [date])[0] : null;
+  const activity = inferDailyActivity(sessionResult.events.map(eventSignal));
+  const previousSleepSignals = queryRows(db, `
+    SELECT session.date, session.start_time, session.end_time,
+           session_type.code AS session_type, engagement_type.code AS engagement_type,
+           engagement.name AS engagement_name
+    FROM sessions AS session
+    JOIN engagements AS engagement ON engagement.id = session.engagement_id
+    JOIN engagement_types AS engagement_type ON engagement_type.id = engagement.type_id
+    LEFT JOIN session_types AS session_type ON session_type.id = session.session_type_id
+    WHERE session.date = date(?, '-1 day')
+  `, [date]).flatMap((row) => {
+    var _a2, _b2, _c2, _d2, _e2;
+    const start = parseDatabaseTime(String((_a2 = row.start_time) != null ? _a2 : ""));
+    const end = parseDatabaseTime(String((_b2 = row.end_time) != null ? _b2 : ""));
+    return start == null || end == null || end <= start ? [] : [{
+      date: String(row.date),
+      startMinutes: start,
+      endMinutes: end,
+      sessionType: String((_c2 = row.session_type) != null ? _c2 : ""),
+      engagementType: String((_d2 = row.engagement_type) != null ? _d2 : ""),
+      engagementName: String((_e2 = row.engagement_name) != null ? _e2 : "")
+    }];
+  });
+  const inferredSleepHours = inferSleepHours(date, [
+    ...previousSleepSignals,
+    ...sessionResult.events.map(eventSignal)
+  ]);
+  metrics = {
+    mood: (_a = metrics == null ? void 0 : metrics.mood) != null ? _a : null,
+    energy: (_b = metrics == null ? void 0 : metrics.energy) != null ? _b : null,
+    stress: (_c = metrics == null ? void 0 : metrics.stress) != null ? _c : null,
+    weightKg: (_d = metrics == null ? void 0 : metrics.weightKg) != null ? _d : null,
+    sleepHours: inferredSleepHours,
+    calories: mealAssessment ? nullableNumber2(mealAssessment.daily_calories_kcal) : (_e = metrics == null ? void 0 : metrics.calories) != null ? _e : null,
+    proteinG: mealAssessment ? nullableNumber2(mealAssessment.protein_g) : (_f = metrics == null ? void 0 : metrics.proteinG) != null ? _f : null,
+    fasted: (_g = metrics == null ? void 0 : metrics.fasted) != null ? _g : null,
+    dieted: (_h = metrics == null ? void 0 : metrics.dieted) != null ? _h : null,
+    studied: activity.studied,
+    worked: activity.worked,
+    exercised: activity.exercised,
+    notes: (_i = metrics == null ? void 0 : metrics.notes) != null ? _i : null
+  };
+  const referenceUnit = normalizeValuationUnit(valuationOptions.referenceUnit) || "USD";
+  const valuationRateFor = (unit) => {
+    const unitKey = normalizeValuationUnit(unit);
+    if (unitKey === referenceUnit) return 1;
+    if (!hasTableColumns(db, "valuation_rate_sets", ["id", "rate_date"]) || !hasTableColumns(db, "valuation_rates", ["id", "rate_set_id", "unit_key", "value"])) return null;
+    const row = queryRows(db, `
+      SELECT rate.value
+      FROM valuation_rates AS rate
+      JOIN valuation_rate_sets AS rate_set ON rate_set.id = rate.rate_set_id
+      WHERE rate.unit_key = ? AND rate_set.rate_date <= ?
+      ORDER BY rate_set.rate_date DESC, rate.id DESC
+      LIMIT 1
+    `, [unitKey, date])[0];
+    return row == null ? null : Number(row.value);
+  };
+  const hasAccountCurrency = hasTableColumns(db, "accounts", ["currency"]);
   const transactions = hasTableColumns(db, "transactions", ["id", "account_id", "date", "amount", "category", "description"]) && hasTableColumns(db, "accounts", ["id", "name"]) ? queryRows(db, `
-        SELECT t.id, a.name AS account_name, t.amount,
+        SELECT t.id, a.name AS account_name, ${hasAccountCurrency ? "a.currency" : "'Unspecified' AS currency"}, t.amount,
                COALESCE(e.name, CAST(t.category AS TEXT)) AS engagement_display,
                t.description
         FROM transactions AS t
@@ -3464,13 +3651,18 @@ function queryDailyAssessment(db, date, todayDate) {
         WHERE t.date = ?
         ORDER BY t.id
       `, [date]).map((row) => {
-    var _a, _b;
+    var _a2, _b2, _c2;
+    const amount = Number(row.amount);
+    const currency2 = normalizeValuationUnit(String((_a2 = row.currency) != null ? _a2 : "")) || "Unspecified";
+    const rate = valuationRateFor(currency2);
     return {
       id: Number(row.id),
       accountName: String(row.account_name),
-      amount: Number(row.amount),
-      engagement: String((_a = row.engagement_display) != null ? _a : ""),
-      description: String((_b = row.description) != null ? _b : "")
+      amount,
+      engagement: String((_b2 = row.engagement_display) != null ? _b2 : ""),
+      description: String((_c2 = row.description) != null ? _c2 : ""),
+      currency: currency2,
+      valuationAmount: rate == null && amount !== 0 ? null : amount * (rate != null ? rate : 0)
     };
   }) : [];
   const importedRows = hasTableColumns(db, "imported_notes", ["note_date", "imported_at"]) ? queryRows(db, `SELECT imported_at FROM imported_notes WHERE note_date = ? LIMIT 1`, [date]) : [];
@@ -4205,7 +4397,7 @@ function queryFinancialDashboard(db, startDate, endDate, valuationOptions = { la
   };
 }
 function querySessions(db, startDate, endDate, todayDate = startDate, includePlanning = true) {
-  var _a, _b, _c, _d, _e;
+  var _a, _b, _c, _d, _e, _f;
   validateSchema(db);
   const importedDates = includePlanning ? importedNoteDates(db, startDate, endDate) : /* @__PURE__ */ new Set();
   const { dayStates, unfinalizedDates } = includePlanning ? queryPlanningState(db, startDate, endDate, todayDate, importedDates) : { dayStates: {}, unfinalizedDates: /* @__PURE__ */ new Set() };
@@ -4229,6 +4421,7 @@ function querySessions(db, startDate, endDate, todayDate = startDate, includePla
   const issues = [];
   for (const row of sourceRows) {
     const date = String(row.date);
+    if (date > todayDate) continue;
     if (unfinalizedDates.has(date)) continue;
     const id = String(row.id);
     const start = parseDatabaseTime(String((_a = row.start_time) != null ? _a : ""));
@@ -4264,22 +4457,18 @@ function querySessions(db, startDate, endDate, todayDate = startDate, includePla
   attachExerciseDetails(db, startDate, endDate, events);
   attachMilestoneDetails(db, startDate, endDate, events);
   if (includePlanning) {
-    events.push(...queryPlannedEvents(db, startDate, endDate, importedDates, issues));
-    const excludedWeeklyDates = /* @__PURE__ */ new Set([
-      ...importedDates,
-      ...Object.keys(dayStates),
-      ...events.filter((event) => event.sourceKind !== "planned").map((event) => event.date)
-    ]);
+    events.push(...queryPlannedEvents(db, startDate, endDate, importedDates, todayDate, issues));
+    const primaryTodayEvents = events.filter((event) => event.date === todayDate);
     const weeklyPlanning = queryWeeklyPlannedEvents(
       db,
       startDate,
       endDate,
       todayDate,
-      excludedWeeklyDates,
+      primaryTodayEvents,
       issues
     );
     events.push(...weeklyPlanning.events);
-    Object.assign(dayStates, weeklyPlanning.dayStates);
+    for (const [date, state] of Object.entries(weeklyPlanning.dayStates)) (_f = dayStates[date]) != null ? _f : dayStates[date] = state;
   }
   for (const [date, state] of Object.entries(dayStates)) {
     if (state.overdue) {
@@ -4336,8 +4525,8 @@ var ExaminedHumanDatabase = class {
   async dailyNoteIndex(databasePath) {
     return this.withDatabase(databasePath, queryDailyNoteIndex);
   }
-  async dailyAssessment(databasePath, date, todayDate) {
-    return this.withDatabase(databasePath, (db) => queryDailyAssessment(db, date, todayDate));
+  async dailyAssessment(databasePath, date, todayDate, valuationOptions = { label: "EHM", referenceUnit: "USD" }) {
+    return this.withDatabase(databasePath, (db) => queryDailyAssessment(db, date, todayDate, valuationOptions));
   }
   async engagementDashboard(databasePath, engagementId, startDate, endDate) {
     return this.withDatabase(
@@ -4431,103 +4620,14 @@ async function buildDailyNoteList(_app, index, todayDate, discoveredForms = []) 
   return [...byDate.values(), ...imported].sort((left, right) => right.date.localeCompare(left.date));
 }
 
-// src/DailyImportConfirmationModal.ts
-var import_obsidian = require("obsidian");
-function confirmDailyImport(app, options) {
-  return new Promise((resolve) => {
-    new DailyImportConfirmationModal(app, options, resolve).open();
-  });
-}
-var DailyImportConfirmationModal = class extends import_obsidian.Modal {
-  constructor(app, options, resolveChoice) {
-    super(app);
-    this.options = options;
-    this.resolveChoice = resolveChoice;
-    this.resolved = false;
-  }
-  onOpen() {
-    var _a;
-    this.modalEl.addClass("examined-human-daily-confirm-modal");
-    this.contentEl.createEl("h2", { text: this.options.title });
-    this.contentEl.createEl("p", { text: this.options.explanation });
-    const completeness = this.options.inspection.completeness;
-    if (completeness) {
-      const summary = this.contentEl.createDiv({ cls: "examined-human-daily-confirm-summary" });
-      const items = [
-        ["Sessions", completeness.session_count],
-        ["Transactions", completeness.transaction_count],
-        ["Exercises", completeness.exercise_count],
-        ["Foods", completeness.meal_count],
-        ["Milestones", completeness.milestone_count],
-        ["Admin events", completeness.admin_event_count]
-      ];
-      for (const [label, value] of items) {
-        const card = summary.createDiv({ cls: "examined-human-daily-confirm-stat" });
-        card.createDiv({ cls: "examined-human-weekly-eyebrow", text: String(label) });
-        card.createDiv({ cls: "examined-human-daily-confirm-value", text: String(value) });
-      }
-      const missing = completeness.missing_daily_metrics;
-      const metrics = this.contentEl.createDiv({
-        cls: `examined-human-daily-completeness-callout ${missing.length > 0 ? "is-incomplete" : "is-complete"}`
-      });
-      metrics.createEl("strong", {
-        text: missing.length > 0 ? `${missing.length} empty daily metric cell${missing.length === 1 ? "" : "s"}` : "All daily metric cells are filled"
-      });
-      if (missing.length > 0) metrics.createDiv({ text: missing.join(", ") });
-    }
-    if (this.options.inspection.warnings.length > 0) {
-      const warnings = this.contentEl.createDiv({ cls: "examined-human-daily-validation-callout is-warning" });
-      warnings.createEl("strong", { text: "Validation warnings" });
-      warnings.createEl("ul");
-      const list = warnings.querySelector("ul");
-      for (const warning2 of this.options.inspection.warnings) list == null ? void 0 : list.createEl("li", { text: warning2 });
-    }
-    if (this.options.inspection.errors.length > 0) {
-      const errors = this.contentEl.createDiv({ cls: "examined-human-daily-validation-callout is-error" });
-      errors.createEl("strong", { text: "Historical import blockers" });
-      const list = errors.createEl("ul");
-      for (const error of this.options.inspection.errors) list.createEl("li", { text: error });
-    }
-    if ((_a = this.options.dryRunOutput) == null ? void 0 : _a.trim()) {
-      this.contentEl.createEl("details", { cls: "examined-human-daily-dry-run-details" }, (details) => {
-        details.createEl("summary", { text: "Dry-run output" });
-        details.createEl("textarea", {
-          cls: "examined-human-daily-output",
-          text: this.options.dryRunOutput,
-          attr: { readonly: "true", rows: "8" }
-        });
-      });
-    }
-    const warning = this.contentEl.createEl("p", { cls: "examined-human-daily-confirm-warning" });
-    warning.createEl("strong", { text: "Nothing has been imported yet. " });
-    warning.appendText("Confirm only after reviewing the preview and completeness summary.");
-    const actions = this.contentEl.createDiv({ cls: "modal-button-container" });
-    actions.createEl("button", { text: "Cancel" }).addEventListener("click", () => this.finish(false));
-    actions.createEl("button", {
-      text: this.options.confirmLabel,
-      cls: "mod-cta"
-    }).addEventListener("click", () => this.finish(true));
-  }
-  onClose() {
-    this.contentEl.empty();
-    if (!this.resolved) this.resolveChoice(false);
-  }
-  finish(confirmed) {
-    if (this.resolved) return;
-    this.resolved = true;
-    this.resolveChoice(confirmed);
-    this.close();
-  }
-};
-
 // src/MealImportConfirmationModal.ts
-var import_obsidian2 = require("obsidian");
+var import_obsidian = require("obsidian");
 function confirmMealImport(app, options) {
   return new Promise((resolve) => {
     new MealImportConfirmationModal(app, options, resolve).open();
   });
 }
-var MealImportConfirmationModal = class extends import_obsidian2.Modal {
+var MealImportConfirmationModal = class extends import_obsidian.Modal {
   constructor(app, options, resolveChoice) {
     super(app);
     this.options = options;
@@ -4588,37 +4688,8 @@ var MealImportConfirmationModal = class extends import_obsidian2.Modal {
   }
 };
 
-// src/overlap.ts
-function layoutOverlappingEvents(events) {
-  const sorted = events.filter((event) => event.kind === "timed").slice().sort((a, b) => a.startMinutes - b.startMinutes || b.endMinutes - a.endMinutes || a.id.localeCompare(b.id));
-  const result = [];
-  let group = [];
-  let groupEnd = -1;
-  const flush = () => {
-    if (group.length === 0) return;
-    const columnEnds = [];
-    const placed = group.map((event) => {
-      let column = columnEnds.findIndex((end) => end <= event.startMinutes);
-      if (column === -1) column = columnEnds.length;
-      columnEnds[column] = event.endMinutes;
-      return { event, column, columnCount: 0 };
-    });
-    for (const item of placed) item.columnCount = columnEnds.length;
-    result.push(...placed);
-    group = [];
-  };
-  for (const event of sorted) {
-    if (group.length > 0 && event.startMinutes >= groupEnd) flush();
-    group.push(event);
-    groupEnd = Math.max(groupEnd, event.endMinutes);
-    if (group.length === 1) groupEnd = event.endMinutes;
-  }
-  flush();
-  return result;
-}
-
 // src/logger/service.ts
-var import_obsidian3 = require("obsidian");
+var import_obsidian2 = require("obsidian");
 
 // migrations/000_create_schema_v1.sql
 var create_schema_v1_default = "-- Empty official Examined Human Data Schema v1.\n-- This file contains structure and canonical taxonomy seeds only; it contains no user data.\n\nPRAGMA foreign_keys = OFF;\nBEGIN IMMEDIATE;\n\nCREATE TABLE schema_migrations (\n    version INTEGER PRIMARY KEY,\n    name TEXT NOT NULL,\n    applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP\n);\n\nCREATE TABLE session_types (\n    id INTEGER PRIMARY KEY,\n    code TEXT NOT NULL COLLATE NOCASE UNIQUE,\n    label TEXT NOT NULL,\n    description TEXT,\n    is_active INTEGER NOT NULL DEFAULT 1 CHECK (is_active IN (0, 1)),\n    sort_order INTEGER NOT NULL DEFAULT 0,\n    CHECK (code <> '' AND code = lower(trim(code)))\n);\n\nCREATE TABLE engagement_types (\n    id INTEGER PRIMARY KEY,\n    code TEXT NOT NULL COLLATE NOCASE UNIQUE,\n    label TEXT NOT NULL,\n    description TEXT,\n    is_active INTEGER NOT NULL DEFAULT 1 CHECK (is_active IN (0, 1)),\n    sort_order INTEGER NOT NULL DEFAULT 0,\n    CHECK (code <> '' AND code = lower(trim(code)))\n);\n\nCREATE TABLE engagement_statuses (\n    id INTEGER PRIMARY KEY,\n    code TEXT NOT NULL COLLATE NOCASE UNIQUE,\n    label TEXT NOT NULL,\n    description TEXT,\n    is_active INTEGER NOT NULL DEFAULT 1 CHECK (is_active IN (0, 1)),\n    sort_order INTEGER NOT NULL DEFAULT 0,\n    CHECK (code <> '' AND code = lower(trim(code)))\n);\n\nCREATE TABLE engagements (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    name TEXT NOT NULL,\n    type_id INTEGER NOT NULL REFERENCES engagement_types(id),\n    status_id INTEGER REFERENCES engagement_statuses(id),\n    start_date DATE,\n    target_date DATE,\n    completion_date DATE,\n    notes TEXT\n);\n\nCREATE TABLE sessions (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    engagement_id INTEGER NOT NULL REFERENCES engagements(id),\n    date DATE NOT NULL,\n    start_time TEXT,\n    end_time TEXT,\n    duration_minutes INTEGER,\n    session_type_id INTEGER REFERENCES session_types(id),\n    notes TEXT\n);\n\nCREATE TABLE note_sources (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    note_date TEXT NOT NULL UNIQUE,\n    file_name TEXT NOT NULL,\n    file_path TEXT NOT NULL UNIQUE,\n    content_checksum TEXT NOT NULL,\n    lifecycle_state TEXT NOT NULL,\n    parse_status TEXT NOT NULL,\n    last_error TEXT,\n    first_seen_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,\n    last_scanned_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,\n    last_import_attempt_at TEXT,\n    finalized_at TEXT\n);\n\nCREATE TABLE planned_sessions (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    source_note_id INTEGER NOT NULL REFERENCES note_sources(id) ON DELETE CASCADE,\n    source_ordinal INTEGER NOT NULL,\n    date TEXT NOT NULL,\n    interval_raw TEXT,\n    start_time TEXT NOT NULL,\n    end_time TEXT NOT NULL,\n    duration_minutes INTEGER NOT NULL,\n    time_is_estimated INTEGER NOT NULL DEFAULT 0,\n    session_type_raw TEXT NOT NULL,\n    resolved_session_type_id INTEGER REFERENCES session_types(id) ON DELETE SET NULL,\n    engagement_raw TEXT NOT NULL,\n    resolved_engagement_id INTEGER REFERENCES engagements(id) ON DELETE SET NULL,\n    notes TEXT,\n    warning_text TEXT,\n    UNIQUE (source_note_id, source_ordinal)\n);\n\nCREATE TABLE daily_metrics (\n    date DATE PRIMARY KEY,\n    mood REAL,\n    energy REAL,\n    stress REAL,\n    weight_kg REAL,\n    sleep_hours REAL,\n    calories INTEGER,\n    protein_g INTEGER,\n    fasted INTEGER DEFAULT 0,\n    dieted INTEGER DEFAULT 0,\n    studied INTEGER DEFAULT 0,\n    worked INTEGER DEFAULT 0,\n    exercised INTEGER DEFAULT 0,\n    notes TEXT\n);\n\nCREATE TABLE imported_notes (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    note_date DATE NOT NULL,\n    file_name TEXT NOT NULL,\n    file_path TEXT NOT NULL,\n    imported_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,\n    checksum TEXT,\n    UNIQUE (file_name)\n);\n\nCREATE TABLE accounts (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    name TEXT NOT NULL,\n    type TEXT,\n    address TEXT,\n    currency TEXT DEFAULT NULL\n);\n\nCREATE TABLE account_aliases (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    account_id INTEGER NOT NULL REFERENCES accounts(id),\n    alias TEXT NOT NULL UNIQUE\n);\n\nCREATE TABLE transactions (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    account_id INTEGER NOT NULL REFERENCES accounts(id),\n    date DATE NOT NULL,\n    amount REAL NOT NULL,\n    category TEXT,\n    description TEXT\n);\n\nCREATE TABLE budget_plans (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    period_start DATE NOT NULL,\n    period_end DATE NOT NULL,\n    source_file_name TEXT NOT NULL,\n    source_file_path TEXT NOT NULL,\n    source_checksum TEXT NOT NULL,\n    imported_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,\n    CHECK (julianday(period_end) - julianday(period_start) >= 3),\n    UNIQUE (period_start, period_end)\n);\n\nCREATE TABLE budget_targets (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    budget_plan_id INTEGER NOT NULL REFERENCES budget_plans(id) ON DELETE CASCADE,\n    source_ordinal INTEGER NOT NULL,\n    currency TEXT NOT NULL CHECK (trim(currency) <> ''),\n    amount REAL NOT NULL CHECK (amount <> 0),\n    engagement_id INTEGER NOT NULL REFERENCES engagements(id),\n    engagement_raw TEXT NOT NULL,\n    UNIQUE (budget_plan_id, source_ordinal)\n);\n\nCREATE TABLE expected_financial_movements (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    budget_plan_id INTEGER NOT NULL REFERENCES budget_plans(id) ON DELETE CASCADE,\n    source_ordinal INTEGER NOT NULL,\n    due_date DATE NOT NULL,\n    currency TEXT NOT NULL CHECK (trim(currency) <> ''),\n    amount REAL NOT NULL CHECK (amount <> 0),\n    account_id INTEGER NOT NULL REFERENCES accounts(id),\n    engagement_id INTEGER NOT NULL REFERENCES engagements(id),\n    engagement_raw TEXT NOT NULL,\n    description TEXT,\n    UNIQUE (budget_plan_id, source_ordinal)\n);\n\nCREATE TABLE valuation_rate_sets (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    rate_date DATE NOT NULL UNIQUE,\n    source_file_name TEXT NOT NULL,\n    source_file_path TEXT NOT NULL,\n    source_checksum TEXT NOT NULL,\n    imported_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP\n);\n\nCREATE TABLE valuation_rates (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    rate_set_id INTEGER NOT NULL REFERENCES valuation_rate_sets(id) ON DELETE CASCADE,\n    source_ordinal INTEGER NOT NULL,\n    unit_key TEXT NOT NULL,\n    unit_label TEXT NOT NULL,\n    value REAL NOT NULL CHECK (value > 0),\n    UNIQUE (rate_set_id, source_ordinal),\n    UNIQUE (rate_set_id, unit_key)\n);\n\nCREATE TABLE engagement_aliases (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    engagement_id INTEGER NOT NULL REFERENCES engagements(id),\n    alias TEXT NOT NULL UNIQUE\n);\n\nCREATE TABLE engagement_milestones (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    engagement_id INTEGER NOT NULL REFERENCES engagements(id),\n    name TEXT NOT NULL,\n    date DATE,\n    notes TEXT,\n    session_id INTEGER NOT NULL REFERENCES sessions(id) ON DELETE RESTRICT\n);\n\nCREATE TABLE engagement_measurements (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    milestone_id INTEGER NOT NULL REFERENCES engagement_milestones(id),\n    metric_name TEXT NOT NULL,\n    metric_value TEXT NOT NULL,\n    measurement_date DATE,\n    notes TEXT\n);\n\nCREATE TABLE exercises (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    name TEXT NOT NULL,\n    category TEXT\n);\n\nCREATE TABLE exercise_aliases (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    exercise_id INTEGER NOT NULL REFERENCES exercises(id),\n    alias TEXT NOT NULL UNIQUE\n);\n\nCREATE TABLE session_exercises (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    session_id INTEGER NOT NULL REFERENCES sessions(id),\n    exercise_id INTEGER NOT NULL REFERENCES exercises(id),\n    order_index INTEGER\n);\n\nCREATE TABLE exercise_sets (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    session_exercise_id INTEGER NOT NULL REFERENCES session_exercises(id),\n    set_number INTEGER,\n    weight REAL,\n    reps INTEGER,\n    distance REAL,\n    duration_minutes REAL,\n    notes TEXT,\n    pain_level REAL,\n    duration_seconds REAL\n);\n\nCREATE TABLE muscles (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    name TEXT NOT NULL UNIQUE,\n    body_region TEXT,\n    notes TEXT\n);\n\nCREATE TABLE exercise_muscles (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    exercise_id INTEGER NOT NULL REFERENCES exercises(id),\n    muscle_id INTEGER NOT NULL REFERENCES muscles(id),\n    role TEXT\n);\n\nCREATE TABLE people (\n    id INTEGER PRIMARY KEY,\n    name TEXT NOT NULL\n);\n\nCREATE TABLE reports (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    person_id INTEGER NOT NULL REFERENCES people(id),\n    report_timestamp TEXT NOT NULL,\n    report_type TEXT NOT NULL,\n    provider TEXT,\n    title TEXT,\n    relative_path TEXT NOT NULL\n);\n\nCREATE TABLE markers (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    name TEXT NOT NULL UNIQUE,\n    unit TEXT,\n    textbook_normal_range TEXT\n);\n\nCREATE TABLE measurements (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    report_id INTEGER NOT NULL REFERENCES reports(id),\n    marker_id INTEGER NOT NULL REFERENCES markers(id),\n    value REAL NOT NULL,\n    notes TEXT,\n    reference_range_at_time TEXT,\n    flag TEXT\n);\n\nCREATE TABLE stoicism_entries (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    date DATE NOT NULL,\n    score REAL,\n    notes TEXT\n);\n\nCREATE TABLE weekly_plans (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    week_start_date DATE NOT NULL UNIQUE,\n    source_file_name TEXT NOT NULL,\n    source_file_path TEXT NOT NULL UNIQUE,\n    source_checksum TEXT NOT NULL,\n    main_outcome TEXT,\n    important_deadline TEXT,\n    constraint_or_risk TEXT,\n    imported_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP\n);\n\nCREATE TABLE weekly_plan_sessions (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    weekly_plan_id INTEGER NOT NULL REFERENCES weekly_plans(id) ON DELETE CASCADE,\n    date DATE NOT NULL,\n    start_time TEXT NOT NULL,\n    end_time TEXT NOT NULL,\n    duration_minutes INTEGER NOT NULL CHECK (duration_minutes > 0),\n    session_type_id INTEGER REFERENCES session_types(id),\n    engagement_id INTEGER REFERENCES engagements(id),\n    original_cell_text TEXT NOT NULL,\n    notes TEXT,\n    source_row INTEGER NOT NULL,\n    source_column_start INTEGER NOT NULL,\n    source_column_end INTEGER NOT NULL,\n    UNIQUE (weekly_plan_id, date, start_time, end_time)\n);\n\nCREATE TABLE weekly_commitments (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    weekly_plan_id INTEGER NOT NULL REFERENCES weekly_plans(id) ON DELETE CASCADE,\n    source_ordinal INTEGER NOT NULL,\n    target_minutes INTEGER NOT NULL CHECK (target_minutes > 0),\n    engagement_id INTEGER NOT NULL REFERENCES engagements(id),\n    engagement_raw TEXT NOT NULL,\n    commitment_text TEXT NOT NULL,\n    UNIQUE (weekly_plan_id, source_ordinal)\n);\n\nCREATE TABLE meal_events (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    day DATE NOT NULL,\n    meal_type TEXT NOT NULL COLLATE NOCASE,\n    is_leisure INTEGER NOT NULL DEFAULT 0 CHECK (is_leisure IN (0, 1)),\n    classification_source TEXT NOT NULL DEFAULT 'default'\n        CHECK (classification_source IN ('default', 'manual', 'meal_limit', 'manual_and_meal_limit')),\n    calorie_limit_kcal REAL CHECK (calorie_limit_kcal IS NULL OR calorie_limit_kcal > 0),\n    notes TEXT,\n    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,\n    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,\n    CHECK (meal_type IN ('breakfast', 'lunch', 'dinner', 'snacks')),\n    UNIQUE (day, meal_type)\n);\n\nCREATE TABLE daily_meals (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    day DATE NOT NULL,\n    food TEXT NOT NULL CHECK (trim(food) <> ''),\n    calories INTEGER,\n    protein_g REAL,\n    meal_event_id INTEGER REFERENCES meal_events(id) ON DELETE CASCADE,\n    item_ordinal INTEGER CHECK (item_ordinal IS NULL OR item_ordinal > 0),\n    food_id INTEGER REFERENCES foods(id) ON DELETE SET NULL,\n    amount_g REAL CHECK (amount_g IS NULL OR amount_g > 0),\n    carbs_g REAL CHECK (carbs_g IS NULL OR carbs_g >= 0),\n    fat_g REAL CHECK (fat_g IS NULL OR fat_g >= 0),\n    salt_g REAL CHECK (salt_g IS NULL OR salt_g >= 0),\n    fiber_g REAL CHECK (fiber_g IS NULL OR fiber_g >= 0),\n    cholesterol_mg REAL CHECK (cholesterol_mg IS NULL OR cholesterol_mg >= 0)\n);\n\nCREATE TABLE foods (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    name TEXT NOT NULL COLLATE NOCASE UNIQUE CHECK (trim(name) <> ''),\n    category TEXT,\n    calories_kcal_per_100g REAL NOT NULL CHECK (calories_kcal_per_100g >= 0),\n    protein_g_per_100g REAL NOT NULL CHECK (protein_g_per_100g >= 0),\n    carbs_g_per_100g REAL NOT NULL CHECK (carbs_g_per_100g >= 0),\n    fat_g_per_100g REAL NOT NULL CHECK (fat_g_per_100g >= 0),\n    salt_g_per_100g REAL NOT NULL CHECK (salt_g_per_100g >= 0),\n    fiber_g_per_100g REAL CHECK (fiber_g_per_100g IS NULL OR fiber_g_per_100g >= 0),\n    cholesterol_mg_per_100g REAL CHECK (cholesterol_mg_per_100g IS NULL OR cholesterol_mg_per_100g >= 0),\n    notes TEXT,\n    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,\n    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP\n);\n\nCREATE TABLE food_aliases (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    food_id INTEGER NOT NULL REFERENCES foods(id) ON DELETE CASCADE,\n    alias TEXT NOT NULL COLLATE NOCASE UNIQUE CHECK (trim(alias) <> '')\n);\n\nCREATE TABLE daily_meal_assessments (\n    day DATE PRIMARY KEY,\n    daily_calorie_limit_kcal REAL NOT NULL CHECK (daily_calorie_limit_kcal >= 0),\n    minimum_protein_g REAL NOT NULL DEFAULT 0 CHECK (minimum_protein_g >= 0),\n    daily_calories_kcal REAL CHECK (daily_calories_kcal IS NULL OR daily_calories_kcal >= 0),\n    daily_metrics_calories_kcal REAL CHECK (daily_metrics_calories_kcal IS NULL OR daily_metrics_calories_kcal >= 0),\n    meal_items_calories_kcal REAL NOT NULL DEFAULT 0 CHECK (meal_items_calories_kcal >= 0),\n    daily_calorie_source TEXT NOT NULL DEFAULT 'missing'\n        CHECK (daily_calorie_source IN ('daily_metrics', 'meal_items', 'higher_of_both', 'missing')),\n    protein_g REAL CHECK (protein_g IS NULL OR protein_g >= 0),\n    recorded_dieted INTEGER CHECK (recorded_dieted IS NULL OR recorded_dieted IN (0, 1)),\n    evaluated_dieted INTEGER CHECK (evaluated_dieted IS NULL OR evaluated_dieted IN (0, 1)),\n    evaluated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP\n);\n\nCREATE TABLE note_import_components (\n    note_date DATE NOT NULL,\n    component TEXT NOT NULL CHECK (trim(component) <> ''),\n    lifecycle_state TEXT NOT NULL CHECK (lifecycle_state IN ('ephemeral', 'finalized')),\n    source_file_path TEXT NOT NULL CHECK (trim(source_file_path) <> ''),\n    source_checksum TEXT NOT NULL CHECK (trim(source_checksum) <> ''),\n    plugin_version TEXT NOT NULL CHECK (trim(plugin_version) <> ''),\n    row_count INTEGER NOT NULL DEFAULT 0 CHECK (row_count >= 0),\n    imported_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,\n    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,\n    PRIMARY KEY (note_date, component)\n);\n\nCREATE UNIQUE INDEX uq_accounts_name_nocase ON accounts(name COLLATE NOCASE);\nCREATE UNIQUE INDEX uq_account_aliases_alias_nocase ON account_aliases(alias COLLATE NOCASE);\nCREATE UNIQUE INDEX uq_engagements_name_nocase ON engagements(name COLLATE NOCASE);\nCREATE UNIQUE INDEX uq_engagement_aliases_alias_nocase ON engagement_aliases(alias COLLATE NOCASE);\nCREATE UNIQUE INDEX uq_exercise_aliases_alias_nocase ON exercise_aliases(alias COLLATE NOCASE);\nCREATE UNIQUE INDEX uq_muscles_name_nocase ON muscles(name COLLATE NOCASE);\nCREATE INDEX idx_sessions_date ON sessions(date);\nCREATE INDEX idx_sessions_engagement ON sessions(engagement_id);\nCREATE INDEX idx_sessions_type ON sessions(session_type_id);\nCREATE INDEX idx_engagements_type ON engagements(type_id);\nCREATE INDEX idx_engagements_status ON engagements(status_id);\nCREATE INDEX idx_note_sources_date ON note_sources(note_date);\nCREATE INDEX idx_note_sources_state ON note_sources(lifecycle_state);\nCREATE INDEX idx_planned_sessions_date ON planned_sessions(date);\nCREATE INDEX idx_planned_sessions_source ON planned_sessions(source_note_id);\nCREATE INDEX idx_planned_sessions_type ON planned_sessions(resolved_session_type_id);\nCREATE INDEX idx_transactions_date ON transactions(date);\nCREATE INDEX idx_budget_plans_period ON budget_plans(period_start, period_end);\nCREATE INDEX idx_budget_targets_plan_currency ON budget_targets(budget_plan_id, currency);\nCREATE INDEX idx_budget_targets_engagement ON budget_targets(engagement_id);\nCREATE INDEX idx_expected_financial_movements_plan_due ON expected_financial_movements(budget_plan_id, due_date);\nCREATE INDEX idx_expected_financial_movements_account ON expected_financial_movements(account_id, due_date);\nCREATE INDEX idx_valuation_rate_sets_date ON valuation_rate_sets(rate_date);\nCREATE INDEX idx_valuation_rates_unit ON valuation_rates(unit_key, rate_set_id);\nCREATE INDEX idx_engagement_milestones_session ON engagement_milestones(session_id);\nCREATE INDEX idx_exercise_sets_session ON exercise_sets(session_exercise_id);\nCREATE INDEX idx_weekly_plan_sessions_plan ON weekly_plan_sessions(weekly_plan_id);\nCREATE INDEX idx_weekly_plan_sessions_date ON weekly_plan_sessions(date);\nCREATE INDEX idx_weekly_plan_sessions_type ON weekly_plan_sessions(session_type_id);\nCREATE INDEX idx_weekly_plan_sessions_engagement ON weekly_plan_sessions(engagement_id);\nCREATE INDEX idx_weekly_commitments_plan ON weekly_commitments(weekly_plan_id);\nCREATE INDEX idx_weekly_commitments_engagement ON weekly_commitments(engagement_id);\nCREATE INDEX idx_meal_events_day ON meal_events(day);\nCREATE INDEX idx_meal_events_type ON meal_events(meal_type);\nCREATE INDEX idx_daily_meals_day ON daily_meals(day);\nCREATE INDEX idx_daily_meals_meal_event ON daily_meals(meal_event_id, item_ordinal);\nCREATE INDEX idx_daily_meals_food ON daily_meals(food_id, day);\nCREATE INDEX idx_food_aliases_food ON food_aliases(food_id);\nCREATE INDEX idx_note_import_components_state ON note_import_components(lifecycle_state, note_date);\n\nCREATE TRIGGER sessions_require_active_type_insert\nBEFORE INSERT ON sessions\nWHEN NEW.session_type_id IS NOT NULL\n AND NOT EXISTS (SELECT 1 FROM session_types WHERE id = NEW.session_type_id AND is_active = 1)\nBEGIN SELECT RAISE(ABORT, 'unknown or inactive session type'); END;\n\nCREATE TRIGGER sessions_require_active_type_update\nBEFORE UPDATE OF session_type_id ON sessions\nWHEN NEW.session_type_id IS NOT NULL\n AND NOT EXISTS (SELECT 1 FROM session_types WHERE id = NEW.session_type_id AND is_active = 1)\nBEGIN SELECT RAISE(ABORT, 'unknown or inactive session type'); END;\n\nCREATE TRIGGER engagements_require_active_type_insert\nBEFORE INSERT ON engagements\nWHEN NOT EXISTS (SELECT 1 FROM engagement_types WHERE id = NEW.type_id AND is_active = 1)\nBEGIN SELECT RAISE(ABORT, 'unknown or inactive engagement type'); END;\n\nCREATE TRIGGER engagements_require_active_type_update\nBEFORE UPDATE OF type_id ON engagements\nWHEN NOT EXISTS (SELECT 1 FROM engagement_types WHERE id = NEW.type_id AND is_active = 1)\nBEGIN SELECT RAISE(ABORT, 'unknown or inactive engagement type'); END;\n\nCREATE TRIGGER engagements_require_active_status_insert\nBEFORE INSERT ON engagements\nWHEN NEW.status_id IS NOT NULL\n AND NOT EXISTS (SELECT 1 FROM engagement_statuses WHERE id = NEW.status_id AND is_active = 1)\nBEGIN SELECT RAISE(ABORT, 'unknown or inactive engagement status'); END;\n\nCREATE TRIGGER engagements_require_active_status_update\nBEFORE UPDATE OF status_id ON engagements\nWHEN NEW.status_id IS NOT NULL\n AND NOT EXISTS (SELECT 1 FROM engagement_statuses WHERE id = NEW.status_id AND is_active = 1)\nBEGIN SELECT RAISE(ABORT, 'unknown or inactive engagement status'); END;\n\nCREATE TRIGGER daily_meals_meal_event_day_insert\nBEFORE INSERT ON daily_meals\nWHEN NEW.meal_event_id IS NOT NULL\n AND NOT EXISTS (SELECT 1 FROM meal_events WHERE id = NEW.meal_event_id AND day = NEW.day)\nBEGIN SELECT RAISE(ABORT, 'daily_meals.day must match its meal event day'); END;\n\nCREATE TRIGGER daily_meals_meal_event_day_update\nBEFORE UPDATE OF meal_event_id, day ON daily_meals\nWHEN NEW.meal_event_id IS NOT NULL\n AND NOT EXISTS (SELECT 1 FROM meal_events WHERE id = NEW.meal_event_id AND day = NEW.day)\nBEGIN SELECT RAISE(ABORT, 'daily_meals.day must match its meal event day'); END;\n\nCREATE TRIGGER trg_exercises_name_nocase_insert\nBEFORE INSERT ON exercises\nWHEN EXISTS (SELECT 1 FROM exercises WHERE name = NEW.name COLLATE NOCASE)\nBEGIN SELECT RAISE(ABORT, 'exercise name already exists (case-insensitive)'); END;\n\nCREATE TRIGGER trg_exercises_name_nocase_update\nBEFORE UPDATE OF name ON exercises\nWHEN EXISTS (SELECT 1 FROM exercises WHERE id <> OLD.id AND name = NEW.name COLLATE NOCASE)\nBEGIN SELECT RAISE(ABORT, 'exercise name already exists (case-insensitive)'); END;\n\nCREATE VIEW meal_event_totals AS\nSELECT\n    me.id AS meal_event_id,\n    me.day,\n    me.meal_type,\n    me.is_leisure AS recorded_is_leisure,\n    me.classification_source,\n    me.calorie_limit_kcal,\n    COUNT(dm.id) AS item_count,\n    COALESCE(SUM(dm.calories), 0) AS total_calories_kcal,\n    COALESCE(SUM(dm.protein_g), 0.0) AS total_protein_g,\n    SUM(CASE WHEN dm.id IS NOT NULL AND dm.calories IS NULL THEN 1 ELSE 0 END) AS items_missing_calories,\n    CASE\n        WHEN me.meal_type = 'snacks' THEN 0\n        WHEN me.is_leisure = 1 THEN 1\n        WHEN me.calorie_limit_kcal IS NOT NULL\n         AND COALESCE(SUM(dm.calories), 0) > me.calorie_limit_kcal THEN 1\n        ELSE 0\n    END AS evaluated_is_leisure\nFROM meal_events AS me\nLEFT JOIN daily_meals AS dm ON dm.meal_event_id = me.id\nGROUP BY me.id, me.day, me.meal_type, me.is_leisure, me.classification_source, me.calorie_limit_kcal;\n\nCREATE VIEW daily_leisure_meal_summary AS\nWITH evaluated_days AS (\n    SELECT\n        dma.day,\n        dma.daily_calorie_limit_kcal,\n        dma.daily_calories_kcal,\n        COALESCE(SUM(CASE\n            WHEN met.meal_type IN ('breakfast', 'lunch', 'dinner') THEN met.evaluated_is_leisure\n            ELSE 0\n        END), 0) AS direct_leisure_meals\n    FROM daily_meal_assessments AS dma\n    LEFT JOIN meal_event_totals AS met ON met.day = dma.day\n    GROUP BY dma.day, dma.daily_calorie_limit_kcal, dma.daily_calories_kcal\n)\nSELECT\n    day,\n    3 AS counted_meals,\n    direct_leisure_meals,\n    daily_calories_kcal,\n    daily_calorie_limit_kcal,\n    CASE\n        WHEN daily_calories_kcal IS NOT NULL\n         AND daily_calories_kcal > daily_calorie_limit_kcal\n         AND daily_calorie_limit_kcal > 0 THEN 1\n        ELSE 0\n    END AS daily_limit_exceeded,\n    CASE\n        WHEN daily_calories_kcal IS NOT NULL\n         AND daily_calories_kcal > daily_calorie_limit_kcal\n         AND daily_calorie_limit_kcal > 0\n         AND direct_leisure_meals < 2 THEN 2\n        ELSE direct_leisure_meals\n    END AS leisure_meals\nFROM evaluated_days;\n\nINSERT INTO session_types (code, label, description, sort_order) VALUES\n('authorship', 'Authorship', 'Creating an authored work', 10),\n('chore', 'Chore', 'Routine personal or household work', 20),\n('exercise', 'Exercise', 'Physical training', 30),\n('leisure', 'Leisure', 'Recreation and unstructured leisure', 40),\n('maintenance', 'Maintenance', 'Maintaining systems, spaces, or obligations', 50),\n('meditation', 'Meditation', 'Meditation or contemplative practice', 60),\n('reading', 'Reading', 'Reading not classified as study or research', 70),\n('research', 'Research', 'Exploratory search and evidence gathering', 80),\n('social', 'Social', 'Social and relationship time', 90),\n('study', 'Study', 'Structured learning toward mastery', 100),\n('thinking', 'Thinking', 'Deliberate reflection or problem framing', 110),\n('work', 'Work', 'Professional execution', 120),\n('writing', 'Writing', 'Writing not classified as authorship', 130);\n\nINSERT INTO engagement_types (code, label, sort_order) VALUES\n('article', 'Article', 10), ('authorship', 'Authorship', 20), ('book', 'Book', 30),\n('career', 'Career', 40), ('certification', 'Certification', 50), ('course', 'Course', 60),\n('exam', 'Exam', 70), ('fitness', 'Fitness', 80), ('leisure', 'Leisure', 90),\n('maintenance', 'Maintenance', 100), ('practice', 'Practice', 110),\n('relationship', 'Relationship', 120), ('speech', 'Speech', 130), ('startup', 'Startup', 140);\n\nINSERT INTO engagement_statuses (code, label, sort_order) VALUES\n('planned', 'Planned', 10), ('pending', 'Pending', 20), ('active', 'Active', 30),\n('paused', 'Paused', 40), ('completed', 'Completed', 50), ('abandoned', 'Abandoned', 60);\n\nINSERT INTO schema_migrations (version, name) VALUES\n(1, 'official schema v1: food, finance, valuation, mutable budgets, and optional session types');\n\nPRAGMA user_version = 1;\nCOMMIT;\nPRAGMA foreign_keys = ON;\n";
@@ -5384,7 +5455,7 @@ function inspectMeals(db, content, thresholds) {
     "Daily Metrics calories",
     errors
   );
-  const proteinG = parseOptionalNumber(
+  const dailyMetricsProteinG = parseOptionalNumber(
     metricValue(dailyMetricsBody, "protein_g"),
     "Daily Metrics protein_g",
     errors
@@ -5397,16 +5468,17 @@ function inspectMeals(db, content, thresholds) {
   const meals = parsedSections.map((section) => evaluateMeal(section, thresholds));
   const foodRowCount = meals.reduce((total, meal) => total + meal.items.length, 0);
   const mealItemsCaloriesKcal = meals.reduce((total, meal) => total + meal.totalCaloriesKcal, 0);
-  let dailyCaloriesKcal = dailyMetricsCaloriesKcal;
-  let dailyCalorieSource = dailyMetricsCaloriesKcal == null ? "missing" : "daily_metrics";
-  if (dailyMetricsCaloriesKcal == null && foodRowCount > 0) {
-    dailyCaloriesKcal = mealItemsCaloriesKcal;
-    dailyCalorieSource = "meal_items";
-  } else if (dailyMetricsCaloriesKcal != null && mealItemsCaloriesKcal > dailyMetricsCaloriesKcal) {
-    dailyCaloriesKcal = mealItemsCaloriesKcal;
-    dailyCalorieSource = "higher_of_both";
+  const proteinG = meals.reduce((total, meal) => total + meal.totalProteinG, 0);
+  const dailyCaloriesKcal = mealsBody == null ? null : mealItemsCaloriesKcal;
+  const dailyCalorieSource = mealsBody == null ? "missing" : "meal_items";
+  if (dailyMetricsCaloriesKcal != null && dailyCaloriesKcal != null && Math.abs(dailyMetricsCaloriesKcal - dailyCaloriesKcal) > 5e-3) {
     warnings.push(
-      `Structured foods total ${mealItemsCaloriesKcal} kcal, above Daily Metrics calories ${dailyMetricsCaloriesKcal}; the food total was used so snacks and meals remain reflected.`
+      `Structured foods total ${mealItemsCaloriesKcal} kcal, while Daily Metrics calories says ${dailyMetricsCaloriesKcal}; the calculated food total was used.`
+    );
+  }
+  if (dailyMetricsProteinG != null && Math.abs(dailyMetricsProteinG - proteinG) > 5e-3) {
+    warnings.push(
+      `Structured foods total ${proteinG} g protein, while Daily Metrics protein_g says ${dailyMetricsProteinG}; the calculated food total was used.`
     );
   }
   const evaluatedDieted = evaluateDieted(
@@ -5531,12 +5603,12 @@ function validateAdminCommandArguments(name, received) {
 // src/logger/admin/command-handlers.ts
 function addType(db, table, args, command2) {
   var _a;
-  const code = args[0].trim().toLowerCase();
+  const code2 = args[0].trim().toLowerCase();
   const label = args[1].trim();
   const description = ((_a = args[2]) == null ? void 0 : _a.trim()) || null;
-  if (!code) throw new Error(`${command2} code is empty.`);
+  if (!code2) throw new Error(`${command2} code is empty.`);
   if (!label) throw new Error(`${command2} label is empty.`);
-  const existing = queryRows2(db, `SELECT id FROM ${table} WHERE code = ? COLLATE NOCASE`, [code])[0];
+  const existing = queryRows2(db, `SELECT id FROM ${table} WHERE code = ? COLLATE NOCASE`, [code2])[0];
   if (existing) {
     db.run(`UPDATE ${table} SET label = ?, description = ?, is_active = 1 WHERE id = ?`, [
       label,
@@ -5547,17 +5619,17 @@ function addType(db, table, args, command2) {
   }
   db.run(`INSERT INTO ${table} (code, label, description, is_active, sort_order)
     VALUES (?, ?, ?, 1, COALESCE((SELECT MAX(sort_order) + 10 FROM ${table}), 10))`, [
-    code,
+    code2,
     label,
     description
   ]);
 }
 function removeType(db, table, rawCode, command2) {
-  const code = rawCode.trim().toLowerCase();
-  if (!code) throw new Error(`${command2} code is empty.`);
-  const existing = queryRows2(db, `SELECT id, is_active FROM ${table} WHERE code = ? COLLATE NOCASE`, [code])[0];
+  const code2 = rawCode.trim().toLowerCase();
+  if (!code2) throw new Error(`${command2} code is empty.`);
+  const existing = queryRows2(db, `SELECT id, is_active FROM ${table} WHERE code = ? COLLATE NOCASE`, [code2])[0];
   if (!existing) throw new Error(`Unknown type '${rawCode}'.`);
-  if (Number(existing.is_active) === 0) throw new Error(`Type '${code}' is already inactive.`);
+  if (Number(existing.is_active) === 0) throw new Error(`Type '${code2}' is already inactive.`);
   db.run(`UPDATE ${table} SET is_active = 0 WHERE id = ?`, [Number(existing.id)]);
 }
 function optionalIsoDate(value, label) {
@@ -5621,9 +5693,9 @@ function applyAdminEvents(db, events, noteDate, errors) {
       } else if (event.command === "ENGAGEMENT_COMPLETE" || event.command === "ENGAGEMENT_PAUSE") {
         const engagement = resolveEntity(db, args[0], "engagements");
         if (!engagement) throw new Error(`Unknown engagement: ${args[0]}`);
-        const code = event.command === "ENGAGEMENT_COMPLETE" ? "completed" : "paused";
-        const status = resolveTaxonomy(db, "engagement_statuses", code);
-        if (!status) throw new Error(`Database has no active '${code}' engagement status.`);
+        const code2 = event.command === "ENGAGEMENT_COMPLETE" ? "completed" : "paused";
+        const status = resolveTaxonomy(db, "engagement_statuses", code2);
+        if (!status) throw new Error(`Database has no active '${code2}' engagement status.`);
         db.run(
           event.command === "ENGAGEMENT_COMPLETE" ? "UPDATE engagements SET status_id = ?, completion_date = ? WHERE id = ?" : "UPDATE engagements SET status_id = ? WHERE id = ?",
           event.command === "ENGAGEMENT_COMPLETE" ? [status.id, noteDate, engagement.id] : [status.id, engagement.id]
@@ -5891,7 +5963,10 @@ var METRIC_FIELDS = [
   "calories",
   "protein_g",
   "fasted",
-  "dieted"
+  "dieted",
+  "studied",
+  "worked",
+  "exercised"
 ];
 function splitFields(line, expected) {
   return splitDelimitedFields(line, expected);
@@ -6090,7 +6165,8 @@ function parseDaily(db, sourceText, noteDate, thresholds, errors) {
       notes: notes2,
       parsedInterval: null,
       sessionType: null,
-      resolvedEngagement: null
+      resolvedEngagement: null,
+      engagementType: ""
     };
   });
   const transactions = entries(sections2.get("transactions")).map((line, index) => {
@@ -6152,6 +6228,7 @@ function parseDaily(db, sourceText, noteDate, thresholds, errors) {
   };
 }
 function validateFacts(db, parsed, errors, warnings) {
+  var _a;
   if (parsed.valuationRates.length > 0) {
     try {
       assertValuationHistorySchema(db);
@@ -6179,6 +6256,15 @@ function validateFacts(db, parsed, errors, warnings) {
     session.resolvedEngagement = resolveEntity(db, session.engagement, "engagements");
     if (!session.engagement) errors.push(`Session #${session.ordinal} has an empty engagement.`);
     else if (!session.resolvedEngagement) errors.push(`Unknown engagement in session #${session.ordinal}: '${session.engagement}'.`);
+    else {
+      const row = queryRows2(db, `
+        SELECT engagement_type.code
+        FROM engagements AS engagement
+        JOIN engagement_types AS engagement_type ON engagement_type.id = engagement.type_id
+        WHERE engagement.id = ?
+      `, [session.resolvedEngagement.id])[0];
+      session.engagementType = String((_a = row == null ? void 0 : row.code) != null ? _a : "");
+    }
   }
   intervals.sort((left, right) => left.start.localeCompare(right.start));
   for (let index = 1; index < intervals.length; index += 1) {
@@ -6199,8 +6285,8 @@ function validateFacts(db, parsed, errors, warnings) {
     }
   }
   const exerciseSessions = parsed.sessions.filter((session) => {
-    var _a;
-    return ((_a = session.sessionType) == null ? void 0 : _a.code) === "exercise";
+    var _a2;
+    return ((_a2 = session.sessionType) == null ? void 0 : _a2.code) === "exercise";
   });
   if (parsed.exercises.length > 0 && exerciseSessions.length === 0) {
     errors.push("Exercise Details require one owning session. Add 'exercise' to the optional type field of that session.");
@@ -6232,8 +6318,8 @@ function validateFacts(db, parsed, errors, warnings) {
       continue;
     }
     const matches = parsed.sessions.map((session, index) => ({ session, index })).filter(({ session }) => {
-      var _a, _b, _c, _d;
-      return ((_a = session.resolvedEngagement) == null ? void 0 : _a.id) === ((_b = milestone.resolvedEngagement) == null ? void 0 : _b.id) && ((_c = session.parsedInterval) == null ? void 0 : _c.start) === target.start && ((_d = session.parsedInterval) == null ? void 0 : _d.end) === target.end;
+      var _a2, _b, _c, _d;
+      return ((_a2 = session.resolvedEngagement) == null ? void 0 : _a2.id) === ((_b = milestone.resolvedEngagement) == null ? void 0 : _b.id) && ((_c = session.parsedInterval) == null ? void 0 : _c.start) === target.start && ((_d = session.parsedInterval) == null ? void 0 : _d.end) === target.end;
     });
     if (matches.length !== 1) {
       errors.push(`Milestone '${milestone.milestone}' must reference exactly one same-engagement session at '${milestone.sessionInterval}'; found ${matches.length}.`);
@@ -6242,7 +6328,88 @@ function validateFacts(db, parsed, errors, warnings) {
   errors.push(...parsed.mealInspection.errors);
   warnings.push(...parsed.mealInspection.warnings);
 }
-function inspectionFor(input, parsed, imported, errors, warnings) {
+function canonicalPreviousSleepSignals(db, assessmentDate) {
+  return queryRows2(db, `
+    SELECT session.date, session.start_time, session.end_time,
+           session_type.code AS session_type,
+           engagement_type.code AS engagement_type,
+           engagement.name AS engagement_name
+    FROM sessions AS session
+    JOIN engagements AS engagement ON engagement.id = session.engagement_id
+    JOIN engagement_types AS engagement_type ON engagement_type.id = engagement.type_id
+    LEFT JOIN session_types AS session_type ON session_type.id = session.session_type_id
+    WHERE session.date = date(?, '-1 day')
+  `, [assessmentDate]).flatMap((row) => {
+    var _a, _b, _c, _d, _e;
+    const start = parseDatabaseTime(String((_a = row.start_time) != null ? _a : ""));
+    const end = parseDatabaseTime(String((_b = row.end_time) != null ? _b : ""));
+    if (start == null || end == null || end <= start) return [];
+    return [{
+      date: String(row.date),
+      startMinutes: start,
+      endMinutes: end,
+      sessionType: String((_c = row.session_type) != null ? _c : ""),
+      engagementType: String((_d = row.engagement_type) != null ? _d : ""),
+      engagementName: String((_e = row.engagement_name) != null ? _e : "")
+    }];
+  });
+}
+function applyInferredMetrics(db, parsed, input, warnings) {
+  var _a, _b, _c, _d;
+  const currentSignals = parsed.sessions.flatMap((session) => {
+    var _a2, _b2, _c2, _d2, _e;
+    if (!session.parsedInterval) return [];
+    return [{
+      date: input.noteDate,
+      startMinutes: Number(session.parsedInterval.start.slice(0, 2)) * 60 + Number(session.parsedInterval.start.slice(3, 5)),
+      endMinutes: Number(session.parsedInterval.end.slice(0, 2)) * 60 + Number(session.parsedInterval.end.slice(3, 5)),
+      sessionType: (_b2 = (_a2 = session.sessionType) == null ? void 0 : _a2.code) != null ? _b2 : session.type,
+      engagementType: session.engagementType,
+      engagementName: (_d2 = (_c2 = session.resolvedEngagement) == null ? void 0 : _c2.name) != null ? _d2 : session.engagement,
+      hasExerciseDetails: parsed.exercises.length > 0 && ((_e = session.sessionType) == null ? void 0 : _e.code) === "exercise"
+    }];
+  });
+  const activity = inferDailyActivity(currentSignals);
+  const sleepHours = inferSleepHours(input.noteDate, [
+    ...canonicalPreviousSleepSignals(db, input.noteDate),
+    ...currentSignals
+  ]);
+  const derived = {
+    calories: (_a = parsed.mealInspection.nutrition.dailyCaloriesKcal) != null ? _a : 0,
+    protein_g: (_b = parsed.mealInspection.nutrition.proteinG) != null ? _b : 0,
+    sleep_hours: sleepHours,
+    studied: activity.studied,
+    worked: activity.worked,
+    exercised: activity.exercised
+  };
+  for (const [field, value] of Object.entries(derived)) {
+    const manual = parsed.metrics[field];
+    if (manual != null && Number(manual) !== value) {
+      warnings.push(`${field} was inferred as ${value}; the calculated value replaces the Daily Metrics entry.`);
+    }
+    parsed.metrics[field] = value;
+  }
+  parsed.metrics.dieted = (_d = (_c = parsed.mealInspection.nutrition.evaluatedDieted) != null ? _c : parsed.metrics.dieted) != null ? _d : null;
+}
+function historicalValuationRate(db, unit, date, referenceUnit) {
+  const unitKey = normalizeValuationUnit(unit);
+  if (unitKey === normalizeValuationUnit(referenceUnit)) return 1;
+  try {
+    const row = queryRows2(db, `
+      SELECT rate.value
+      FROM valuation_rates AS rate
+      JOIN valuation_rate_sets AS rate_set ON rate_set.id = rate.rate_set_id
+      WHERE rate.unit_key = ? AND rate_set.rate_date <= ?
+      ORDER BY rate_set.rate_date DESC, rate.id DESC
+      LIMIT 1
+    `, [unitKey, date])[0];
+    return row == null ? null : Number(row.value);
+  } catch (e) {
+    return null;
+  }
+}
+function inspectionFor(db, input, parsed, imported, errors, warnings) {
+  var _a;
   const missing = METRIC_FIELDS.filter((field) => parsed.metrics[field] == null || parsed.metrics[field] === "");
   return {
     date: input.noteDate,
@@ -6263,45 +6430,71 @@ function inspectionFor(input, parsed, imported, errors, warnings) {
       valuation_rate_count: parsed.valuationRates.length
     },
     preview: {
-      daily_metrics: Object.fromEntries(METRIC_FIELDS.map((field) => {
-        var _a;
-        return [field, (_a = parsed.metrics[field]) != null ? _a : null];
-      })),
+      daily_metrics: {
+        ...Object.fromEntries(METRIC_FIELDS.map((field) => {
+          var _a2;
+          return [field, (_a2 = parsed.metrics[field]) != null ? _a2 : null];
+        })),
+        notes: (_a = parsed.metrics.notes) != null ? _a : null
+      },
       meals: parsed.mealInspection.meals.flatMap((meal) => meal.items.map((item) => ({
+        meal_type: meal.type,
         food: item.food,
+        amount_g: item.amountG,
         calories: item.caloriesKcal,
-        protein_g: item.proteinG
+        protein_g: item.proteinG,
+        carbs_g: item.carbsG,
+        fat_g: item.fatG,
+        salt_g: item.saltG,
+        fiber_g: item.fiberG,
+        cholesterol_mg: item.cholesterolMg
       }))),
       sessions: parsed.sessions.map((session) => {
-        var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j;
+        var _a2, _b, _c, _d, _e, _f, _g, _h, _i, _j;
         return {
           ordinal: session.ordinal,
           interval: session.interval,
-          start_time: (_b = (_a = session.parsedInterval) == null ? void 0 : _a.start) != null ? _b : null,
+          start_time: (_b = (_a2 = session.parsedInterval) == null ? void 0 : _a2.start) != null ? _b : null,
           end_time: (_d = (_c = session.parsedInterval) == null ? void 0 : _c.end) != null ? _d : null,
           duration_minutes: (_f = (_e = session.parsedInterval) == null ? void 0 : _e.durationMinutes) != null ? _f : null,
           session_type: (_h = (_g = session.sessionType) == null ? void 0 : _g.code) != null ? _h : session.type,
           engagement: (_j = (_i = session.resolvedEngagement) == null ? void 0 : _i.name) != null ? _j : session.engagement,
+          engagement_type: session.engagementType,
           notes: session.notes || null
         };
       }),
       transactions: parsed.transactions.map((transaction) => {
-        var _a, _b, _c, _d, _e, _f, _g;
+        var _a2, _b, _c, _d, _e, _f, _g, _h;
+        const account = transaction.resolvedAccount == null ? null : queryRows2(
+          db,
+          "SELECT currency FROM accounts WHERE id = ?",
+          [transaction.resolvedAccount.id]
+        )[0];
+        const currency2 = normalizeValuationUnit(String((_a2 = account == null ? void 0 : account.currency) != null ? _a2 : "")) || "Unspecified";
+        const amount = transaction.amount;
+        const rate = historicalValuationRate(
+          db,
+          currency2,
+          input.noteDate,
+          (_b = input.valuationReferenceUnit) != null ? _b : "USD"
+        );
         return {
           ordinal: transaction.ordinal,
-          amount: (_a = transaction.amount) != null ? _a : transaction.amountRaw,
-          account: (_c = (_b = transaction.resolvedAccount) == null ? void 0 : _b.name) != null ? _c : transaction.account,
-          engagement: (_e = (_d = transaction.resolvedEngagement) == null ? void 0 : _d.name) != null ? _e : transaction.engagement,
+          amount: amount != null ? amount : transaction.amountRaw,
+          account: (_d = (_c = transaction.resolvedAccount) == null ? void 0 : _c.name) != null ? _d : transaction.account,
+          engagement: (_f = (_e = transaction.resolvedEngagement) == null ? void 0 : _e.name) != null ? _f : transaction.engagement,
           engagement_raw: transaction.engagement,
-          engagement_id: (_g = (_f = transaction.resolvedEngagement) == null ? void 0 : _f.id) != null ? _g : null,
-          description: transaction.description
+          engagement_id: (_h = (_g = transaction.resolvedEngagement) == null ? void 0 : _g.id) != null ? _h : null,
+          description: transaction.description,
+          currency: currency2,
+          valuation_amount: amount == null || rate == null && amount !== 0 ? null : amount * (rate != null ? rate : 0)
         };
       }),
       exercises: parsed.exercises.map((exercise) => {
-        var _a, _b;
+        var _a2, _b;
         return {
           ordinal: exercise.ordinal,
-          exercise: (_b = (_a = exercise.resolvedExercise) == null ? void 0 : _a.name) != null ? _b : exercise.exercise,
+          exercise: (_b = (_a2 = exercise.resolvedExercise) == null ? void 0 : _a2.name) != null ? _b : exercise.exercise,
           sets: exercise.sets.map((set, index) => ({ set_number: index + 1, ...set })),
           notes: exercise.notes || null
         };
@@ -6355,7 +6548,8 @@ function prepareDaily(db, input) {
       errors.push(`Historical Meals for ${input.noteDate} differ from the finalized meal component and cannot be replaced.`);
     }
   }
-  return { parsed, inspection: inspectionFor(input, parsed, imported, errors, warnings) };
+  if (errors.length === 0) applyInferredMetrics(db, parsed, input, warnings);
+  return { parsed, inspection: inspectionFor(db, input, parsed, imported, errors, warnings) };
 }
 function inspectDailyNote(db, input) {
   return prepareDaily(db, input).inspection;
@@ -6374,7 +6568,7 @@ function insertComponent(db, input, component, rowCount) {
 }
 function writeHistoricalDailyNote(db, input) {
   var _a, _b, _c, _d, _e, _f, _g, _h;
-  if (input.noteDate >= input.todayDate) throw new Error("Canonical Daily Note import is historical-only. Use planning sync for today and future notes.");
+  if (input.noteDate > input.todayDate) throw new Error("Future Daily Forms cannot be imported. Wait until that date before creating a canonical Daily receipt.");
   const prepared = prepareDaily(db, input);
   if (!prepared.inspection.ready) throw new Error(prepared.inspection.errors.join("\n\n"));
   const parsed = prepared.parsed;
@@ -6409,7 +6603,7 @@ function writeHistoricalDailyNote(db, input) {
     metrics.weight_kg,
     metrics.sleep_hours,
     parsed.mealInspection.nutrition.dailyCaloriesKcal,
-    metrics.protein_g,
+    parsed.mealInspection.nutrition.proteinG,
     (_a = metrics.fasted) != null ? _a : 0,
     (_c = (_b = parsed.mealInspection.nutrition.evaluatedDieted) != null ? _b : metrics.dieted) != null ? _c : 0,
     (_d = metrics.studied) != null ? _d : 0,
@@ -6927,10 +7121,10 @@ function parseHeaderInterval(value) {
   if (startTotal < 0 || startTotal >= 1440 || endTotal < 0 || endTotal > 1440) {
     throw new Error(`Invalid weekly grid interval header: '${value}'.`);
   }
-  const duration = (endTotal - startTotal + 1440) % 1440;
-  if (duration === 0) throw new Error(`Weekly grid interval has zero duration: '${value}'.`);
+  const duration2 = (endTotal - startTotal + 1440) % 1440;
+  if (duration2 === 0) throw new Error(`Weekly grid interval has zero duration: '${value}'.`);
   const time = (minutes) => `${String(Math.floor(minutes % 1440 / 60)).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`;
-  return { startTime: time(startTotal), endTime: time(endTotal), duration };
+  return { startTime: time(startTotal), endTime: time(endTotal), duration: duration2 };
 }
 function parseSessionCell(value) {
   const parts = value.split(";").map((part) => part.trim());
@@ -8137,7 +8331,7 @@ var LoggerService = class {
   }
   requireFile(path, label) {
     const file = this.app.vault.getAbstractFileByPath(path);
-    if (!(file instanceof import_obsidian3.TFile)) throw new Error(`${label} was not found inside the vault: ${path}`);
+    if (!(file instanceof import_obsidian2.TFile)) throw new Error(`${label} was not found inside the vault: ${path}`);
     return file;
   }
   async createBackup(databasePath, bytes, label = "meals") {
@@ -8146,9 +8340,9 @@ var LoggerService = class {
     const dot = fileName.lastIndexOf(".");
     const stem = dot > 0 ? fileName.slice(0, dot) : fileName;
     const extension = dot > 0 ? fileName.slice(dot) : ".db";
-    const backupDirectory = (0, import_obsidian3.normalizePath)(backupDirectoryForDatabase(databasePath));
+    const backupDirectory = (0, import_obsidian2.normalizePath)(backupDirectoryForDatabase(databasePath));
     await this.ensureFolder(backupDirectory);
-    const backupPath = (0, import_obsidian3.normalizePath)(
+    const backupPath = (0, import_obsidian2.normalizePath)(
       `${backupDirectory}/${stem}.before-${label}-${backupTimestamp()}${extension}`
     );
     if (await this.app.vault.adapter.exists(backupPath)) {
@@ -8163,7 +8357,7 @@ var LoggerService = class {
     if (limit === 0) return { backupsPruned: 0, backupRetentionWarning: null };
     let backupsPruned = 0;
     try {
-      const backupDirectory = (0, import_obsidian3.normalizePath)(backupDirectoryForDatabase(databasePath));
+      const backupDirectory = (0, import_obsidian2.normalizePath)(backupDirectoryForDatabase(databasePath));
       const listing = await this.app.vault.adapter.list(backupDirectory);
       const removals = pluginBackupRetentionPlan(databasePath, listing.files, limit, protectedPath);
       for (const path of removals) {
@@ -8186,7 +8380,7 @@ var LoggerService = class {
       indexedType: (candidate) => {
         const existing = this.app.vault.getAbstractFileByPath(candidate);
         if (!existing) return null;
-        return existing instanceof import_obsidian3.TFolder ? "folder" : "file";
+        return existing instanceof import_obsidian2.TFolder ? "folder" : "file";
       },
       persistedType: async (candidate) => {
         var _a;
@@ -8217,20 +8411,20 @@ var LoggerService = class {
 };
 
 // src/CommandForms.ts
-var import_obsidian6 = require("obsidian");
-
-// src/command-staging.ts
 var import_obsidian5 = require("obsidian");
 
-// src/AdminEventStageModal.ts
+// src/command-staging.ts
 var import_obsidian4 = require("obsidian");
+
+// src/AdminEventStageModal.ts
+var import_obsidian3 = require("obsidian");
 function chooseAdminEventStageTarget(app, targets) {
   return new Promise((resolve) => new AdminEventStageTargetModal(app, targets, resolve).open());
 }
 function confirmAdminEventStage(app, preview) {
   return new Promise((resolve) => new AdminEventStageConfirmationModal(app, preview, resolve).open());
 }
-var AdminEventStageTargetModal = class extends import_obsidian4.Modal {
+var AdminEventStageTargetModal = class extends import_obsidian3.Modal {
   constructor(app, targets, resolve) {
     super(app);
     this.targets = targets;
@@ -8266,7 +8460,7 @@ var AdminEventStageTargetModal = class extends import_obsidian4.Modal {
     this.contentEl.empty();
   }
 };
-var AdminEventStageConfirmationModal = class extends import_obsidian4.Modal {
+var AdminEventStageConfirmationModal = class extends import_obsidian3.Modal {
   constructor(app, preview, resolve) {
     super(app);
     this.preview = preview;
@@ -8301,7 +8495,7 @@ var AdminEventStageConfirmationModal = class extends import_obsidian4.Modal {
 // src/command-staging.ts
 async function chooseUnimportedDailyNote(plugin, preferredTarget) {
   if (preferredTarget && preferredTarget.status !== "imported") return preferredTarget;
-  const today = (0, import_obsidian5.moment)().format("YYYY-MM-DD");
+  const today = (0, import_obsidian4.moment)().format("YYYY-MM-DD");
   const index = await plugin.database.dailyNoteIndex(plugin.settings.databasePath);
   const candidates = (await buildDailyNoteList(
     plugin.app,
@@ -8310,7 +8504,7 @@ async function chooseUnimportedDailyNote(plugin, preferredTarget) {
     plugin.knownForms()
   )).filter((item) => item.status !== "imported");
   if (candidates.length === 0) {
-    new import_obsidian5.Notice("There are no unimported EH Daily Notes available to receive this command.");
+    new import_obsidian4.Notice("There are no unimported EH Daily Notes available to receive this command.");
     return null;
   }
   if (candidates.length === 1) return candidates[0];
@@ -8322,7 +8516,7 @@ async function stageAdminCommands(options) {
   const target = await chooseUnimportedDailyNote(options.plugin, options.preferredTarget);
   if (!target) return null;
   const file = options.plugin.app.vault.getAbstractFileByPath(target.filePath);
-  if (!(file instanceof import_obsidian5.TFile)) throw new Error(`Daily Note not found: ${target.filePath}`);
+  if (!(file instanceof import_obsidian4.TFile)) throw new Error(`Daily Note not found: ${target.filePath}`);
   const preview = await options.plugin.logger.previewAdminEventStage({
     noteDate: target.date,
     fileName: target.fileName,
@@ -8332,7 +8526,7 @@ async function stageAdminCommands(options) {
   });
   if (!await confirmAdminEventStage(options.plugin.app, preview)) return null;
   await options.plugin.logger.stageAdminEvent(preview);
-  new import_obsidian5.Notice(`${commands.length === 1 ? "Command staged" : `${commands.length} commands staged`} in ${target.fileName}.`, 8e3);
+  new import_obsidian4.Notice(`${commands.length === 1 ? "Command staged" : `${commands.length} commands staged`} in ${target.fileName}.`, 8e3);
   return target;
 }
 
@@ -8369,7 +8563,7 @@ function collectionFor(catalog, kind) {
 function openReferenceRepair(app, options) {
   new ReferenceRepairModal(app, options).open();
 }
-var ReferenceRepairModal = class extends import_obsidian6.Modal {
+var ReferenceRepairModal = class extends import_obsidian5.Modal {
   constructor(app, options) {
     var _a, _b, _c, _d;
     super(app);
@@ -8430,23 +8624,23 @@ var ReferenceRepairModal = class extends import_obsidian6.Modal {
     });
   }
   renderCreateFields(kindLabel) {
-    new import_obsidian6.Setting(this.contentEl).setName(`Canonical ${kindLabel} name`).setDesc("This is the name EH stores as the source of truth.").addText((text) => text.setValue(this.canonicalName).onChange((value) => {
+    new import_obsidian5.Setting(this.contentEl).setName(`Canonical ${kindLabel} name`).setDesc("This is the name EH stores as the source of truth.").addText((text) => text.setValue(this.canonicalName).onChange((value) => {
       this.canonicalName = value;
     }));
-    new import_obsidian6.Setting(this.contentEl).setName(`Also keep \u201C${this.options.reference.rawName}\u201D as an alias`).setDesc("Recommended when today\u2019s wording differs from the canonical name.").addToggle((toggle) => toggle.setValue(this.includeRawAlias).onChange((value) => {
+    new import_obsidian5.Setting(this.contentEl).setName(`Also keep \u201C${this.options.reference.rawName}\u201D as an alias`).setDesc("Recommended when today\u2019s wording differs from the canonical name.").addToggle((toggle) => toggle.setValue(this.includeRawAlias).onChange((value) => {
       this.includeRawAlias = value;
     }));
     if (this.options.reference.kind === "food") this.renderFoodFields();
     if (this.options.reference.kind === "engagement") this.renderEngagementFields();
     if (this.options.reference.kind === "exercise") {
-      new import_obsidian6.Setting(this.contentEl).setName("Category (optional)").addText((text) => text.setValue(this.category).onChange((value) => {
+      new import_obsidian5.Setting(this.contentEl).setName("Category (optional)").addText((text) => text.setValue(this.category).onChange((value) => {
         this.category = value;
       }));
     }
     if (this.options.reference.kind === "account") this.renderAccountFields();
   }
   renderFoodFields() {
-    new import_obsidian6.Setting(this.contentEl).setName("Food category (optional)").addText((text) => text.setValue(this.category).onChange((value) => {
+    new import_obsidian5.Setting(this.contentEl).setName("Food category (optional)").addText((text) => text.setValue(this.category).onChange((value) => {
       this.category = value;
     }));
     const fields2 = [
@@ -8459,7 +8653,7 @@ var ReferenceRepairModal = class extends import_obsidian6.Modal {
       ["cholesterol", "Cholesterol per 100 g", false, "mg, optional"]
     ];
     for (const [key, name, , description] of fields2) {
-      new import_obsidian6.Setting(this.contentEl).setName(name).setDesc(description).addText((text) => {
+      new import_obsidian5.Setting(this.contentEl).setName(name).setDesc(description).addText((text) => {
         text.inputEl.type = "number";
         text.inputEl.min = "0";
         text.inputEl.step = "any";
@@ -8468,32 +8662,32 @@ var ReferenceRepairModal = class extends import_obsidian6.Modal {
         });
       });
     }
-    new import_obsidian6.Setting(this.contentEl).setName("Notes (optional)").addTextArea((text) => text.setValue(this.notes).onChange((value) => {
+    new import_obsidian5.Setting(this.contentEl).setName("Notes (optional)").addTextArea((text) => text.setValue(this.notes).onChange((value) => {
       this.notes = value;
     }));
   }
   renderEngagementFields() {
-    new import_obsidian6.Setting(this.contentEl).setName("Engagement type").addDropdown((dropdown) => {
+    new import_obsidian5.Setting(this.contentEl).setName("Engagement type").addDropdown((dropdown) => {
       for (const value of this.options.catalog.engagementTypes) dropdown.addOption(value, value);
       return dropdown.setValue(this.engagementType).onChange((value) => {
         this.engagementType = value;
       });
     });
-    new import_obsidian6.Setting(this.contentEl).setName("Initial status").addDropdown((dropdown) => {
+    new import_obsidian5.Setting(this.contentEl).setName("Initial status").addDropdown((dropdown) => {
       for (const value of this.options.catalog.engagementStatuses) dropdown.addOption(value, value);
       return dropdown.setValue(this.engagementStatus).onChange((value) => {
         this.engagementStatus = value;
       });
     });
-    new import_obsidian6.Setting(this.contentEl).setName("Notes (optional)").addTextArea((text) => text.setValue(this.notes).onChange((value) => {
+    new import_obsidian5.Setting(this.contentEl).setName("Notes (optional)").addTextArea((text) => text.setValue(this.notes).onChange((value) => {
       this.notes = value;
     }));
   }
   renderAccountFields() {
-    new import_obsidian6.Setting(this.contentEl).setName("Account type (optional)").addText((text) => text.setValue(this.accountType).onChange((value) => {
+    new import_obsidian5.Setting(this.contentEl).setName("Account type (optional)").addText((text) => text.setValue(this.accountType).onChange((value) => {
       this.accountType = value;
     }));
-    new import_obsidian6.Setting(this.contentEl).setName("Currency (optional)").addText((text) => text.setValue(this.currency).onChange((value) => {
+    new import_obsidian5.Setting(this.contentEl).setName("Currency (optional)").addText((text) => text.setValue(this.currency).onChange((value) => {
       this.currency = value;
     }));
   }
@@ -8506,7 +8700,7 @@ var ReferenceRepairModal = class extends import_obsidian6.Modal {
       });
       return;
     }
-    new import_obsidian6.Setting(this.contentEl).setName(`Existing ${kindLabel}`).setDesc(`EH will stage \u201C${this.options.reference.rawName}\u201D as an alias of the selected canonical record.`).addDropdown((dropdown) => {
+    new import_obsidian5.Setting(this.contentEl).setName(`Existing ${kindLabel}`).setDesc(`EH will stage \u201C${this.options.reference.rawName}\u201D as an alias of the selected canonical record.`).addDropdown((dropdown) => {
       for (const choice of choices) dropdown.addOption(choice.name, choice.name);
       return dropdown.setValue(this.selectedExistingName).onChange((value) => {
         this.selectedExistingName = value;
@@ -8563,7 +8757,7 @@ var ReferenceRepairModal = class extends import_obsidian6.Modal {
       this.close();
       await this.options.onStaged();
     } catch (error) {
-      new import_obsidian6.Notice(error instanceof Error ? error.message : String(error), 1e4);
+      new import_obsidian5.Notice(error instanceof Error ? error.message : String(error), 1e4);
     } finally {
       button.disabled = false;
     }
@@ -8575,7 +8769,7 @@ var ReferenceRepairModal = class extends import_obsidian6.Modal {
 function openFoodEditor(app, options) {
   new FoodEditorModal(app, options).open();
 }
-var FoodEditorModal = class extends import_obsidian6.Modal {
+var FoodEditorModal = class extends import_obsidian5.Modal {
   constructor(app, options) {
     var _a, _b;
     super(app);
@@ -8609,7 +8803,7 @@ var FoodEditorModal = class extends import_obsidian6.Modal {
     this.modalEl.addClass("examined-human-command-modal");
     this.contentEl.createEl("h2", { text: this.food ? `Edit food \u2014 ${this.food.name}` : "Create food" });
     const textField = (name, initial, assign, description) => {
-      new import_obsidian6.Setting(this.contentEl).setName(name).setDesc(description != null ? description : "").addText((text) => text.setValue(initial).onChange(assign));
+      new import_obsidian5.Setting(this.contentEl).setName(name).setDesc(description != null ? description : "").addText((text) => text.setValue(initial).onChange(assign));
     };
     textField("Canonical food name", this.name, (value) => {
       this.name = value;
@@ -8627,7 +8821,7 @@ var FoodEditorModal = class extends import_obsidian6.Modal {
       ["Cholesterol per 100 g", "cholesterol", false, "mg, optional"]
     ];
     for (const [label, key, , description] of numeric) {
-      new import_obsidian6.Setting(this.contentEl).setName(label).setDesc(description).addText((text) => {
+      new import_obsidian5.Setting(this.contentEl).setName(label).setDesc(description).addText((text) => {
         text.inputEl.type = "number";
         text.inputEl.min = "0";
         text.inputEl.step = "any";
@@ -8636,11 +8830,11 @@ var FoodEditorModal = class extends import_obsidian6.Modal {
         });
       });
     }
-    new import_obsidian6.Setting(this.contentEl).setName("Notes (optional)").addTextArea((text) => text.setValue(this.notes).onChange((value) => {
+    new import_obsidian5.Setting(this.contentEl).setName("Notes (optional)").addTextArea((text) => text.setValue(this.notes).onChange((value) => {
       this.notes = value;
     }));
     if (!this.food) {
-      new import_obsidian6.Setting(this.contentEl).setName("Aliases (optional)").setDesc("Comma-separated alternate spellings to store with this new canonical food.").addText((text) => text.setValue(this.aliases).onChange((value) => {
+      new import_obsidian5.Setting(this.contentEl).setName("Aliases (optional)").setDesc("Comma-separated alternate spellings to store with this new canonical food.").addText((text) => text.setValue(this.aliases).onChange((value) => {
         this.aliases = value;
       }));
     }
@@ -8685,7 +8879,7 @@ var FoodEditorModal = class extends import_obsidian6.Modal {
       this.close();
       await this.options.onStaged();
     } catch (error) {
-      new import_obsidian6.Notice(error instanceof Error ? error.message : String(error), 1e4);
+      new import_obsidian5.Notice(error instanceof Error ? error.message : String(error), 1e4);
     } finally {
       button.disabled = false;
     }
@@ -8697,7 +8891,7 @@ var FoodEditorModal = class extends import_obsidian6.Modal {
 function openEntityEditor(app, options) {
   new EntityEditorModal(app, options).open();
 }
-var EntityEditorModal = class extends import_obsidian6.Modal {
+var EntityEditorModal = class extends import_obsidian5.Modal {
   constructor(app, options) {
     var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j;
     super(app);
@@ -8742,13 +8936,13 @@ var EntityEditorModal = class extends import_obsidian6.Modal {
     this.modalEl.addClass("examined-human-command-modal");
     const label = this.options.kind === "engagement" ? "Engagement" : this.options.kind === "exercise" ? "Exercise" : "Account";
     this.contentEl.createEl("h2", { text: this.options.entity ? `Edit ${label}` : `Create ${label}` });
-    new import_obsidian6.Setting(this.contentEl).setName(`Canonical ${label} name`).addText((text) => text.setValue(this.name).onChange((value) => {
+    new import_obsidian5.Setting(this.contentEl).setName(`Canonical ${label} name`).addText((text) => text.setValue(this.name).onChange((value) => {
       this.name = value;
     }));
     if (this.options.kind === "engagement") this.renderEngagement();
     if (this.options.kind === "exercise") this.renderExercise();
     if (this.options.kind === "account") this.renderAccount();
-    new import_obsidian6.Setting(this.contentEl).setName("Aliases (optional)").setDesc("Comma-separated alternate spellings. Existing aliases remain; this adds the listed aliases.").addText((text) => text.setValue(this.aliases).onChange((value) => {
+    new import_obsidian5.Setting(this.contentEl).setName("Aliases (optional)").setDesc("Comma-separated alternate spellings. Existing aliases remain; this adds the listed aliases.").addText((text) => text.setValue(this.aliases).onChange((value) => {
       this.aliases = value;
     }));
     const actions = this.contentEl.createDiv({ cls: "examined-human-modal-actions" });
@@ -8759,13 +8953,13 @@ var EntityEditorModal = class extends import_obsidian6.Modal {
     });
   }
   renderEngagement() {
-    new import_obsidian6.Setting(this.contentEl).setName("Engagement type").addDropdown((dropdown) => {
+    new import_obsidian5.Setting(this.contentEl).setName("Engagement type").addDropdown((dropdown) => {
       for (const value of this.options.catalog.engagementTypes) dropdown.addOption(value, value);
       return dropdown.setValue(this.type).onChange((value) => {
         this.type = value;
       });
     });
-    new import_obsidian6.Setting(this.contentEl).setName("Status").addDropdown((dropdown) => {
+    new import_obsidian5.Setting(this.contentEl).setName("Status").addDropdown((dropdown) => {
       for (const value of this.options.catalog.engagementStatuses) dropdown.addOption(value, value);
       return dropdown.setValue(this.status).onChange((value) => {
         this.status = value;
@@ -8782,28 +8976,28 @@ var EntityEditorModal = class extends import_obsidian6.Modal {
         this.completionDate = next;
       }, this.completionDate]
     ]) {
-      new import_obsidian6.Setting(this.contentEl).setName(name).addText((text) => {
+      new import_obsidian5.Setting(this.contentEl).setName(name).addText((text) => {
         text.inputEl.type = "date";
         return text.setValue(value).onChange(assign);
       });
     }
-    new import_obsidian6.Setting(this.contentEl).setName("Notes (optional)").addTextArea((text) => text.setValue(this.notes).onChange((value) => {
+    new import_obsidian5.Setting(this.contentEl).setName("Notes (optional)").addTextArea((text) => text.setValue(this.notes).onChange((value) => {
       this.notes = value;
     }));
   }
   renderExercise() {
-    new import_obsidian6.Setting(this.contentEl).setName("Category (optional)").addText((text) => text.setValue(this.category).onChange((value) => {
+    new import_obsidian5.Setting(this.contentEl).setName("Category (optional)").addText((text) => text.setValue(this.category).onChange((value) => {
       this.category = value;
     }));
   }
   renderAccount() {
-    new import_obsidian6.Setting(this.contentEl).setName("Account type (optional)").addText((text) => text.setValue(this.type).onChange((value) => {
+    new import_obsidian5.Setting(this.contentEl).setName("Account type (optional)").addText((text) => text.setValue(this.type).onChange((value) => {
       this.type = value;
     }));
-    new import_obsidian6.Setting(this.contentEl).setName("Currency (optional)").addText((text) => text.setValue(this.currency).onChange((value) => {
+    new import_obsidian5.Setting(this.contentEl).setName("Currency (optional)").addText((text) => text.setValue(this.currency).onChange((value) => {
       this.currency = value;
     }));
-    new import_obsidian6.Setting(this.contentEl).setName("Address (optional)").addText((text) => text.setValue(this.address).onChange((value) => {
+    new import_obsidian5.Setting(this.contentEl).setName("Address (optional)").addText((text) => text.setValue(this.address).onChange((value) => {
       this.address = value;
     }));
   }
@@ -8852,7 +9046,7 @@ var EntityEditorModal = class extends import_obsidian6.Modal {
       this.close();
       await this.options.onStaged();
     } catch (error) {
-      new import_obsidian6.Notice(error instanceof Error ? error.message : String(error), 1e4);
+      new import_obsidian5.Notice(error instanceof Error ? error.message : String(error), 1e4);
     } finally {
       button.disabled = false;
     }
@@ -8862,9 +9056,270 @@ var EntityEditorModal = class extends import_obsidian6.Modal {
   }
 };
 
-// src/SessionDetailsModal.ts
+// src/unresolved-references.ts
+var PATTERNS = [
+  {
+    kind: "food",
+    expression: /(?:Breakfast|Lunch|Dinner|Snack) food "([^"]+)" is not in the Food Library\./i,
+    context: "Meals"
+  },
+  {
+    kind: "engagement",
+    expression: /Unknown engagement in session #(\d+): '([^']+)'\./i,
+    context: "Session"
+  },
+  {
+    kind: "engagement",
+    expression: /Unknown engagement in transaction #(\d+): '([^']+)'\./i,
+    context: "Transaction"
+  },
+  {
+    kind: "engagement",
+    expression: /Unknown engagement in milestone '([^']+)': '([^']+)'\./i,
+    context: "Milestone"
+  },
+  {
+    kind: "exercise",
+    expression: /Unknown exercise: '([^']+)'\./i,
+    context: "Exercise details"
+  },
+  {
+    kind: "account",
+    expression: /Unknown account in transaction #(\d+): '([^']+)'\./i,
+    context: "Transaction"
+  }
+];
+function nameFromMatch(pattern, match) {
+  return pattern.kind === "food" || pattern.kind === "exercise" ? match[1] : match[2];
+}
+function contextFromMatch(pattern, match) {
+  if (pattern.kind === "food" || pattern.kind === "exercise") return pattern.context;
+  if (pattern.context === "Milestone") return `${pattern.context}: ${match[1]}`;
+  return `${pattern.context} #${match[1]}`;
+}
+function unresolvedReferencesFromErrors(errors) {
+  const found = /* @__PURE__ */ new Map();
+  for (const error of errors) {
+    for (const pattern of PATTERNS) {
+      const match = pattern.expression.exec(error);
+      if (!match) continue;
+      const rawName = nameFromMatch(pattern, match).trim();
+      if (!rawName) continue;
+      const key = `${pattern.kind}:${rawName.toLocaleLowerCase()}`;
+      const existing = found.get(key);
+      const context = contextFromMatch(pattern, match);
+      if (existing) {
+        if (!existing.contexts.includes(context)) existing.contexts.push(context);
+      } else {
+        found.set(key, { key, kind: pattern.kind, rawName, contexts: [context] });
+      }
+      break;
+    }
+  }
+  return [...found.values()].sort((left, right) => left.kind.localeCompare(right.kind) || left.rawName.localeCompare(right.rawName));
+}
+
+// src/DailyAssessmentReport.ts
 var import_obsidian7 = require("obsidian");
-var SessionDetailsModal = class extends import_obsidian7.Modal {
+
+// src/overlap.ts
+function layoutOverlappingEvents(events) {
+  const sorted = events.filter((event) => event.kind === "timed").slice().sort((a, b) => a.startMinutes - b.startMinutes || b.endMinutes - a.endMinutes || a.id.localeCompare(b.id));
+  const result = [];
+  let group = [];
+  let groupEnd = -1;
+  const flush = () => {
+    if (group.length === 0) return;
+    const columnEnds = [];
+    const placed = group.map((event) => {
+      let column = columnEnds.findIndex((end) => end <= event.startMinutes);
+      if (column === -1) column = columnEnds.length;
+      columnEnds[column] = event.endMinutes;
+      return { event, column, columnCount: 0 };
+    });
+    for (const item of placed) item.columnCount = columnEnds.length;
+    result.push(...placed);
+    group = [];
+  };
+  for (const event of sorted) {
+    if (group.length > 0 && event.startMinutes >= groupEnd) flush();
+    group.push(event);
+    groupEnd = Math.max(groupEnd, event.endMinutes);
+    if (group.length === 1) groupEnd = event.endMinutes;
+  }
+  flush();
+  return result;
+}
+
+// src/visual-stack.ts
+var DEFAULT_OPTIONS = {
+  normalMinHeightPx: 18,
+  compactMinHeightPx: 13,
+  normalGapPx: 2,
+  compactGapPx: 1,
+  toleranceMinutes: 10,
+  dayMinutes: 1440
+};
+function layoutVisualStack(events, pxPerMinute, options = {}) {
+  const settings = { ...DEFAULT_OPTIONS, ...options };
+  const sorted = events.slice().sort((a, b) => a.startMinutes - b.startMinutes || b.endMinutes - a.endMinutes || a.id.localeCompare(b.id));
+  const positions = /* @__PURE__ */ new Map();
+  const normalMinimumMinutes = settings.normalMinHeightPx / pxPerMinute;
+  const useFallback = (event) => {
+    positions.set(event.id, {
+      startMinutes: event.startMinutes,
+      durationMinutes: Math.max(event.endMinutes - event.startMinutes, normalMinimumMinutes),
+      stacked: false
+    });
+  };
+  const temporalGroups = [];
+  let group = [];
+  let groupEnd = -1;
+  for (const event of sorted) {
+    if (group.length > 0 && event.startMinutes >= groupEnd) {
+      temporalGroups.push(group);
+      group = [];
+      groupEnd = -1;
+    }
+    group.push(event);
+    groupEnd = Math.max(groupEnd, event.endMinutes);
+  }
+  if (group.length > 0) temporalGroups.push(group);
+  let singletonRun = [];
+  let previousBoundaryEnd;
+  const flushSingletonRun = (nextBoundaryStart) => {
+    if (singletonRun.length === 0) return;
+    layoutSingletonRun(
+      singletonRun,
+      positions,
+      pxPerMinute,
+      settings,
+      previousBoundaryEnd,
+      nextBoundaryStart
+    );
+    previousBoundaryEnd = visualEnd(positions, singletonRun[singletonRun.length - 1]);
+    singletonRun = [];
+  };
+  for (const temporalGroup of temporalGroups) {
+    if (temporalGroup.length === 1) {
+      singletonRun.push(temporalGroup[0]);
+      continue;
+    }
+    flushSingletonRun(Math.min(...temporalGroup.map((event) => event.startMinutes)));
+    for (const event of temporalGroup) useFallback(event);
+    previousBoundaryEnd = Math.max(...temporalGroup.map((event) => visualEnd(positions, event)));
+  }
+  flushSingletonRun();
+  return positions;
+  function layoutSingletonRun(run, output, scale, stackSettings, outsidePreviousEnd, outsideNextStart) {
+    let index = 0;
+    let previousEnd = outsidePreviousEnd;
+    while (index < run.length) {
+      const first = run[index];
+      let clusterEnd = index;
+      let normalEnvelopeEnd = first.startMinutes + Math.max(first.endMinutes - first.startMinutes, stackSettings.normalMinHeightPx / scale);
+      while (clusterEnd + 1 < run.length) {
+        const next = run[clusterEnd + 1];
+        if (next.startMinutes >= normalEnvelopeEnd + stackSettings.normalGapPx / scale) break;
+        clusterEnd += 1;
+        normalEnvelopeEnd = Math.max(
+          normalEnvelopeEnd,
+          next.startMinutes + Math.max(
+            next.endMinutes - next.startMinutes,
+            stackSettings.normalMinHeightPx / scale
+          )
+        );
+      }
+      if (clusterEnd === index) {
+        useFallback(first);
+        previousEnd = visualEnd(output, first);
+        index += 1;
+        continue;
+      }
+      const cluster = run.slice(index, clusterEnd + 1);
+      const nextStart = clusterEnd + 1 < run.length ? run[clusterEnd + 1].startMinutes : outsideNextStart;
+      const packed = tryPackCluster(cluster, scale, stackSettings, previousEnd, nextStart);
+      if (packed) {
+        for (const [id, position] of packed) output.set(id, position);
+      } else {
+        for (const event of cluster) useFallback(event);
+      }
+      previousEnd = visualEnd(output, cluster[cluster.length - 1]);
+      index = clusterEnd + 1;
+    }
+  }
+}
+function tryPackCluster(cluster, pxPerMinute, settings, previousBoundaryEnd, nextBoundaryStart) {
+  const minimumMinutes = settings.compactMinHeightPx / pxPerMinute;
+  const gapMinutes = settings.compactGapPx / pxPerMinute;
+  const candidates = [];
+  for (const event of cluster) {
+    const actualDuration = event.endMinutes - event.startMinutes;
+    const duration2 = Math.max(actualDuration, minimumMinutes);
+    const desiredStart = event.startMinutes - (duration2 - actualDuration) / 2;
+    const prior = candidates[candidates.length - 1];
+    const preliminaryStart = prior ? Math.max(desiredStart, prior.preliminaryStart + prior.duration + gapMinutes) : desiredStart;
+    candidates.push({ event, desiredStart, duration: duration2, preliminaryStart });
+  }
+  let lowerTranslation = Number.NEGATIVE_INFINITY;
+  let upperTranslation = Number.POSITIVE_INFINITY;
+  let centerShiftTotal = 0;
+  for (const candidate of candidates) {
+    const actualDuration = candidate.event.endMinutes - candidate.event.startMinutes;
+    const startShiftBeforeTranslation = candidate.preliminaryStart - candidate.event.startMinutes;
+    const endShiftBeforeTranslation = candidate.preliminaryStart + candidate.duration - (candidate.event.startMinutes + actualDuration);
+    lowerTranslation = Math.max(
+      lowerTranslation,
+      startShiftBeforeTranslation - settings.toleranceMinutes,
+      endShiftBeforeTranslation - settings.toleranceMinutes
+    );
+    upperTranslation = Math.min(
+      upperTranslation,
+      startShiftBeforeTranslation + settings.toleranceMinutes,
+      endShiftBeforeTranslation + settings.toleranceMinutes
+    );
+    centerShiftTotal += candidate.preliminaryStart + candidate.duration / 2 - (candidate.event.startMinutes + actualDuration / 2);
+  }
+  const first = candidates[0];
+  const last = candidates[candidates.length - 1];
+  upperTranslation = Math.min(upperTranslation, first.preliminaryStart);
+  lowerTranslation = Math.max(
+    lowerTranslation,
+    last.preliminaryStart + last.duration - settings.dayMinutes
+  );
+  if (previousBoundaryEnd != null) {
+    upperTranslation = Math.min(
+      upperTranslation,
+      first.preliminaryStart - previousBoundaryEnd - gapMinutes
+    );
+  }
+  if (nextBoundaryStart != null) {
+    lowerTranslation = Math.max(
+      lowerTranslation,
+      last.preliminaryStart + last.duration + gapMinutes - nextBoundaryStart
+    );
+  }
+  if (lowerTranslation > upperTranslation) return null;
+  const idealTranslation = centerShiftTotal / candidates.length;
+  const translation = Math.max(lowerTranslation, Math.min(upperTranslation, idealTranslation));
+  const result = /* @__PURE__ */ new Map();
+  for (const candidate of candidates) {
+    result.set(candidate.event.id, {
+      startMinutes: candidate.preliminaryStart - translation,
+      durationMinutes: candidate.duration,
+      stacked: true
+    });
+  }
+  return result;
+}
+function visualEnd(positions, event) {
+  const position = positions.get(event.id);
+  return position ? position.startMinutes + position.durationMinutes : event.endMinutes;
+}
+
+// src/SessionDetailsModal.ts
+var import_obsidian6 = require("obsidian");
+var SessionDetailsModal = class extends import_obsidian6.Modal {
   constructor(app, event) {
     super(app);
     this.event = event;
@@ -9054,10 +9509,10 @@ function createSessionElement(app, event, overlapColumn, overlapCount, vertical,
   title.className = "examined-human-event-title";
   title.textContent = event.dataWarning ? `\u26A0 ${event.title}` : event.title;
   element.appendChild(title);
-  const duration = createSpan();
-  duration.className = "examined-human-event-duration";
-  duration.textContent = formatMinutesAsClock(event.durationMinutes);
-  element.appendChild(duration);
+  const duration2 = createSpan();
+  duration2.className = "examined-human-event-duration";
+  duration2.textContent = formatMinutesAsClock(event.durationMinutes);
+  element.appendChild(duration2);
   const renderedHeightPx = vertical.durationMinutes * pxPerMinute;
   const footerText = sessionFooterText(event);
   if (footerText && shouldShowSessionTypeFooter(renderedHeightPx, vertical.stacked)) {
@@ -9067,246 +9522,442 @@ function createSessionElement(app, event, overlapColumn, overlapCount, vertical,
   return element;
 }
 
-// src/unresolved-references.ts
-var PATTERNS = [
-  {
-    kind: "food",
-    expression: /(?:Breakfast|Lunch|Dinner|Snack) food "([^"]+)" is not in the Food Library\./i,
-    context: "Meals"
-  },
-  {
-    kind: "engagement",
-    expression: /Unknown engagement in session #(\d+): '([^']+)'\./i,
-    context: "Session"
-  },
-  {
-    kind: "engagement",
-    expression: /Unknown engagement in transaction #(\d+): '([^']+)'\./i,
-    context: "Transaction"
-  },
-  {
-    kind: "engagement",
-    expression: /Unknown engagement in milestone '([^']+)': '([^']+)'\./i,
-    context: "Milestone"
-  },
-  {
-    kind: "exercise",
-    expression: /Unknown exercise: '([^']+)'\./i,
-    context: "Exercise details"
-  },
-  {
-    kind: "account",
-    expression: /Unknown account in transaction #(\d+): '([^']+)'\./i,
-    context: "Transaction"
-  }
-];
-function nameFromMatch(pattern, match) {
-  return pattern.kind === "food" || pattern.kind === "exercise" ? match[1] : match[2];
-}
-function contextFromMatch(pattern, match) {
-  if (pattern.kind === "food" || pattern.kind === "exercise") return pattern.context;
-  if (pattern.context === "Milestone") return `${pattern.context}: ${match[1]}`;
-  return `${pattern.context} #${match[1]}`;
-}
-function unresolvedReferencesFromErrors(errors) {
-  const found = /* @__PURE__ */ new Map();
-  for (const error of errors) {
-    for (const pattern of PATTERNS) {
-      const match = pattern.expression.exec(error);
-      if (!match) continue;
-      const rawName = nameFromMatch(pattern, match).trim();
-      if (!rawName) continue;
-      const key = `${pattern.kind}:${rawName.toLocaleLowerCase()}`;
-      const existing = found.get(key);
-      const context = contextFromMatch(pattern, match);
-      if (existing) {
-        if (!existing.contexts.includes(context)) existing.contexts.push(context);
-      } else {
-        found.set(key, { key, kind: pattern.kind, rawName, contexts: [context] });
-      }
-      break;
-    }
-  }
-  return [...found.values()].sort((left, right) => left.kind.localeCompare(right.kind) || left.rawName.localeCompare(right.rawName));
-}
-
-// src/visual-stack.ts
-var DEFAULT_OPTIONS = {
-  normalMinHeightPx: 18,
-  compactMinHeightPx: 13,
-  normalGapPx: 2,
-  compactGapPx: 1,
-  toleranceMinutes: 10,
-  dayMinutes: 1440
-};
-function layoutVisualStack(events, pxPerMinute, options = {}) {
-  const settings = { ...DEFAULT_OPTIONS, ...options };
-  const sorted = events.slice().sort((a, b) => a.startMinutes - b.startMinutes || b.endMinutes - a.endMinutes || a.id.localeCompare(b.id));
-  const positions = /* @__PURE__ */ new Map();
-  const normalMinimumMinutes = settings.normalMinHeightPx / pxPerMinute;
-  const useFallback = (event) => {
-    positions.set(event.id, {
-      startMinutes: event.startMinutes,
-      durationMinutes: Math.max(event.endMinutes - event.startMinutes, normalMinimumMinutes),
-      stacked: false
-    });
-  };
-  const temporalGroups = [];
-  let group = [];
-  let groupEnd = -1;
-  for (const event of sorted) {
-    if (group.length > 0 && event.startMinutes >= groupEnd) {
-      temporalGroups.push(group);
-      group = [];
-      groupEnd = -1;
-    }
-    group.push(event);
-    groupEnd = Math.max(groupEnd, event.endMinutes);
-  }
-  if (group.length > 0) temporalGroups.push(group);
-  let singletonRun = [];
-  let previousBoundaryEnd;
-  const flushSingletonRun = (nextBoundaryStart) => {
-    if (singletonRun.length === 0) return;
-    layoutSingletonRun(
-      singletonRun,
-      positions,
-      pxPerMinute,
-      settings,
-      previousBoundaryEnd,
-      nextBoundaryStart
-    );
-    previousBoundaryEnd = visualEnd(positions, singletonRun[singletonRun.length - 1]);
-    singletonRun = [];
-  };
-  for (const temporalGroup of temporalGroups) {
-    if (temporalGroup.length === 1) {
-      singletonRun.push(temporalGroup[0]);
-      continue;
-    }
-    flushSingletonRun(Math.min(...temporalGroup.map((event) => event.startMinutes)));
-    for (const event of temporalGroup) useFallback(event);
-    previousBoundaryEnd = Math.max(...temporalGroup.map((event) => visualEnd(positions, event)));
-  }
-  flushSingletonRun();
-  return positions;
-  function layoutSingletonRun(run, output, scale, stackSettings, outsidePreviousEnd, outsideNextStart) {
-    let index = 0;
-    let previousEnd = outsidePreviousEnd;
-    while (index < run.length) {
-      const first = run[index];
-      let clusterEnd = index;
-      let normalEnvelopeEnd = first.startMinutes + Math.max(first.endMinutes - first.startMinutes, stackSettings.normalMinHeightPx / scale);
-      while (clusterEnd + 1 < run.length) {
-        const next = run[clusterEnd + 1];
-        if (next.startMinutes >= normalEnvelopeEnd + stackSettings.normalGapPx / scale) break;
-        clusterEnd += 1;
-        normalEnvelopeEnd = Math.max(
-          normalEnvelopeEnd,
-          next.startMinutes + Math.max(
-            next.endMinutes - next.startMinutes,
-            stackSettings.normalMinHeightPx / scale
-          )
-        );
-      }
-      if (clusterEnd === index) {
-        useFallback(first);
-        previousEnd = visualEnd(output, first);
-        index += 1;
-        continue;
-      }
-      const cluster = run.slice(index, clusterEnd + 1);
-      const nextStart = clusterEnd + 1 < run.length ? run[clusterEnd + 1].startMinutes : outsideNextStart;
-      const packed = tryPackCluster(cluster, scale, stackSettings, previousEnd, nextStart);
-      if (packed) {
-        for (const [id, position] of packed) output.set(id, position);
-      } else {
-        for (const event of cluster) useFallback(event);
-      }
-      previousEnd = visualEnd(output, cluster[cluster.length - 1]);
-      index = clusterEnd + 1;
-    }
-  }
-}
-function tryPackCluster(cluster, pxPerMinute, settings, previousBoundaryEnd, nextBoundaryStart) {
-  const minimumMinutes = settings.compactMinHeightPx / pxPerMinute;
-  const gapMinutes = settings.compactGapPx / pxPerMinute;
-  const candidates = [];
-  for (const event of cluster) {
-    const actualDuration = event.endMinutes - event.startMinutes;
-    const duration = Math.max(actualDuration, minimumMinutes);
-    const desiredStart = event.startMinutes - (duration - actualDuration) / 2;
-    const prior = candidates[candidates.length - 1];
-    const preliminaryStart = prior ? Math.max(desiredStart, prior.preliminaryStart + prior.duration + gapMinutes) : desiredStart;
-    candidates.push({ event, desiredStart, duration, preliminaryStart });
-  }
-  let lowerTranslation = Number.NEGATIVE_INFINITY;
-  let upperTranslation = Number.POSITIVE_INFINITY;
-  let centerShiftTotal = 0;
-  for (const candidate of candidates) {
-    const actualDuration = candidate.event.endMinutes - candidate.event.startMinutes;
-    const startShiftBeforeTranslation = candidate.preliminaryStart - candidate.event.startMinutes;
-    const endShiftBeforeTranslation = candidate.preliminaryStart + candidate.duration - (candidate.event.startMinutes + actualDuration);
-    lowerTranslation = Math.max(
-      lowerTranslation,
-      startShiftBeforeTranslation - settings.toleranceMinutes,
-      endShiftBeforeTranslation - settings.toleranceMinutes
-    );
-    upperTranslation = Math.min(
-      upperTranslation,
-      startShiftBeforeTranslation + settings.toleranceMinutes,
-      endShiftBeforeTranslation + settings.toleranceMinutes
-    );
-    centerShiftTotal += candidate.preliminaryStart + candidate.duration / 2 - (candidate.event.startMinutes + actualDuration / 2);
-  }
-  const first = candidates[0];
-  const last = candidates[candidates.length - 1];
-  upperTranslation = Math.min(upperTranslation, first.preliminaryStart);
-  lowerTranslation = Math.max(
-    lowerTranslation,
-    last.preliminaryStart + last.duration - settings.dayMinutes
-  );
-  if (previousBoundaryEnd != null) {
-    upperTranslation = Math.min(
-      upperTranslation,
-      first.preliminaryStart - previousBoundaryEnd - gapMinutes
-    );
-  }
-  if (nextBoundaryStart != null) {
-    lowerTranslation = Math.max(
-      lowerTranslation,
-      last.preliminaryStart + last.duration + gapMinutes - nextBoundaryStart
-    );
-  }
-  if (lowerTranslation > upperTranslation) return null;
-  const idealTranslation = centerShiftTotal / candidates.length;
-  const translation = Math.max(lowerTranslation, Math.min(upperTranslation, idealTranslation));
-  const result = /* @__PURE__ */ new Map();
-  for (const candidate of candidates) {
-    result.set(candidate.event.id, {
-      startMinutes: candidate.preliminaryStart - translation,
-      durationMinutes: candidate.duration,
-      stacked: true
-    });
-  }
-  return result;
-}
-function visualEnd(positions, event) {
-  const position = positions.get(event.id);
-  return position ? position.startMinutes + position.durationMinutes : event.endMinutes;
-}
-
-// src/DailyAssessmentView.ts
-var EXAMINED_HUMAN_DAILY_ASSESSMENT_VIEW_TYPE = "examined-human-daily-assessment";
-var FINGERPRINT_INTERVAL_MS = 1e4;
+// src/DailyAssessmentReport.ts
 var DAY_PX_PER_MINUTE = 0.8;
-function formatDuration(totalMinutes) {
+function numberFromRecord(record, key) {
+  const value = record[key];
+  if (value == null || value === "") return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+function metricsFromInspection(inspection) {
+  const metrics = inspection.preview.daily_metrics;
+  return {
+    mood: numberFromRecord(metrics, "mood"),
+    energy: numberFromRecord(metrics, "energy"),
+    stress: numberFromRecord(metrics, "stress"),
+    weightKg: numberFromRecord(metrics, "weight_kg"),
+    sleepHours: numberFromRecord(metrics, "sleep_hours"),
+    calories: numberFromRecord(metrics, "calories"),
+    proteinG: numberFromRecord(metrics, "protein_g"),
+    fasted: numberFromRecord(metrics, "fasted"),
+    dieted: numberFromRecord(metrics, "dieted"),
+    studied: numberFromRecord(metrics, "studied"),
+    worked: numberFromRecord(metrics, "worked"),
+    exercised: numberFromRecord(metrics, "exercised"),
+    notes: typeof metrics.notes === "string" ? metrics.notes : null
+  };
+}
+function inspectionEvents(inspection) {
+  return inspection.preview.sessions.flatMap((session) => {
+    var _a, _b, _c;
+    const start = parseDatabaseTime((_a = session.start_time) != null ? _a : "");
+    const end = parseDatabaseTime((_b = session.end_time) != null ? _b : "");
+    if (start == null || end == null || end <= start) return [];
+    return [{
+      id: `inspection:${session.ordinal}`,
+      date: inspection.date,
+      sessionType: session.session_type,
+      engagementName: session.engagement,
+      engagementType: session.engagement_type,
+      title: titleForEngagement(session.engagement),
+      kind: "timed",
+      startMinutes: start,
+      endMinutes: end,
+      durationMinutes: (_c = session.duration_minutes) != null ? _c : end - start,
+      notes: session.notes,
+      sourceKind: "planned",
+      planningSource: "daily-note"
+    }];
+  });
+}
+function previewExercises(exercises) {
+  return exercises.map((exercise) => ({
+    name: exercise.exercise,
+    category: null,
+    sets: exercise.sets.map((set, index) => {
+      var _a, _b, _c, _d, _e, _f;
+      return {
+        setNumber: (_a = set.set_number) != null ? _a : index + 1,
+        weight: (_b = set.weight) != null ? _b : null,
+        reps: (_c = set.reps) != null ? _c : null,
+        distance: (_d = set.distance) != null ? _d : null,
+        durationMinutes: (_e = set.duration_minutes) != null ? _e : null,
+        notes: (_f = set.notes) != null ? _f : null
+      };
+    }),
+    notes: exercise.notes
+  }));
+}
+function previewTransactions(transactions) {
+  return transactions.flatMap((transaction) => {
+    const amount = Number(transaction.amount);
+    if (!Number.isFinite(amount)) return [];
+    return [{
+      id: transaction.ordinal,
+      accountName: transaction.account,
+      amount,
+      engagement: transaction.engagement,
+      description: transaction.description,
+      currency: transaction.currency,
+      valuationAmount: transaction.valuation_amount
+    }];
+  });
+}
+function reportFromInspection(inspection) {
+  return {
+    date: inspection.date,
+    imported: inspection.imported,
+    ready: inspection.ready,
+    errors: [...inspection.errors],
+    warnings: [...inspection.warnings],
+    completeness: inspection.completeness,
+    metrics: metricsFromInspection(inspection),
+    events: inspectionEvents(inspection),
+    foods: inspection.preview.meals.map((food, index) => ({
+      id: index + 1,
+      mealType: food.meal_type,
+      food: food.food,
+      amountG: food.amount_g,
+      calories: food.calories,
+      proteinG: food.protein_g,
+      carbsG: food.carbs_g,
+      fatG: food.fat_g,
+      saltG: food.salt_g,
+      fiberG: food.fiber_g,
+      cholesterolMg: food.cholesterol_mg
+    })),
+    transactions: previewTransactions(inspection.preview.transactions),
+    exercises: previewExercises(inspection.preview.exercises)
+  };
+}
+function reportFromAssessment(date, assessment) {
+  var _a;
+  const exercises = [];
+  for (const event of assessment.sessionResult.events) {
+    for (const exercise of (_a = event.exerciseDetails) != null ? _a : []) {
+      exercises.push({ name: exercise.name, category: exercise.category, sets: exercise.sets, notes: null });
+    }
+  }
+  return {
+    date,
+    imported: assessment.imported,
+    ready: false,
+    errors: [],
+    warnings: assessment.sessionResult.issues.map((issue) => issue.message),
+    completeness: null,
+    metrics: assessment.metrics,
+    events: assessment.sessionResult.events,
+    foods: assessment.meals,
+    transactions: assessment.transactions,
+    exercises
+  };
+}
+function dailyAssessmentTitle(date, todayDate) {
+  if (date === todayDate) return "Daily assessment so far";
+  if (date > todayDate) return "Future date assessment";
+  return "Daily assessment";
+}
+function decimal(value) {
+  return value == null ? "\u2014" : value.toFixed(2);
+}
+function flag(value) {
+  return value == null ? "\u2014" : Number(value) === 1 ? "Yes" : "No";
+}
+function duration(totalMinutes) {
   const minutes = Math.max(0, Math.round(totalMinutes));
   const hours = Math.floor(minutes / 60);
   const remainder = minutes % 60;
   if (hours === 0) return `${remainder}m`;
   if (remainder === 0) return `${hours}h`;
   return `${hours}h ${remainder}m`;
+}
+function renderMessages(container, label, messages, className) {
+  if (messages.length === 0) return;
+  const callout = container.createDiv({ cls: `examined-human-daily-validation-callout ${className}` });
+  callout.createEl("strong", { text: label });
+  const list = callout.createEl("ul");
+  for (const message of messages) list.createEl("li", { text: message });
+}
+function renderBlockers(container, report, options) {
+  const section = container.createEl("section", { cls: "examined-human-daily-validation" });
+  const heading = section.createDiv({ cls: "examined-human-daily-section-heading" });
+  heading.createEl("h3", { text: "Assessment needs attention" });
+  heading.createSpan({ cls: "examined-human-daily-status-badge is-blocked", text: "Import blocked" });
+  section.createDiv({
+    cls: "examined-human-daily-validation-note",
+    text: "The report is hidden until its hard errors are resolved. No database write has occurred."
+  });
+  const references = unresolvedReferencesFromErrors(report.errors);
+  if (references.length > 0) {
+    const panel = section.createDiv({ cls: "examined-human-unresolved-references" });
+    panel.createEl("h4", { text: "Resolve references" });
+    for (const reference of references) {
+      const row = panel.createDiv({ cls: "examined-human-unresolved-item" });
+      const text = row.createDiv();
+      text.createEl("strong", { text: reference.rawName });
+      text.createDiv({ cls: "examined-human-unresolved-meta", text: `${reference.kind} \xB7 ${reference.contexts.join(", ")}` });
+      if (options.onResolveReference) {
+        row.createEl("button", { text: "Resolve\u2026" }).addEventListener("click", () => {
+          var _a;
+          return (_a = options.onResolveReference) == null ? void 0 : _a.call(options, reference);
+        });
+      }
+    }
+  }
+  renderMessages(section, "Validation errors", report.errors, "is-error");
+  const copy = section.createEl("button", { text: "Copy errors", cls: "examined-human-toolbar-button" });
+  copy.addEventListener("click", () => {
+    void navigator.clipboard.writeText(report.errors.join("\n\n")).then(() => new import_obsidian7.Notice("Copied validation errors."));
+  });
+}
+function renderMetrics(container, metrics) {
+  var _a, _b, _c, _d, _e;
+  const section = container.createEl("section", { cls: "examined-human-daily-panel" });
+  section.createEl("h3", { text: "Daily metrics" });
+  const grid = section.createDiv({ cls: "examined-human-daily-metrics-grid" });
+  const definitions = [
+    ["Mood", (metrics == null ? void 0 : metrics.mood) == null ? "\u2014" : String(metrics.mood)],
+    ["Energy", (metrics == null ? void 0 : metrics.energy) == null ? "\u2014" : String(metrics.energy)],
+    ["Stress", (metrics == null ? void 0 : metrics.stress) == null ? "\u2014" : String(metrics.stress)],
+    ["Weight", (metrics == null ? void 0 : metrics.weightKg) == null ? "\u2014" : `${metrics.weightKg} kg`],
+    ["Sleep", (metrics == null ? void 0 : metrics.sleepHours) == null ? "\u2014" : `${decimal(metrics.sleepHours)} h`],
+    ["Calories", (metrics == null ? void 0 : metrics.calories) == null ? "\u2014" : `${decimal(metrics.calories)} kcal`],
+    ["Protein", (metrics == null ? void 0 : metrics.proteinG) == null ? "\u2014" : `${decimal(metrics.proteinG)} g`],
+    ["Fasted", flag((_a = metrics == null ? void 0 : metrics.fasted) != null ? _a : null)],
+    ["Dieted", flag((_b = metrics == null ? void 0 : metrics.dieted) != null ? _b : null)],
+    ["Studied", flag((_c = metrics == null ? void 0 : metrics.studied) != null ? _c : null)],
+    ["Worked", flag((_d = metrics == null ? void 0 : metrics.worked) != null ? _d : null)],
+    ["Exercised", flag((_e = metrics == null ? void 0 : metrics.exercised) != null ? _e : null)]
+  ];
+  for (const [label, value] of definitions) {
+    const card = grid.createDiv({ cls: `examined-human-daily-metric-card ${value === "\u2014" ? "is-empty" : ""}` });
+    card.createDiv({ cls: "examined-human-weekly-eyebrow", text: label });
+    card.createDiv({ cls: "examined-human-daily-metric-value", text: value });
+  }
+}
+function renderTimeline(app, container, events, options) {
+  var _a;
+  const section = container.createEl("section", { cls: "examined-human-daily-panel" });
+  const heading = section.createDiv({ cls: "examined-human-daily-section-heading" });
+  heading.createEl("h3", { text: "Day timeline" });
+  heading.createSpan({ text: `${events.length} session${events.length === 1 ? "" : "s"}`, cls: "examined-human-daily-section-meta" });
+  if (events.length === 0) {
+    section.createDiv({ cls: "examined-human-daily-empty-inline", text: "No sessions are available for this date." });
+    return;
+  }
+  const scroll = section.createDiv({ cls: "examined-human-daily-timeline-scroll" });
+  const grid = scroll.createDiv({ cls: "examined-human-daily-timeline-grid" });
+  grid.style.height = `${1440 * DAY_PX_PER_MINUTE}px`;
+  grid.style.setProperty("--examined-human-px-per-minute", `${DAY_PX_PER_MINUTE}px`);
+  const gutter = grid.createDiv({ cls: "examined-human-daily-time-gutter" });
+  const column = grid.createDiv({ cls: "examined-human-day-column examined-human-daily-session-column" });
+  column.style.backgroundSize = `100% ${60 * DAY_PX_PER_MINUTE}px, 100% ${30 * DAY_PX_PER_MINUTE}px`;
+  for (let hour = 0; hour < 24; hour += 1) {
+    const label = gutter.createDiv({ cls: "examined-human-hour-label", text: `${String(hour).padStart(2, "0")}:00` });
+    label.style.top = `${hour * 60 * DAY_PX_PER_MINUTE}px`;
+  }
+  const visualPositions = layoutVisualStack(events, DAY_PX_PER_MINUTE);
+  for (const positioned of layoutOverlappingEvents(events)) {
+    const vertical = (_a = visualPositions.get(positioned.event.id)) != null ? _a : {
+      startMinutes: positioned.event.startMinutes,
+      durationMinutes: positioned.event.endMinutes - positioned.event.startMinutes,
+      stacked: false
+    };
+    column.appendChild(createSessionElement(
+      app,
+      positioned.event,
+      positioned.column,
+      positioned.columnCount,
+      vertical,
+      DAY_PX_PER_MINUTE,
+      options.sessionColors
+    ));
+  }
+  window.requestAnimationFrame(() => {
+    scroll.scrollTop = options.initialScrollHour * 60 * DAY_PX_PER_MINUTE;
+  });
+}
+function renderEngagementTime(container, events) {
+  var _a;
+  const totals = /* @__PURE__ */ new Map();
+  for (const event of events) totals.set(event.engagementName, ((_a = totals.get(event.engagementName)) != null ? _a : 0) + event.durationMinutes);
+  const rows3 = [...totals.entries()].sort((left, right) => right[1] - left[1]);
+  const section = container.createEl("section", { cls: "examined-human-daily-panel" });
+  section.createEl("h3", { text: "Time by engagement" });
+  if (rows3.length === 0) {
+    section.createDiv({ cls: "examined-human-daily-empty-inline", text: "No engagement time is available." });
+    return;
+  }
+  const maximum = Math.max(...rows3.map(([, minutes]) => minutes));
+  const chart = section.createDiv({ cls: "examined-human-daily-engagement-chart" });
+  for (const [engagement, minutes] of rows3) {
+    const row = chart.createDiv({ cls: "examined-human-daily-engagement-row" });
+    const labels = row.createDiv({ cls: "examined-human-daily-engagement-labels" });
+    labels.createSpan({ text: engagement });
+    labels.createEl("strong", { text: duration(minutes) });
+    const track = row.createDiv({ cls: "examined-human-daily-engagement-track" });
+    const bar = track.createDiv({ cls: "examined-human-daily-engagement-bar" });
+    bar.style.width = `${minutes / maximum * 100}%`;
+  }
+}
+function renderFoods(container, foods) {
+  var _a;
+  const section = container.createEl("section", { cls: "examined-human-daily-panel" });
+  const heading = section.createDiv({ cls: "examined-human-daily-section-heading" });
+  heading.createEl("h3", { text: "Foods consumed" });
+  heading.createSpan({ text: `${foods.length} row${foods.length === 1 ? "" : "s"}`, cls: "examined-human-daily-section-meta" });
+  if (foods.length === 0) {
+    section.createDiv({ cls: "examined-human-daily-empty-inline", text: "No foods recorded." });
+    return;
+  }
+  const wrap = section.createDiv({ cls: "examined-human-exercise-table-wrap" });
+  const table = wrap.createEl("table", { cls: "examined-human-exercise-table examined-human-daily-food-table" });
+  const header = table.createEl("thead").createEl("tr");
+  for (const label of ["Meal", "Food", "Amount g", "Calories", "Protein g", "Carbs g", "Fat g", "Salt g", "Fiber g", "Cholesterol mg"]) {
+    header.createEl("th", { text: label });
+  }
+  const body = table.createEl("tbody");
+  for (const food of foods) {
+    const row = body.createEl("tr");
+    row.createEl("td", { text: (_a = food.mealType) != null ? _a : "\u2014" });
+    row.createEl("td", { text: food.food });
+    for (const value of [food.amountG, food.calories, food.proteinG, food.carbsG, food.fatG, food.saltG, food.fiberG, food.cholesterolMg]) {
+      row.createEl("td", { text: decimal(value) });
+    }
+  }
+  const total = table.createEl("tfoot").createEl("tr");
+  total.createEl("th", { text: "Total", attr: { colspan: "2" } });
+  const numericKeys = [
+    "amountG",
+    "calories",
+    "proteinG",
+    "carbsG",
+    "fatG",
+    "saltG",
+    "fiberG",
+    "cholesterolMg"
+  ];
+  for (const key of numericKeys) {
+    const values = foods.map((food) => food[key]).filter((value) => typeof value === "number");
+    total.createEl("th", { text: values.length === 0 ? "\u2014" : decimal(values.reduce((sum, value) => sum + value, 0)) });
+  }
+}
+function renderFinance(container, transactions, valuationLabel) {
+  var _a;
+  const section = container.createEl("section", { cls: "examined-human-daily-panel" });
+  const heading = section.createDiv({ cls: "examined-human-daily-section-heading" });
+  heading.createEl("h3", { text: "Finance" });
+  heading.createSpan({ text: `${transactions.length} transaction${transactions.length === 1 ? "" : "s"}`, cls: "examined-human-daily-section-meta" });
+  if (transactions.length === 0) {
+    section.createDiv({ cls: "examined-human-daily-empty-inline", text: "No transactions recorded." });
+    return;
+  }
+  const wrap = section.createDiv({ cls: "examined-human-exercise-table-wrap" });
+  const table = wrap.createEl("table", { cls: "examined-human-exercise-table examined-human-daily-transaction-table" });
+  const header = table.createEl("thead").createEl("tr");
+  for (const label of ["Account", "Amount", "Unit", valuationLabel, "Engagement", "Description"]) header.createEl("th", { text: label });
+  const body = table.createEl("tbody");
+  for (const transaction of transactions) {
+    const row = body.createEl("tr");
+    row.createEl("td", { text: transaction.accountName });
+    row.createEl("td", { text: decimal(transaction.amount) });
+    row.createEl("td", { text: transaction.currency });
+    row.createEl("td", { text: transaction.valuationAmount == null ? "%$% error" : decimal(transaction.valuationAmount) });
+    row.createEl("td", { text: transaction.engagement || "\u2014" });
+    row.createEl("td", { text: transaction.description || "\u2014" });
+  }
+  const totals = /* @__PURE__ */ new Map();
+  for (const transaction of transactions) totals.set(transaction.currency, ((_a = totals.get(transaction.currency)) != null ? _a : 0) + transaction.amount);
+  const foot = table.createEl("tfoot");
+  for (const [currency2, amount] of [...totals.entries()].sort()) {
+    const row = foot.createEl("tr");
+    row.createEl("th", { text: `Total ${currency2}` });
+    row.createEl("th", { text: decimal(amount) });
+    row.createEl("th", { text: currency2 });
+    row.createEl("th", { text: "" });
+    row.createEl("th", { text: "", attr: { colspan: "2" } });
+  }
+  const net = foot.createEl("tr", { cls: "examined-human-daily-net-flow" });
+  net.createEl("th", { text: "Net flow", attr: { colspan: "3" } });
+  const missing = transactions.some((transaction) => transaction.amount !== 0 && transaction.valuationAmount == null);
+  const netAmount = transactions.reduce((sum, transaction) => {
+    var _a2;
+    return sum + ((_a2 = transaction.valuationAmount) != null ? _a2 : 0);
+  }, 0);
+  net.createEl("th", { text: missing ? "%$% error" : `${decimal(netAmount)} ${valuationLabel}`, attr: { colspan: "3" } });
+}
+function renderExercises(container, exercises) {
+  var _a, _b;
+  const section = container.createEl("section", { cls: "examined-human-daily-panel" });
+  const heading = section.createDiv({ cls: "examined-human-daily-section-heading" });
+  heading.createEl("h3", { text: "Exercise details" });
+  heading.createSpan({ text: String(exercises.length), cls: "examined-human-daily-section-meta" });
+  if (exercises.length === 0) {
+    section.createDiv({ cls: "examined-human-daily-empty-inline", text: "No exercise details recorded." });
+    return;
+  }
+  const grid = section.createDiv({ cls: "examined-human-daily-exercise-grid" });
+  for (const exercise of exercises) {
+    const card = grid.createDiv({ cls: "examined-human-daily-exercise-card" });
+    card.createEl("h4", { text: exercise.name });
+    if (exercise.category) card.createDiv({ cls: "examined-human-exercise-category", text: exercise.category });
+    if (exercise.sets.length > 0) {
+      const table = card.createEl("table", { cls: "examined-human-exercise-table" });
+      const head = table.createEl("thead").createEl("tr");
+      for (const label of ["Set", "Weight", "Reps", "Distance", "Duration", "Notes"]) head.createEl("th", { text: label });
+      const body = table.createEl("tbody");
+      for (const [index, set] of exercise.sets.entries()) {
+        const row = body.createEl("tr");
+        row.createEl("td", { text: String((_a = set.setNumber) != null ? _a : index + 1) });
+        row.createEl("td", { text: set.weight == null ? "\u2014" : formatExerciseNumber(set.weight) });
+        row.createEl("td", { text: set.reps == null ? "\u2014" : formatExerciseNumber(set.reps) });
+        row.createEl("td", { text: set.distance == null ? "\u2014" : formatExerciseNumber(set.distance) });
+        row.createEl("td", { text: set.durationMinutes == null ? "\u2014" : duration(set.durationMinutes) });
+        row.createEl("td", { text: (_b = set.notes) != null ? _b : "\u2014" });
+      }
+    }
+    if (exercise.notes) card.createDiv({ cls: "examined-human-session-notes", text: exercise.notes });
+  }
+}
+function renderNotes(container, report) {
+  var _a;
+  const notes = [
+    ...((_a = report.metrics) == null ? void 0 : _a.notes) ? [{ label: "Daily note", text: report.metrics.notes }] : [],
+    ...report.events.flatMap((event) => event.notes ? [{ label: event.engagementName, text: event.notes }] : []),
+    ...report.exercises.flatMap((exercise) => exercise.notes ? [{ label: exercise.name, text: exercise.notes }] : [])
+  ];
+  if (notes.length === 0) return;
+  const section = container.createEl("section", { cls: "examined-human-daily-panel" });
+  section.createEl("h3", { text: "Notes" });
+  const list = section.createEl("ul", { cls: "examined-human-daily-notes-list" });
+  for (const note of notes) {
+    const item = list.createEl("li");
+    item.createEl("strong", { text: `${note.label}: ` });
+    item.appendText(note.text);
+  }
+}
+function renderDailyAssessmentReport(app, container, report, options) {
+  if (report.errors.length > 0) {
+    renderBlockers(container, report, options);
+    return false;
+  }
+  renderMessages(container, "Assessment warnings", report.warnings, "is-warning");
+  renderMetrics(container, report.metrics);
+  renderTimeline(app, container, report.events, options);
+  renderEngagementTime(container, report.events);
+  renderFoods(container, report.foods);
+  renderFinance(container, report.transactions, options.valuationLabel);
+  renderExercises(container, report.exercises);
+  renderNotes(container, report);
+  return true;
+}
+
+// src/DailyAssessmentView.ts
+var EXAMINED_HUMAN_DAILY_ASSESSMENT_VIEW_TYPE = "examined-human-daily-assessment";
+var FINGERPRINT_INTERVAL_MS = 1e4;
+function formatDecimal(value) {
+  return value.toFixed(2);
 }
 var DailyAssessmentView = class extends import_obsidian8.ItemView {
   constructor(leaf, plugin) {
@@ -9374,7 +10025,15 @@ var DailyAssessmentView = class extends import_obsidian8.ItemView {
         this.selectedDate = (_d = (_c = (_a = items.find((item) => item.temporalState === "current")) == null ? void 0 : _a.date) != null ? _c : (_b = items[0]) == null ? void 0 : _b.date) != null ? _d : null;
       }
       this.selectedItem = (_e = items.find((item) => item.date === this.selectedDate)) != null ? _e : null;
-      this.assessment = this.selectedDate ? await this.plugin.database.dailyAssessment(this.plugin.settings.databasePath, this.selectedDate, today) : null;
+      this.assessment = this.selectedDate ? await this.plugin.database.dailyAssessment(
+        this.plugin.settings.databasePath,
+        this.selectedDate,
+        today,
+        {
+          label: this.plugin.settings.valuationUnitLabel,
+          referenceUnit: this.plugin.settings.valuationReferenceUnit
+        }
+      ) : null;
       this.inspection = null;
       this.mealInspection = null;
       if (this.selectedItem && this.selectedItem.status !== "imported") {
@@ -9399,7 +10058,9 @@ var DailyAssessmentView = class extends import_obsidian8.ItemView {
               fileName: this.selectedItem.fileName,
               filePath: this.selectedItem.filePath,
               sourceText,
-              nutritionThresholds: thresholds
+              nutritionThresholds: thresholds,
+              valuationLabel: this.plugin.settings.valuationUnitLabel,
+              valuationReferenceUnit: this.plugin.settings.valuationReferenceUnit
             });
           } catch (error) {
             this.loggerOutput = error instanceof Error ? error.message : String(error);
@@ -9415,6 +10076,7 @@ var DailyAssessmentView = class extends import_obsidian8.ItemView {
     }
   }
   renderDashboard() {
+    var _a;
     this.contentEl.empty();
     this.contentEl.addClass("examined-human-daily-view");
     this.renderHeader();
@@ -9425,13 +10087,15 @@ var DailyAssessmentView = class extends import_obsidian8.ItemView {
     const body = this.contentEl.createDiv({ cls: "examined-human-daily-layout" });
     this.renderSidebar(body);
     const main = body.createEl("main", { cls: "examined-human-daily-main" });
-    const events = this.displayEvents();
     this.renderValidation(main);
-    this.renderDayTimeline(main, events);
-    this.renderEngagementTime(main, events);
-    this.renderMetrics(main);
-    this.renderTransactions(main);
-    this.renderExercises(main);
+    if ((_a = this.inspection) == null ? void 0 : _a.errors.length) return;
+    const report = this.inspection && this.selectedItem.status !== "imported" ? reportFromInspection(this.inspection) : reportFromAssessment(this.selectedItem.date, this.assessment);
+    if (this.inspection) report.warnings = [];
+    renderDailyAssessmentReport(this.app, main, report, {
+      sessionColors: this.plugin.settings.sessionColors,
+      initialScrollHour: this.plugin.settings.initialScrollHour,
+      valuationLabel: this.plugin.settings.valuationUnitLabel
+    });
   }
   renderHeader() {
     const header = this.contentEl.createDiv({ cls: "examined-human-toolbar examined-human-daily-toolbar" });
@@ -9450,10 +10114,15 @@ var DailyAssessmentView = class extends import_obsidian8.ItemView {
       this.actionButton.setText("Already imported");
       this.actionButton.disabled = true;
     } else {
-      this.actionButton.setText(this.selectedItem.status === "current-future" ? "Sync future" : "Import");
-      this.actionButton.addEventListener("click", () => {
-        void this.handleImport();
-      });
+      if (this.selectedItem.temporalState === "future") {
+        this.actionButton.setText("Future assessment");
+        this.actionButton.disabled = true;
+      } else {
+        this.actionButton.setText("Import");
+        this.actionButton.addEventListener("click", () => {
+          void this.handleImport();
+        });
+      }
     }
     const discoverButton = actions.createEl("button", { text: "Discover forms", cls: "examined-human-toolbar-button" });
     discoverButton.addEventListener("click", () => {
@@ -9574,7 +10243,7 @@ var DailyAssessmentView = class extends import_obsidian8.ItemView {
     }
   }
   renderNativeMeals(container, item) {
-    var _a, _b, _c;
+    var _a, _b;
     const block = container.createDiv({ cls: "examined-human-native-meals" });
     const heading = block.createDiv({ cls: "examined-human-daily-section-heading" });
     heading.createEl("h4", { text: "Native Meals" });
@@ -9607,8 +10276,8 @@ var DailyAssessmentView = class extends import_obsidian8.ItemView {
       ["Foods", inspection.foodRowCount],
       ["Direct leisure", `${inspection.directLeisureMeals}/3`],
       ["Final leisure", `${inspection.leisureMeals}/3`],
-      ["Calories", (_c = inspection.nutrition.dailyCaloriesKcal) != null ? _c : "\u2014"],
-      ["Protein", inspection.nutrition.proteinG == null ? "\u2014" : `${inspection.nutrition.proteinG} g`],
+      ["Calories", inspection.nutrition.dailyCaloriesKcal == null ? "\u2014" : formatDecimal(inspection.nutrition.dailyCaloriesKcal)],
+      ["Protein", inspection.nutrition.proteinG == null ? "\u2014" : `${formatDecimal(inspection.nutrition.proteinG)} g`],
       ["Dieted", inspection.nutrition.evaluatedDieted == null ? "\u2014" : inspection.nutrition.evaluatedDieted === 1 ? "Yes" : "No"]
     ];
     for (const [label, value] of values) {
@@ -9690,269 +10359,6 @@ var DailyAssessmentView = class extends import_obsidian8.ItemView {
     const textarea = block.createEl("textarea", { cls: "examined-human-daily-output", attr: { readonly: "true", rows: "7" } });
     textarea.value = output;
   }
-  renderDayTimeline(container, events) {
-    var _a;
-    const section = container.createEl("section", { cls: "examined-human-daily-panel" });
-    const heading = section.createDiv({ cls: "examined-human-daily-section-heading" });
-    heading.createEl("h3", { text: "Day timeline" });
-    heading.createSpan({ text: `${events.length} session${events.length === 1 ? "" : "s"}`, cls: "examined-human-daily-section-meta" });
-    if (events.length === 0) {
-      section.createDiv({ cls: "examined-human-daily-empty-inline", text: "No sessions are available for this date." });
-      return;
-    }
-    const scroll = section.createDiv({ cls: "examined-human-daily-timeline-scroll" });
-    const grid = scroll.createDiv({ cls: "examined-human-daily-timeline-grid" });
-    grid.style.height = `${1440 * DAY_PX_PER_MINUTE}px`;
-    grid.style.setProperty("--examined-human-px-per-minute", `${DAY_PX_PER_MINUTE}px`);
-    const gutter = grid.createDiv({ cls: "examined-human-daily-time-gutter" });
-    const column = grid.createDiv({ cls: "examined-human-day-column examined-human-daily-session-column" });
-    column.style.backgroundSize = `100% ${60 * DAY_PX_PER_MINUTE}px, 100% ${30 * DAY_PX_PER_MINUTE}px`;
-    for (let hour = 0; hour < 24; hour++) {
-      const label = gutter.createDiv({ cls: "examined-human-hour-label", text: `${String(hour).padStart(2, "0")}:00` });
-      label.style.top = `${hour * 60 * DAY_PX_PER_MINUTE}px`;
-    }
-    const visualPositions = layoutVisualStack(events, DAY_PX_PER_MINUTE);
-    for (const positioned of layoutOverlappingEvents(events)) {
-      const vertical = (_a = visualPositions.get(positioned.event.id)) != null ? _a : {
-        startMinutes: positioned.event.startMinutes,
-        durationMinutes: positioned.event.endMinutes - positioned.event.startMinutes,
-        stacked: false
-      };
-      column.appendChild(createSessionElement(
-        this.app,
-        positioned.event,
-        positioned.column,
-        positioned.columnCount,
-        vertical,
-        DAY_PX_PER_MINUTE,
-        this.plugin.settings.sessionColors
-      ));
-    }
-    window.requestAnimationFrame(() => {
-      scroll.scrollTop = this.plugin.settings.initialScrollHour * 60 * DAY_PX_PER_MINUTE;
-    });
-  }
-  renderEngagementTime(container, events) {
-    var _a;
-    const totals = /* @__PURE__ */ new Map();
-    for (const event of events) totals.set(event.engagementName, ((_a = totals.get(event.engagementName)) != null ? _a : 0) + event.durationMinutes);
-    const rows3 = [...totals.entries()].sort((left, right) => right[1] - left[1]);
-    const section = container.createEl("section", { cls: "examined-human-daily-panel" });
-    section.createEl("h3", { text: "Time by engagement" });
-    section.createDiv({ cls: "examined-human-daily-section-subtitle", text: "Logged or inspected session minutes for the selected date" });
-    if (rows3.length === 0) {
-      section.createDiv({ cls: "examined-human-daily-empty-inline", text: "No engagement time is available." });
-      return;
-    }
-    const maximum = Math.max(...rows3.map(([, minutes]) => minutes));
-    const chart = section.createDiv({ cls: "examined-human-daily-engagement-chart" });
-    for (const [engagement, minutes] of rows3) {
-      const row = chart.createDiv({ cls: "examined-human-daily-engagement-row" });
-      const labels = row.createDiv({ cls: "examined-human-daily-engagement-labels" });
-      labels.createSpan({ text: engagement });
-      labels.createEl("strong", { text: formatDuration(minutes) });
-      const track = row.createDiv({ cls: "examined-human-daily-engagement-track" });
-      const bar = track.createDiv({ cls: "examined-human-daily-engagement-bar" });
-      bar.style.width = `${minutes / maximum * 100}%`;
-    }
-  }
-  renderMetrics(container) {
-    var _a;
-    const metrics = this.displayMetrics();
-    const section = container.createEl("section", { cls: "examined-human-daily-panel" });
-    section.createEl("h3", { text: "Daily metrics" });
-    const grid = section.createDiv({ cls: "examined-human-daily-metrics-grid" });
-    const definitions = [
-      ["Mood", "mood", ""],
-      ["Energy", "energy", ""],
-      ["Stress", "stress", ""],
-      ["Weight", "weightKg", " kg"],
-      ["Sleep", "sleepHours", " h"],
-      ["Calories", "calories", " kcal"],
-      ["Protein", "proteinG", " g"],
-      ["Fasted", "fasted", ""],
-      ["Dieted", "dieted", ""]
-    ];
-    for (const [label, key, suffix] of definitions) {
-      const value = (_a = metrics == null ? void 0 : metrics[key]) != null ? _a : null;
-      const card = grid.createDiv({ cls: `examined-human-daily-metric-card ${value == null ? "is-empty" : ""}` });
-      card.createDiv({ cls: "examined-human-weekly-eyebrow", text: label });
-      const display = (key === "fasted" || key === "dieted") && value != null ? Number(value) === 1 ? "Yes" : "No" : value == null ? "\u2014" : `${value}${suffix}`;
-      card.createDiv({ cls: "examined-human-daily-metric-value", text: display });
-    }
-    const meals = this.displayMeals();
-    if (meals.length > 0) {
-      section.createEl("h4", { text: "Foods" });
-      const list = section.createEl("ul", { cls: "examined-human-daily-food-list" });
-      for (const meal of meals) {
-        const details = [
-          meal.calories == null ? null : `${meal.calories} kcal`,
-          meal.proteinG == null ? null : `${meal.proteinG} g protein`
-        ].filter(Boolean).join(" \xB7 ");
-        list.createEl("li", { text: details ? `${meal.food} \u2014 ${details}` : meal.food });
-      }
-    }
-  }
-  renderTransactions(container) {
-    const transactions = this.displayTransactions();
-    const section = container.createEl("section", { cls: "examined-human-daily-panel" });
-    const heading = section.createDiv({ cls: "examined-human-daily-section-heading" });
-    heading.createEl("h3", { text: "Transactions" });
-    heading.createSpan({ text: String(transactions.length), cls: "examined-human-daily-section-meta" });
-    if (transactions.length === 0) {
-      section.createDiv({ cls: "examined-human-daily-empty-inline", text: "No transactions recorded." });
-      return;
-    }
-    const wrap = section.createDiv({ cls: "examined-human-exercise-table-wrap" });
-    const table = wrap.createEl("table", { cls: "examined-human-exercise-table examined-human-daily-transaction-table" });
-    const header = table.createEl("thead").createEl("tr");
-    for (const label of ["Account", "Amount", "Engagement", "Description"]) header.createEl("th", { text: label });
-    const body = table.createEl("tbody");
-    for (const transaction of transactions) {
-      const row = body.createEl("tr");
-      row.createEl("td", { text: transaction.accountName });
-      row.createEl("td", { text: String(transaction.amount) });
-      row.createEl("td", { text: transaction.engagement || "\u2014" });
-      row.createEl("td", { text: transaction.description || "\u2014" });
-    }
-  }
-  renderExercises(container) {
-    var _a;
-    const exercises = this.displayExercises();
-    const section = container.createEl("section", { cls: "examined-human-daily-panel" });
-    const heading = section.createDiv({ cls: "examined-human-daily-section-heading" });
-    heading.createEl("h3", { text: "Exercise details" });
-    heading.createSpan({ text: String(exercises.length), cls: "examined-human-daily-section-meta" });
-    if (exercises.length === 0) {
-      section.createDiv({ cls: "examined-human-daily-empty-inline", text: "No exercise details recorded." });
-      return;
-    }
-    const grid = section.createDiv({ cls: "examined-human-daily-exercise-grid" });
-    for (const exercise of exercises) {
-      const card = grid.createDiv({ cls: "examined-human-daily-exercise-card" });
-      card.createEl("h4", { text: exercise.name });
-      if (exercise.category) card.createDiv({ cls: "examined-human-exercise-category", text: exercise.category });
-      if (exercise.sets.length > 0) {
-        const table = card.createEl("table", { cls: "examined-human-exercise-table" });
-        const head = table.createEl("thead").createEl("tr");
-        for (const label of ["Set", "Weight", "Reps", "Distance", "Duration"]) head.createEl("th", { text: label });
-        const body = table.createEl("tbody");
-        for (const [index, set] of exercise.sets.entries()) {
-          const row = body.createEl("tr");
-          row.createEl("td", { text: String((_a = set.setNumber) != null ? _a : index + 1) });
-          row.createEl("td", { text: set.weight == null ? "\u2014" : formatExerciseNumber(set.weight) });
-          row.createEl("td", { text: set.reps == null ? "\u2014" : formatExerciseNumber(set.reps) });
-          row.createEl("td", { text: set.distance == null ? "\u2014" : formatExerciseNumber(set.distance) });
-          row.createEl("td", { text: set.durationMinutes == null ? "\u2014" : formatDuration(set.durationMinutes) });
-        }
-      }
-      if (exercise.notes) card.createDiv({ cls: "examined-human-session-notes", text: exercise.notes });
-    }
-  }
-  displayEvents() {
-    var _a, _b, _c, _d;
-    if (((_a = this.selectedItem) == null ? void 0 : _a.status) !== "imported" && ((_b = this.inspection) == null ? void 0 : _b.preview)) {
-      return this.inspection.preview.sessions.flatMap((session) => {
-        var _a2, _b2, _c2, _d2, _e, _f, _g;
-        const start = parseDatabaseTime((_a2 = session.start_time) != null ? _a2 : "");
-        const end = parseDatabaseTime((_b2 = session.end_time) != null ? _b2 : "");
-        if (start == null || end == null || end <= start) return [];
-        return [{
-          id: `inspection:${session.ordinal}`,
-          date: (_f = (_e = (_c2 = this.selectedItem) == null ? void 0 : _c2.date) != null ? _e : (_d2 = this.inspection) == null ? void 0 : _d2.date) != null ? _f : "",
-          sessionType: session.session_type,
-          engagementName: session.engagement,
-          engagementType: "",
-          title: titleForEngagement(session.engagement),
-          kind: "timed",
-          startMinutes: start,
-          endMinutes: end,
-          durationMinutes: (_g = session.duration_minutes) != null ? _g : end - start,
-          notes: session.notes,
-          sourceKind: "planned"
-        }];
-      });
-    }
-    return (_d = (_c = this.assessment) == null ? void 0 : _c.sessionResult.events) != null ? _d : [];
-  }
-  displayMetrics() {
-    var _a, _b, _c, _d, _e, _f, _g;
-    if (((_a = this.selectedItem) == null ? void 0 : _a.status) === "imported") return (_c = (_b = this.assessment) == null ? void 0 : _b.metrics) != null ? _c : null;
-    const raw = (_e = (_d = this.inspection) == null ? void 0 : _d.preview) == null ? void 0 : _e.daily_metrics;
-    if (!raw) return (_g = (_f = this.assessment) == null ? void 0 : _f.metrics) != null ? _g : null;
-    const number2 = (key) => {
-      const value = raw[key];
-      if (value == null || value === "") return null;
-      const parsed = Number(value);
-      return Number.isFinite(parsed) ? parsed : null;
-    };
-    return {
-      mood: number2("mood"),
-      energy: number2("energy"),
-      stress: number2("stress"),
-      weightKg: number2("weight_kg"),
-      sleepHours: number2("sleep_hours"),
-      calories: number2("calories"),
-      proteinG: number2("protein_g"),
-      fasted: number2("fasted"),
-      dieted: number2("dieted")
-    };
-  }
-  displayMeals() {
-    var _a, _b, _c, _d, _e, _f;
-    if (((_a = this.selectedItem) == null ? void 0 : _a.status) === "imported") return (_c = (_b = this.assessment) == null ? void 0 : _b.meals) != null ? _c : [];
-    return ((_f = (_e = (_d = this.inspection) == null ? void 0 : _d.preview) == null ? void 0 : _e.meals) != null ? _f : []).map((meal, index) => ({
-      id: index + 1,
-      food: meal.food,
-      calories: meal.calories,
-      proteinG: meal.protein_g
-    }));
-  }
-  displayTransactions() {
-    var _a, _b, _c, _d, _e, _f;
-    if (((_a = this.selectedItem) == null ? void 0 : _a.status) === "imported") return (_c = (_b = this.assessment) == null ? void 0 : _b.transactions) != null ? _c : [];
-    return ((_f = (_e = (_d = this.inspection) == null ? void 0 : _d.preview) == null ? void 0 : _e.transactions) != null ? _f : []).map((transaction) => ({
-      id: transaction.ordinal,
-      accountName: transaction.account,
-      amount: transaction.amount,
-      engagement: transaction.engagement,
-      description: transaction.description
-    }));
-  }
-  displayExercises() {
-    var _a, _b, _c, _d, _e, _f, _g;
-    if (((_a = this.selectedItem) == null ? void 0 : _a.status) !== "imported") {
-      return ((_d = (_c = (_b = this.inspection) == null ? void 0 : _b.preview) == null ? void 0 : _c.exercises) != null ? _d : []).map((exercise) => ({
-        name: exercise.exercise,
-        category: null,
-        sets: exercise.sets.map((set, index) => {
-          var _a2, _b2, _c2, _d2, _e2, _f2;
-          return {
-            setNumber: (_a2 = set.set_number) != null ? _a2 : index + 1,
-            weight: (_b2 = set.weight) != null ? _b2 : null,
-            reps: (_c2 = set.reps) != null ? _c2 : null,
-            distance: (_d2 = set.distance) != null ? _d2 : null,
-            durationMinutes: (_e2 = set.duration_minutes) != null ? _e2 : null,
-            notes: (_f2 = set.notes) != null ? _f2 : null
-          };
-        }),
-        notes: exercise.notes
-      }));
-    }
-    const exercises = [];
-    for (const event of (_f = (_e = this.assessment) == null ? void 0 : _e.sessionResult.events) != null ? _f : []) {
-      for (const exercise of (_g = event.exerciseDetails) != null ? _g : []) exercises.push(this.displayExerciseFromSession(exercise));
-    }
-    return exercises;
-  }
-  displayExerciseFromSession(exercise) {
-    return {
-      name: exercise.name,
-      category: exercise.category,
-      sets: exercise.sets,
-      notes: null
-    };
-  }
   async handleNativeMealImport() {
     var _a, _b, _c;
     const item = this.selectedItem;
@@ -10018,6 +10424,10 @@ var DailyAssessmentView = class extends import_obsidian8.ItemView {
     var _a, _b, _c;
     const item = this.selectedItem;
     if (!item || item.status === "imported") return;
+    if (item.temporalState === "future") {
+      new import_obsidian8.Notice("Future Daily Forms cannot be imported. Wait until that date.", 1e4);
+      return;
+    }
     (_a = this.actionButton) == null ? void 0 : _a.setText("Validating\u2026");
     const activeButton = this.actionButton;
     if (activeButton) activeButton.disabled = true;
@@ -10036,61 +10446,30 @@ var DailyAssessmentView = class extends import_obsidian8.ItemView {
           mealCalorieLimitKcal: this.plugin.settings.mealCalorieLimitKcal,
           dailyCalorieLimitKcal: this.plugin.settings.dailyCalorieLimitKcal,
           minimumProteinG: this.plugin.settings.minimumProteinG
-        }
+        },
+        valuationLabel: this.plugin.settings.valuationUnitLabel,
+        valuationReferenceUnit: this.plugin.settings.valuationReferenceUnit
       };
       const inspection = await this.plugin.logger.inspectDaily(request);
       this.inspection = inspection;
-      if (item.status === "needs-import" && !inspection.ready) {
+      if (!inspection.ready) {
         this.loggerOutput = inspection.errors.join("\n\n");
         this.renderDashboard();
-        new import_obsidian8.Notice("Dry run failed. Review and copy the validation errors.", 1e4);
+        new import_obsidian8.Notice("Failed. Look at the errors in the assessment.", 1e4);
         return;
       }
-      let dryRunOutput = "Native validation completed successfully.";
-      let planningRequest = null;
-      if (item.status === "current-future") {
-        planningRequest = await this.planningSyncRequest();
-        const preview = await this.plugin.logger.previewPlanning(planningRequest);
-        dryRunOutput = [
-          `${preview.noteCount} current/future note${preview.noteCount === 1 ? "" : "s"} inspected.`,
-          `${preview.sessionCount} planned session${preview.sessionCount === 1 ? "" : "s"} projected.`,
-          `${preview.warningCount} warning${preview.warningCount === 1 ? "" : "s"}.`,
-          `${preview.deletedSourceCount} missing source${preview.deletedSourceCount === 1 ? "" : "s"} would be marked deleted.`
-        ].join("\n");
-      }
-      const confirmed = await confirmDailyImport(this.app, {
-        title: item.status === "current-future" ? `Sync current and future plans from ${item.date}` : `Import ${item.date}`,
-        explanation: item.status === "current-future" ? "This replaces ephemeral planning projections for all current and future EH Daily Notes. It does not create canonical sessions or a database backup." : "The native validation passed. This writes the canonical historical import for this date.",
-        confirmLabel: item.status === "current-future" ? "Sync future plans" : "Import date",
-        inspection,
-        dryRunOutput
-      });
-      if (!confirmed) return;
-      (_b = this.actionButton) == null ? void 0 : _b.setText(item.status === "current-future" ? "Syncing\u2026" : "Importing\u2026");
-      if (item.status === "current-future") {
-        const result = await this.plugin.logger.syncPlanning(planningRequest);
-        this.loggerOutput = [
-          `Projected ${result.sessionCount} session${result.sessionCount === 1 ? "" : "s"} from ${result.noteCount} note${result.noteCount === 1 ? "" : "s"}.`,
-          `Warnings: ${result.warningCount}. Missing sources marked deleted: ${result.deletedSourceCount}.`,
-          ...backupMutationOutput(result)
-        ].join("\n");
-      } else {
-        const result = await this.plugin.logger.importHistoricalDaily(request);
-        await this.plugin.markImportedEhFormFileIfComplete(noteFile);
-        this.loggerOutput = [
-          `Imported ${result.sessionCount} sessions, ${result.transactionCount} transactions, ${result.exerciseCount} exercises, and ${result.foodRowCount} food rows.`,
-          `Milestones: ${result.milestoneCount}. Admin events: ${result.adminEventCount}.`,
-          ...backupMutationOutput(result)
-        ].join("\n");
-      }
+      (_b = this.actionButton) == null ? void 0 : _b.setText("Importing\u2026");
+      const result = await this.plugin.logger.importHistoricalDaily(request);
+      await this.plugin.markImportedEhFormFileIfComplete(noteFile);
+      this.loggerOutput = [
+        `Imported ${result.sessionCount} sessions, ${result.transactionCount} transactions, ${result.exerciseCount} exercises, and ${result.foodRowCount} food rows.`,
+        `Milestones: ${result.milestoneCount}. Admin events: ${result.adminEventCount}.`,
+        ...backupMutationOutput(result)
+      ].join("\n");
       await this.refresh();
-      if (item.status === "current-future") {
-        new import_obsidian8.Notice("Current and future planning projections were refreshed.", 8e3);
-      } else {
-        const imported = ((_c = this.selectedItem) == null ? void 0 : _c.status) === "imported";
-        if (imported) new import_obsidian8.Notice(`${item.date} imported successfully.`, 8e3);
-        else new import_obsidian8.Notice("Import did not complete. Review the logger output.", 1e4);
-      }
+      const imported = ((_c = this.selectedItem) == null ? void 0 : _c.status) === "imported";
+      if (imported) new import_obsidian8.Notice("Imported successfully.", 8e3);
+      else new import_obsidian8.Notice("Failed. Look at the errors in the assessment.", 1e4);
     } catch (error) {
       this.loggerOutput = error instanceof Error ? error.message : String(error);
       this.renderDashboard();
@@ -10098,24 +10477,9 @@ var DailyAssessmentView = class extends import_obsidian8.ItemView {
     } finally {
       if (activeButton == null ? void 0 : activeButton.isConnected) {
         activeButton.disabled = false;
-        activeButton.setText(item.status === "current-future" ? "Sync future" : "Import");
+        activeButton.setText("Import");
       }
     }
-  }
-  async planningSyncRequest() {
-    const cutoffDate = (0, import_obsidian8.moment)().format("YYYY-MM-DD");
-    const candidates = this.items.filter((candidate) => candidate.status === "current-future" && candidate.date >= cutoffDate);
-    const notes = await Promise.all(candidates.map(async (candidate) => {
-      const file = this.app.vault.getAbstractFileByPath(candidate.filePath);
-      if (!(file instanceof import_obsidian8.TFile)) throw new Error(`Daily Note not found: ${candidate.filePath}`);
-      return {
-        noteDate: candidate.date,
-        fileName: candidate.fileName,
-        filePath: candidate.filePath,
-        sourceText: await this.app.vault.read(file)
-      };
-    }));
-    return { databasePath: this.plugin.settings.databasePath, cutoffDate, notes };
   }
   statusLabel(item) {
     if (item.status === "imported") return "Imported";
@@ -10902,7 +11266,7 @@ function humanizeCode(value) {
   if (!value || value === "unspecified") return "Unspecified";
   return value.split("_").join(" ").replace(/\b[a-z]/g, (letter) => letter.toUpperCase());
 }
-function formatDuration2(totalMinutes) {
+function formatDuration(totalMinutes) {
   const minutes = Math.max(0, Math.round(totalMinutes));
   return `${String(Math.floor(minutes / 60)).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`;
 }
@@ -11069,7 +11433,7 @@ var EngagementDashboardView = class extends import_obsidian12.ItemView {
     const totalMinutes = (_b = result == null ? void 0 : result.engagements.reduce((sum, engagement) => sum + engagement.totalMinutes, 0)) != null ? _b : 0;
     identity.createDiv({
       cls: "examined-human-toolbar-status",
-      text: result ? `${result.engagements.length} engagements \xB7 ${activeInRange} with activity \xB7 ${formatDuration2(totalMinutes)} logged` : "Time, milestones, and linked money by engagement"
+      text: result ? `${result.engagements.length} engagements \xB7 ${activeInRange} with activity \xB7 ${formatDuration(totalMinutes)} logged` : "Time, milestones, and linked money by engagement"
     });
     const controls = header.createDiv({ cls: "examined-human-engagement-toolbar-controls" });
     const rangeSelect = controls.createEl("select", {
@@ -11172,12 +11536,12 @@ var EngagementDashboardView = class extends import_obsidian12.ItemView {
       const button = container.createEl("button", {
         cls: `examined-human-engagement-list-item${engagement.id === this.selectedEngagementId ? " is-selected" : ""}`,
         attr: {
-          "aria-label": `${engagement.name}, ${humanizeCode(engagement.status)}, ${humanizeCode(engagement.type)}, ${formatDuration2(engagement.totalMinutes)} logged`
+          "aria-label": `${engagement.name}, ${humanizeCode(engagement.status)}, ${humanizeCode(engagement.type)}, ${formatDuration(engagement.totalMinutes)} logged`
         }
       });
       const heading = button.createDiv({ cls: "examined-human-engagement-list-heading" });
       heading.createSpan({ text: engagement.name });
-      heading.createEl("strong", { text: formatDuration2(engagement.totalMinutes) });
+      heading.createEl("strong", { text: formatDuration(engagement.totalMinutes) });
       button.createDiv({
         cls: "examined-human-engagement-list-meta",
         text: `${humanizeCode(engagement.status)} \xB7 ${humanizeCode(engagement.type)} \xB7 ${engagement.sessionCount} sessions`
@@ -11236,7 +11600,7 @@ var EngagementDashboardView = class extends import_obsidian12.ItemView {
       attr: { "aria-label": "Engagement summary" }
     });
     const cards = [
-      ["Logged time", formatDuration2(engagement.totalMinutes), "Selected period"],
+      ["Logged time", formatDuration(engagement.totalMinutes), "Selected period"],
       ["Sessions", String(engagement.sessionCount), "Selected period"],
       ["Milestones", String(engagement.milestoneCount), "Lifetime"],
       ["Last activity", formatDate(engagement.lastSessionDate), "Selected period"]
@@ -11279,9 +11643,9 @@ var EngagementDashboardView = class extends import_obsidian12.ItemView {
       for (const bucket of activity.buckets) {
         const column = chart.createDiv({
           cls: "examined-human-engagement-activity-column",
-          attr: { "aria-label": `${bucket.ariaLabel}: ${formatDuration2(bucket.minutes)}` }
+          attr: { "aria-label": `${bucket.ariaLabel}: ${formatDuration(bucket.minutes)}` }
         });
-        column.createDiv({ cls: "examined-human-engagement-activity-value", text: bucket.minutes > 0 ? formatDuration2(bucket.minutes) : "\u2014" });
+        column.createDiv({ cls: "examined-human-engagement-activity-value", text: bucket.minutes > 0 ? formatDuration(bucket.minutes) : "\u2014" });
         const stage = column.createDiv({ cls: "examined-human-engagement-activity-stage" });
         const bar = stage.createDiv({ cls: "examined-human-engagement-activity-bar" });
         bar.style.setProperty("--examined-human-activity-height", `${Math.max(bucket.minutes > 0 ? 4 : 0, bucket.minutes / maxMinutes * 100)}%`);
@@ -11300,7 +11664,7 @@ var EngagementDashboardView = class extends import_obsidian12.ItemView {
         const row = chart.createDiv({ cls: "examined-human-engagement-type-row" });
         const labels = row.createDiv({ cls: "examined-human-engagement-type-labels" });
         labels.createSpan({ text: humanizeCode(item.sessionType) });
-        labels.createEl("strong", { text: `${formatDuration2(item.totalMinutes)} \xB7 ${item.sessionCount}` });
+        labels.createEl("strong", { text: `${formatDuration(item.totalMinutes)} \xB7 ${item.sessionCount}` });
         const track = row.createDiv({ cls: "examined-human-engagement-type-track" });
         const bar = track.createDiv({ cls: "examined-human-engagement-type-bar" });
         bar.style.setProperty("--examined-human-type-width", `${Math.max(3, item.totalMinutes / maxMinutes * 100)}%`);
@@ -11412,7 +11776,7 @@ var EngagementDashboardView = class extends import_obsidian12.ItemView {
       row.createEl("td", { text: formatDate(session.date), attr: { "data-label": "Date" } });
       row.createEl("td", { text: formatTimeRange(session.startTime, session.endTime), attr: { "data-label": "Time" } });
       row.createEl("td", { text: humanizeCode(session.sessionType), attr: { "data-label": "Type" } });
-      row.createEl("td", { text: formatDuration2(session.durationMinutes), attr: { "data-label": "Duration" } });
+      row.createEl("td", { text: formatDuration(session.durationMinutes), attr: { "data-label": "Duration" } });
       row.createEl("td", { text: (_a = session.notes) != null ? _a : "\u2014", attr: { "data-label": "Notes" } });
     }
   }
@@ -13081,7 +13445,7 @@ async function buildWeeklyNoteList(_app, index, todayDate, discoveredForms = [])
 var EXAMINED_HUMAN_WEEKLY_ASSESSMENT_VIEW_TYPE = "examined-human-weekly-assessment";
 var FINGERPRINT_INTERVAL_MS5 = 1e4;
 var WEEKLY_NOTE_PATTERN = /^\d{4}-W\d{1,2}\.md$/i;
-function formatDuration3(totalMinutes) {
+function formatDuration2(totalMinutes) {
   const minutes = Math.max(0, Math.round(totalMinutes));
   const hours = Math.floor(minutes / 60);
   const remainder = minutes % 60;
@@ -13104,7 +13468,7 @@ function weeklyImportOutput(result) {
     `Week start: ${result.weekStart}`,
     `Commitments: ${result.commitmentCount}`,
     `Planned sessions: ${result.sessionCount}`,
-    `Planned time: ${formatDuration3(result.plannedMinutes)}`
+    `Planned time: ${formatDuration2(result.plannedMinutes)}`
   ].join("\n");
 }
 function weeklyWriteOutput(result) {
@@ -13436,9 +13800,9 @@ var WeeklyAssessmentView = class extends import_obsidian19.ItemView {
     });
     const cards = [
       ["Commitments", String(commitments.length)],
-      ["Committed", formatDuration3(target)],
-      ["Actual logged", formatDuration3(actual)],
-      [actual > target ? "Above commitment" : "Remaining", formatDuration3(Math.abs(actual > target ? actual - target : remaining))]
+      ["Committed", formatDuration2(target)],
+      ["Actual logged", formatDuration2(actual)],
+      [actual > target ? "Above commitment" : "Remaining", formatDuration2(Math.abs(actual > target ? actual - target : remaining))]
     ];
     for (const [label, value] of cards) {
       const card = summary.createDiv({ cls: "examined-human-weekly-summary-card" });
@@ -13497,16 +13861,16 @@ var WeeklyAssessmentView = class extends import_obsidian19.ItemView {
     const stage = item.createDiv({
       cls: "examined-human-weekly-bar-stage",
       attr: {
-        "aria-label": `${commitment.engagementName}: committed ${formatDuration3(commitment.targetMinutes)}, actual ${formatDuration3(commitment.actualMinutes)}`
+        "aria-label": `${commitment.engagementName}: committed ${formatDuration2(commitment.targetMinutes)}, actual ${formatDuration2(commitment.actualMinutes)}`
       }
     });
     const target = stage.createDiv({ cls: "examined-human-weekly-bar-column" });
-    target.createDiv({ cls: "examined-human-weekly-bar-value", text: formatDuration3(commitment.targetMinutes) });
+    target.createDiv({ cls: "examined-human-weekly-bar-value", text: formatDuration2(commitment.targetMinutes) });
     const targetBar = target.createDiv({ cls: "examined-human-weekly-bar examined-human-weekly-bar--target" });
     targetBar.style.height = `calc((100% - 52px) * ${commitment.targetMinutes / maximum})`;
     target.createDiv({ cls: "examined-human-weekly-bar-label", text: "Planned" });
     const actual = stage.createDiv({ cls: "examined-human-weekly-bar-column" });
-    actual.createDiv({ cls: "examined-human-weekly-bar-value", text: formatDuration3(commitment.actualMinutes) });
+    actual.createDiv({ cls: "examined-human-weekly-bar-value", text: formatDuration2(commitment.actualMinutes) });
     const actualBar = actual.createDiv({ cls: "examined-human-weekly-bar examined-human-weekly-bar--actual" });
     actualBar.style.height = `calc((100% - 52px) * ${commitment.actualMinutes / maximum})`;
     actual.createDiv({ cls: "examined-human-weekly-bar-label", text: "Actual" });
@@ -13515,7 +13879,7 @@ var WeeklyAssessmentView = class extends import_obsidian19.ItemView {
     const difference = commitment.targetMinutes - commitment.actualMinutes;
     item.createDiv({
       cls: `examined-human-weekly-variance ${difference >= 0 ? "is-remaining" : "is-exceeded"}`,
-      text: difference >= 0 ? `${formatDuration3(difference)} remaining` : `${formatDuration3(Math.abs(difference))} above commitment`
+      text: difference >= 0 ? `${formatDuration2(difference)} remaining` : `${formatDuration2(Math.abs(difference))} above commitment`
     });
   }
   async handleAction() {
@@ -13903,6 +14267,63 @@ New daily_meals links when needed: food_id, amount_g, nutrient snapshots`,
   }
 };
 
+// src/DailyImportConfirmationModal.ts
+var import_obsidian21 = require("obsidian");
+function confirmDailyImport(app, options) {
+  return new Promise((resolve) => {
+    new DailyImportConfirmationModal(app, options, resolve).open();
+  });
+}
+var DailyImportConfirmationModal = class extends import_obsidian21.Modal {
+  constructor(app, options, resolveChoice) {
+    super(app);
+    this.options = options;
+    this.resolveChoice = resolveChoice;
+    this.resolved = false;
+  }
+  onOpen() {
+    this.modalEl.addClass("examined-human-daily-confirm-modal");
+    this.contentEl.createEl("h2", { text: this.options.title });
+    this.contentEl.createEl("p", { text: this.options.explanation });
+    const report = reportFromInspection(this.options.inspection);
+    const rendered = renderDailyAssessmentReport(this.app, this.contentEl, report, {
+      sessionColors: this.options.sessionColors,
+      initialScrollHour: this.options.initialScrollHour,
+      valuationLabel: this.options.valuationLabel,
+      onResolveReference: this.options.onResolveReference ? (reference) => {
+        var _a, _b;
+        this.finish(false);
+        (_b = (_a = this.options).onResolveReference) == null ? void 0 : _b.call(_a, reference);
+      } : void 0
+    });
+    if (this.options.blockedReason) {
+      const blocked = this.contentEl.createDiv({ cls: "examined-human-daily-validation-callout is-warning" });
+      blocked.createEl("strong", { text: "Import unavailable" });
+      blocked.createDiv({ text: this.options.blockedReason });
+    } else if (rendered && this.options.inspection.ready) {
+      const warning = this.contentEl.createEl("p", { cls: "examined-human-daily-confirm-warning" });
+      warning.createEl("strong", { text: "Nothing has been imported yet. " });
+      warning.appendText("Confirm only after reviewing the complete assessment above.");
+    }
+    const actions = this.contentEl.createDiv({ cls: "modal-button-container" });
+    actions.createEl("button", { text: "Close" }).addEventListener("click", () => this.finish(false));
+    const canConfirm = this.options.canConfirm !== false && rendered && this.options.inspection.ready && !this.options.blockedReason;
+    if (canConfirm) {
+      actions.createEl("button", { text: this.options.confirmLabel, cls: "mod-cta" }).addEventListener("click", () => this.finish(true));
+    }
+  }
+  onClose() {
+    this.contentEl.empty();
+    if (!this.resolved) this.resolveChoice(false);
+  }
+  finish(confirmed) {
+    if (this.resolved) return;
+    this.resolved = true;
+    this.resolveChoice(confirmed);
+    this.close();
+  }
+};
+
 // src/main.ts
 var AUTHORITATIVE_DATABASE_RELOAD_INTERVAL_MS = 10 * 60 * 1e3;
 var COMMAND_DASHBOARD_COMMAND_ID = "open-command-dashboard";
@@ -13922,7 +14343,7 @@ function storedJournalFolder(value) {
 function storedText(value, fallback) {
   return typeof value === "string" && value.trim() ? value.trim() : fallback;
 }
-var ExaminedHumanPlugin = class extends import_obsidian21.Plugin {
+var ExaminedHumanPlugin = class extends import_obsidian22.Plugin {
   constructor() {
     super(...arguments);
     this.settings = DEFAULT_SETTINGS;
@@ -14098,10 +14519,10 @@ var ExaminedHumanPlugin = class extends import_obsidian21.Plugin {
   async discoverFormsWithNotice() {
     try {
       const result = await this.discoverForms();
-      new import_obsidian21.Notice(`Found ${result.forms.length} EH Form${result.forms.length === 1 ? "" : "s"}; scanned ${result.scannedFileCount} changed file${result.scannedFileCount === 1 ? "" : "s"} and reused ${result.reusedFileCount} cached file${result.reusedFileCount === 1 ? "" : "s"}.`, 8e3);
+      new import_obsidian22.Notice(`Found ${result.forms.length} EH Form${result.forms.length === 1 ? "" : "s"}; scanned ${result.scannedFileCount} changed file${result.scannedFileCount === 1 ? "" : "s"} and reused ${result.reusedFileCount} cached file${result.reusedFileCount === 1 ? "" : "s"}.`, 8e3);
       await this.refreshViews();
     } catch (error) {
-      new import_obsidian21.Notice(`EH Form discovery stopped: ${error instanceof Error ? error.message : String(error)}`, 12e3);
+      new import_obsidian22.Notice(`EH Form discovery stopped: ${error instanceof Error ? error.message : String(error)}`, 12e3);
     }
   }
   async syncTodayPlanningFromDailyForm() {
@@ -14114,7 +14535,7 @@ var ExaminedHumanPlugin = class extends import_obsidian21.Plugin {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       if (message !== this.lastTodayPlanningSyncError) {
-        new import_obsidian21.Notice(`Today's Daily Form could not be projected: ${message}`, 12e3);
+        new import_obsidian22.Notice(`Today's Daily Form could not be projected: ${message}`, 12e3);
         this.lastTodayPlanningSyncError = message;
       }
     } finally {
@@ -14122,7 +14543,7 @@ var ExaminedHumanPlugin = class extends import_obsidian21.Plugin {
     }
   }
   async performTodayPlanningSync() {
-    const today = (0, import_obsidian21.moment)().format("YYYY-MM-DD");
+    const today = (0, import_obsidian22.moment)().format("YYYY-MM-DD");
     const discovery = await this.discoverForms();
     const matches = discovery.forms.filter((form) => form.kind === "daily" && form.date === today);
     if (matches.length > 1) {
@@ -14132,7 +14553,7 @@ var ExaminedHumanPlugin = class extends import_obsidian21.Plugin {
     if (matches.length === 1) {
       const discovered = matches[0];
       const file = this.app.vault.getAbstractFileByPath(discovered.filePath);
-      if (!(file instanceof import_obsidian21.TFile)) throw new Error(`Daily Form was not found: ${discovered.filePath}`);
+      if (!(file instanceof import_obsidian22.TFile)) throw new Error(`Daily Form was not found: ${discovered.filePath}`);
       const sourceText = await this.app.vault.read(file);
       const dailyForms = formsInText(file, sourceText).filter((form) => form.kind === "daily");
       if (dailyForms.length !== 1 || dailyForms[0].date !== today) {
@@ -14175,7 +14596,7 @@ var ExaminedHumanPlugin = class extends import_obsidian21.Plugin {
       await this.saveSettings();
       return true;
     } catch (error) {
-      new import_obsidian21.Notice(
+      new import_obsidian22.Notice(
         `The form import succeeded, but its EH form status could not be updated: ${error instanceof Error ? error.message : String(error)}`,
         12e3
       );
@@ -14184,7 +14605,7 @@ var ExaminedHumanPlugin = class extends import_obsidian21.Plugin {
   }
   async activeForm(kind) {
     const file = this.app.workspace.getActiveFile();
-    if (!(file instanceof import_obsidian21.TFile)) throw new Error("Open a Markdown note that contains the form you want to import.");
+    if (!(file instanceof import_obsidian22.TFile)) throw new Error("Open a Markdown note that contains the form you want to import.");
     const sourceText = await this.app.vault.read(file);
     const matches = formsInText(file, sourceText).filter((form) => form.kind === kind);
     if (matches.length === 0) throw new Error(`The active note contains no EH ${kind === "daily" ? "Daily" : kind === "weekly" ? "Weekly" : "Budget"} Form.`);
@@ -14216,7 +14637,7 @@ Planned time: ${preview.plannedMinutes} minutes`,
         if (!confirmed) return;
         await this.logger.importWeekly({ databasePath: this.settings.databasePath, weekStartDate: form.startDate, fileName: file.name, filePath: file.path, sourceText });
         await this.markImportedEhFormFileIfComplete(file);
-        new import_obsidian21.Notice(`Imported Weekly Form starting ${preview.weekStart}.`, 8e3);
+        new import_obsidian22.Notice(`Imported Weekly Form starting ${preview.weekStart}.`, 8e3);
       } else if (kind === "budget") {
         const preview = await this.logger.inspectBudget({ databasePath: this.settings.databasePath, fileName: file.name, filePath: file.path, sourceText });
         const confirmed = await confirmWeeklyAction(this.app, {
@@ -14231,12 +14652,13 @@ Expected movements: ${preview.expectedMovementCount}`,
         });
         if (!confirmed) return;
         await this.logger.importBudget({ databasePath: this.settings.databasePath, fileName: file.name, filePath: file.path, sourceText });
-        new import_obsidian21.Notice(`Imported Budget Form for ${preview.periodStart} through ${preview.periodEnd}.`, 8e3);
+        new import_obsidian22.Notice(`Imported Budget Form for ${preview.periodStart} through ${preview.periodEnd}.`, 8e3);
       } else {
-        const today = (0, import_obsidian21.moment)().format("YYYY-MM-DD");
+        const today = (0, import_obsidian22.moment)().format("YYYY-MM-DD");
+        const noteDate = form.date;
         const request = {
           databasePath: this.settings.databasePath,
-          noteDate: form.date,
+          noteDate,
           todayDate: today,
           fileName: file.name,
           filePath: file.path,
@@ -14245,56 +14667,52 @@ Expected movements: ${preview.expectedMovementCount}`,
             mealCalorieLimitKcal: this.settings.mealCalorieLimitKcal,
             dailyCalorieLimitKcal: this.settings.dailyCalorieLimitKcal,
             minimumProteinG: this.settings.minimumProteinG
-          }
+          },
+          valuationLabel: this.settings.valuationUnitLabel,
+          valuationReferenceUnit: this.settings.valuationReferenceUnit
         };
         const inspection = await this.logger.inspectDaily(request);
-        if (form.date >= today) {
-          const byDate = /* @__PURE__ */ new Map();
-          for (const known of this.knownForms()) {
-            if (known.kind !== "daily" || !known.date || known.date < today) continue;
-            const knownFile = this.app.vault.getAbstractFileByPath(known.filePath);
-            if (!(knownFile instanceof import_obsidian21.TFile)) continue;
-            byDate.set(known.date, {
-              noteDate: known.date,
-              fileName: knownFile.name,
-              filePath: knownFile.path,
-              sourceText: await this.app.vault.read(knownFile)
-            });
-          }
-          byDate.set(form.date, { noteDate: form.date, fileName: file.name, filePath: file.path, sourceText });
-          const planningRequest = { databasePath: this.settings.databasePath, cutoffDate: today, notes: [...byDate.values()] };
-          const preview = await this.logger.previewPlanning(planningRequest);
-          const confirmed2 = await confirmDailyImport(this.app, {
-            title: `Sync current and future plans from ${form.date}`,
-            explanation: "This replaces ephemeral planning projections for all discovered current and future EH Daily Forms. It does not create canonical sessions or a database backup.",
-            confirmLabel: "Sync future plans",
-            inspection,
-            dryRunOutput: `${preview.noteCount} current/future note${preview.noteCount === 1 ? "" : "s"} inspected.
-${preview.sessionCount} planned session${preview.sessionCount === 1 ? "" : "s"} projected.
-${preview.warningCount} warning${preview.warningCount === 1 ? "" : "s"}.
-${preview.deletedSourceCount} missing source${preview.deletedSourceCount === 1 ? "" : "s"} would be marked deleted.`
-          });
-          if (!confirmed2) return;
-          await this.logger.syncPlanning(planningRequest);
-          new import_obsidian21.Notice("Current and future planning projections were refreshed.", 8e3);
-          return;
-        }
+        const temporalState2 = noteDate < today ? "overdue" : noteDate === today ? "current" : "future";
+        const preferredTarget = {
+          date: noteDate,
+          fileName: file.name,
+          filePath: file.path,
+          status: noteDate < today ? "needs-import" : "current-future",
+          temporalState: temporalState2,
+          importedAt: null,
+          sourceState: null
+        };
+        const future = noteDate > today;
         const confirmed = await confirmDailyImport(this.app, {
-          title: `Import ${form.date}`,
-          explanation: "The native validation passed. This writes the immutable historical Daily receipt for this date.",
-          confirmLabel: "Import date",
+          title: `${dailyAssessmentTitle(noteDate, today)} \u2014 ${noteDate}`,
+          explanation: future ? "Review the future form below. It cannot become a canonical Daily receipt until its date arrives." : "Review the complete assessment below. Confirmation writes a durable canonical Daily receipt with a backup.",
+          confirmLabel: "Import daily assessment",
           inspection,
-          dryRunOutput: `Source: ${file.path}
-Native validation completed successfully.`
+          sessionColors: this.settings.sessionColors,
+          initialScrollHour: this.settings.initialScrollHour,
+          valuationLabel: this.settings.valuationUnitLabel,
+          canConfirm: !future,
+          blockedReason: future ? "Future Daily Forms are assessment-only. Wait until this date before importing it into the database." : void 0,
+          onResolveReference: (reference) => {
+            void this.database.commandCatalog(this.settings.databasePath).then((catalog) => {
+              openReferenceRepair(this.app, {
+                plugin: this,
+                reference,
+                catalog,
+                preferredTarget,
+                onStaged: async () => this.importActiveForm("daily")
+              });
+            }).catch((error) => new import_obsidian22.Notice(error instanceof Error ? error.message : String(error), 1e4));
+          }
         });
         if (!confirmed) return;
         await this.logger.importHistoricalDaily(request);
         await this.markImportedEhFormFileIfComplete(file);
-        new import_obsidian21.Notice(`${form.date} imported successfully.`, 8e3);
+        new import_obsidian22.Notice("Imported successfully.", 8e3);
       }
       await this.refreshViews();
     } catch (error) {
-      new import_obsidian21.Notice(`EH Form import did not complete: ${error instanceof Error ? error.message : String(error)}`, 12e3);
+      new import_obsidian22.Notice(`EH Form import did not complete: ${error instanceof Error ? error.message : String(error)}`, 12e3);
     }
   }
   async activateView() {

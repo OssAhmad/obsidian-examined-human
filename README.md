@@ -22,7 +22,7 @@ The usual rhythm is:
 5. Review the result in the calendar and dashboards.
 6. Improve your canonical lists of engagements, foods, exercises, accounts, and aliases as your life changes.
 
-Daily history acts like a receipt: after a day is in the past and its Daily Form has been finalized, it cannot be silently rewritten. Current and future Daily Forms are plans and can still change. Weekly plans and budgets can be updated by importing the same period again.
+Daily history acts like a receipt: after a Daily Form for today or a past date has been finalized, it cannot be silently rewritten. Future Daily Forms can be reviewed but cannot be imported. Weekly plans and budgets can be updated by importing the same period again.
 
 ## Installation
 
@@ -99,7 +99,7 @@ The marker tells the plugin that the note is ready to be discovered:
 - `imported`: its importable Daily and Weekly Forms are complete.
 - `false`: deliberately ignore this note.
 
-After all historical Daily Forms and Weekly Forms in a note have been imported, Examined Human normally changes the marker to `imported`. Budget imports and current/future planning updates do not change it because those plans remain editable.
+After all eligible Daily Forms (past or today) and Weekly Forms in a note have been imported, Examined Human normally changes the marker to `imported`. Budget imports and mutable planning updates do not change it because those plans remain editable.
 
 ### 5. Put the forms into your note workflow
 
@@ -194,10 +194,12 @@ A Daily Form can contain metrics, sessions, meals, transactions, valuation rates
 
 Session rows use `interval | type (optional) | engagement | notes`. Leave the type field blank for ordinary sessions. If the form contains Exercise Details, exactly one session must use type `exercise`; all of that form's exercises and sets attach to that session.
 
-- For **today**, opening or refreshing the Calendar automatically imports the eligible Daily Form's Sessions into the replaceable `planned_sessions` projection. It does not finalize the day or create a backup.
-- For a **future date**, importing synchronizes a replaceable planning view after preview and confirmation. It does not finalize the day.
+- For **today**, opening or refreshing the Calendar automatically imports the eligible Daily Form's Sessions into the replaceable `planned_sessions` projection. You may also validate and finalize today's complete form.
+- For a **future date**, the assessment can be reviewed, but canonical Daily import is refused until that date arrives. Future Calendar sessions come only from an imported Weekly Form.
 - For a **past date**, importing creates the canonical historical record after validation and confirmation.
-- Once a historical Daily Form is finalized, changed historical facts are rejected rather than silently replacing the receipt.
+- Once a Daily Form is finalized, changed facts are rejected rather than silently replacing the receipt.
+
+Calories and protein are calculated from every structured food row, including snacks, and are displayed to two decimal places. The plugin also derives `studied`, `worked`, and `exercised` from session/engagement types: `study` or `course` counts as study, `work` counts as work, and `exercise` or `fitness` plus structured exercise rows count as exercise. Sleep is calculated from matching sleep sessions between 21:00 on the previous date and 21:00 on the assessed date; a session type, engagement type, or canonical engagement name of `sleep` qualifies.
 
 Use **Examined Human: Import Daily Form from Active File** while the note is open, or work from **Daily Assessment**.
 
@@ -232,7 +234,7 @@ After an import succeeds, you have two valid choices:
 - **Keep the note.** This is recommended when you want a permanent, human-readable record of what happened, what you planned, and what was submitted to the plugin.
 - **Delete the note.** Imported historical information remains in the database, so the source form is not required for ordinary dashboard display.
 
-Delete only after confirming that the import succeeded and the information appears correctly. Do not delete a current or future Daily Form if you still rely on it as the source of a planning projection. Deleting an unimported note also discards any staged changes that have not yet been applied.
+Delete only after confirming that the import succeeded and the information appears correctly. Do not delete today's Daily Form if you still rely on it as today's calendar source. Deleting any unimported note also discards staged changes that have not yet been applied.
 
 ## Dashboard guide
 
@@ -240,13 +242,13 @@ Open dashboards from the Obsidian command palette. Obsidian prefixes their comma
 
 ### Calendar dashboard
 
-The calendar shows sessions on a horizontally scrollable sequence of days and a vertical 24-hour timeline. It combines canonical history with clearly identified current and future plans. Whenever the Calendar opens or refreshes, it discovers the eligible Daily Form dated today and refreshes today's `planned_sessions` projection automatically. Imported Weekly Forms supply the remaining current and future calendar sessions directly, so future Daily Notes do not have to exist. A more specific Daily Form projection takes precedence when one is available; canonical imported history always wins. Click a session for its exact time, duration, type, notes, exercise details, milestones, and any data-quality warning.
+The calendar shows sessions on a horizontally scrollable sequence of days and a vertical 24-hour timeline. Past days use canonical imported sessions. Future days use only sessions stored from the latest imported Weekly Form, so future Daily Notes cannot accidentally change the plan. Today combines the eligible Daily Form (or today's canonical import) with the Weekly Form: Daily intervals win conflicts, while non-overlapping Weekly sessions remain visible. Click a session for its exact time, duration, type, notes, exercise details, milestones, and any data-quality warning.
 
 Use it to answer: **When did I spend time, and what did I spend it on?**
 
 ### Daily Assessment
 
-Daily Assessment lists discovered forms and imported days, newest first. It previews and validates Daily Forms, synchronizes current/future plans, imports historical days, and displays the selected day's sessions, metrics, meals, transactions, exercises, and milestones.
+Daily Assessment lists discovered forms and imported days, newest first. It previews and validates Daily Forms, imports past dates or today, refuses future dates, and displays the same report used by the active-file import command. That report includes manual and inferred metrics, the session calendar, foods with nutrient totals, transactions with unit totals and valued net flow, exercise sets, and notes. Hard validation errors hide the report and expose the available resolution actions first.
 
 When a form refers to an unknown engagement, food, exercise, or account, Daily Assessment can help stage the missing canonical record or alias into that unimported note. Revalidate after staging.
 
@@ -295,7 +297,7 @@ Use it to answer: **What canonical names does my system know, and what correctio
 1. Create today's Daily Form with `EH form: unimported` in its frontmatter.
 2. Add planned sessions if useful; opening or refreshing the Calendar synchronizes today's session plan automatically.
 3. During or after the day, fill in what actually happened.
-4. On the next day, validate and import yesterday as historical fact.
+4. Validate the complete form and import it either today or later. Future-dated Daily Forms remain review-only.
 5. Keep the note as your readable journal record, or delete it after verifying the import.
 6. At the start of a week, create and import a Weekly Form.
 7. During the week, update and reimport the plan when necessary.
@@ -329,9 +331,9 @@ If you chose Journal-folder discovery, also verify the configured Journal folder
 
 Sessions and plans need a known engagement; transactions also need a known account; meals need a known food; structured exercise rows need a known exercise. Correct a misspelling, use an existing alias, or stage the missing canonical record through Daily Assessment or Command Center, then revalidate.
 
-### Today's Daily Form is not becoming historical
+### A future Daily Form will not import
 
-That is expected. Today and future dates are treated as mutable plans. Import the completed day after it becomes historical to create its final record.
+That is expected. A Daily Form can be finalized only for today or a past date. Future Calendar sessions must come from an imported Weekly Form; wait until the Daily Form's date before importing it as canonical fact.
 
 ### The database reports unfinished external changes
 

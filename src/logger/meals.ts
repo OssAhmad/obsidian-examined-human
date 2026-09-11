@@ -264,7 +264,7 @@ export function inspectMeals(db: Database, content: string, thresholds: Nutritio
     'Daily Metrics calories',
     errors,
   );
-  const proteinG = parseOptionalNumber(
+  const dailyMetricsProteinG = parseOptionalNumber(
     metricValue(dailyMetricsBody, 'protein_g'),
     'Daily Metrics protein_g',
     errors,
@@ -277,18 +277,20 @@ export function inspectMeals(db: Database, content: string, thresholds: Nutritio
   const meals = parsedSections.map((section) => evaluateMeal(section, thresholds));
   const foodRowCount = meals.reduce((total, meal) => total + meal.items.length, 0);
   const mealItemsCaloriesKcal = meals.reduce((total, meal) => total + meal.totalCaloriesKcal, 0);
-  let dailyCaloriesKcal: number | null = dailyMetricsCaloriesKcal;
-  let dailyCalorieSource: NutritionMetricSnapshot['dailyCalorieSource'] = dailyMetricsCaloriesKcal == null
+  const proteinG = meals.reduce((total, meal) => total + meal.totalProteinG, 0);
+  const dailyCaloriesKcal: number | null = mealsBody == null ? null : mealItemsCaloriesKcal;
+  const dailyCalorieSource: NutritionMetricSnapshot['dailyCalorieSource'] = mealsBody == null
     ? 'missing'
-    : 'daily_metrics';
-  if (dailyMetricsCaloriesKcal == null && foodRowCount > 0) {
-    dailyCaloriesKcal = mealItemsCaloriesKcal;
-    dailyCalorieSource = 'meal_items';
-  } else if (dailyMetricsCaloriesKcal != null && mealItemsCaloriesKcal > dailyMetricsCaloriesKcal) {
-    dailyCaloriesKcal = mealItemsCaloriesKcal;
-    dailyCalorieSource = 'higher_of_both';
+    : 'meal_items';
+  if (dailyMetricsCaloriesKcal != null && dailyCaloriesKcal != null
+    && Math.abs(dailyMetricsCaloriesKcal - dailyCaloriesKcal) > 0.005) {
     warnings.push(
-      `Structured foods total ${mealItemsCaloriesKcal} kcal, above Daily Metrics calories ${dailyMetricsCaloriesKcal}; the food total was used so snacks and meals remain reflected.`,
+      `Structured foods total ${mealItemsCaloriesKcal} kcal, while Daily Metrics calories says ${dailyMetricsCaloriesKcal}; the calculated food total was used.`,
+    );
+  }
+  if (dailyMetricsProteinG != null && Math.abs(dailyMetricsProteinG - proteinG) > 0.005) {
+    warnings.push(
+      `Structured foods total ${proteinG} g protein, while Daily Metrics protein_g says ${dailyMetricsProteinG}; the calculated food total was used.`,
     );
   }
   const evaluatedDieted = evaluateDieted(

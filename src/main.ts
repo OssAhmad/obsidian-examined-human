@@ -27,6 +27,9 @@ import { DEFAULT_SETTINGS, ExaminedHumanSettingTab, type ExaminedHumanSettings }
 import { sanitizeDismissedWarningKeys } from './warning-preferences.ts';
 import { confirmWeeklyAction } from './WeeklyActionConfirmationModal.ts';
 import { confirmDailyImport } from './DailyImportConfirmationModal.ts';
+import { dailyAssessmentTitle } from './DailyAssessmentReport.ts';
+import { openReferenceRepair } from './CommandForms.ts';
+import type { DailyNoteListItem } from './daily-note-index.ts';
 
 const AUTHORITATIVE_DATABASE_RELOAD_INTERVAL_MS = 10 * 60 * 1000;
 const COMMAND_DASHBOARD_COMMAND_ID = 'open-command-dashboard';
@@ -343,50 +346,61 @@ export default class ExaminedHumanPlugin extends Plugin {
         new Notice(`Imported Budget Form for ${preview.periodStart} through ${preview.periodEnd}.`, 8_000);
       } else {
         const today = moment().format('YYYY-MM-DD');
+        const noteDate = form.date!;
         const request = {
-          databasePath: this.settings.databasePath, noteDate: form.date!, todayDate: today, fileName: file.name, filePath: file.path, sourceText,
+          databasePath: this.settings.databasePath, noteDate, todayDate: today, fileName: file.name, filePath: file.path, sourceText,
           nutritionThresholds: {
             mealCalorieLimitKcal: this.settings.mealCalorieLimitKcal,
             dailyCalorieLimitKcal: this.settings.dailyCalorieLimitKcal,
             minimumProteinG: this.settings.minimumProteinG,
           },
+          valuationLabel: this.settings.valuationUnitLabel,
+          valuationReferenceUnit: this.settings.valuationReferenceUnit,
         };
         const inspection = await this.logger.inspectDaily(request);
-        if (form.date! >= today) {
-          const byDate = new Map<string, { noteDate: string; fileName: string; filePath: string; sourceText: string }>();
-          for (const known of this.knownForms()) {
-            if (known.kind !== 'daily' || !known.date || known.date < today) continue;
-            const knownFile = this.app.vault.getAbstractFileByPath(known.filePath);
-            if (!(knownFile instanceof TFile)) continue;
-            byDate.set(known.date, {
-              noteDate: known.date, fileName: knownFile.name, filePath: knownFile.path,
-              sourceText: await this.app.vault.read(knownFile),
-            });
-          }
-          byDate.set(form.date!, { noteDate: form.date!, fileName: file.name, filePath: file.path, sourceText });
-          const planningRequest = { databasePath: this.settings.databasePath, cutoffDate: today, notes: [...byDate.values()] };
-          const preview = await this.logger.previewPlanning(planningRequest);
-          const confirmed = await confirmDailyImport(this.app, {
-            title: `Sync current and future plans from ${form.date}`,
-            explanation: 'This replaces ephemeral planning projections for all discovered current and future EH Daily Forms. It does not create canonical sessions or a database backup.',
-            confirmLabel: 'Sync future plans', inspection,
-            dryRunOutput: `${preview.noteCount} current/future note${preview.noteCount === 1 ? '' : 's'} inspected.\n${preview.sessionCount} planned session${preview.sessionCount === 1 ? '' : 's'} projected.\n${preview.warningCount} warning${preview.warningCount === 1 ? '' : 's'}.\n${preview.deletedSourceCount} missing source${preview.deletedSourceCount === 1 ? '' : 's'} would be marked deleted.`,
-          });
-          if (!confirmed) return;
-          await this.logger.syncPlanning(planningRequest);
-          new Notice('Current and future planning projections were refreshed.', 8_000);
-          return;
-        }
+        const temporalState: DailyNoteListItem['temporalState'] = noteDate < today
+          ? 'overdue'
+          : noteDate === today ? 'current' : 'future';
+        const preferredTarget: DailyNoteListItem = {
+          date: noteDate,
+          fileName: file.name,
+          filePath: file.path,
+          status: noteDate < today ? 'needs-import' : 'current-future',
+          temporalState,
+          importedAt: null,
+          sourceState: null,
+        };
+        const future = noteDate > today;
         const confirmed = await confirmDailyImport(this.app, {
-          title: `Import ${form.date}`,
-          explanation: 'The native validation passed. This writes the immutable historical Daily receipt for this date.',
-          confirmLabel: 'Import date', inspection,
-          dryRunOutput: `Source: ${file.path}\nNative validation completed successfully.`,
+          title: `${dailyAssessmentTitle(noteDate, today)} — ${noteDate}`,
+          explanation: future
+            ? 'Review the future form below. It cannot become a canonical Daily receipt until its date arrives.'
+            : 'Review the complete assessment below. Confirmation writes a durable canonical Daily receipt with a backup.',
+          confirmLabel: 'Import daily assessment',
+          inspection,
+          sessionColors: this.settings.sessionColors,
+          initialScrollHour: this.settings.initialScrollHour,
+          valuationLabel: this.settings.valuationUnitLabel,
+          canConfirm: !future,
+          blockedReason: future
+            ? 'Future Daily Forms are assessment-only. Wait until this date before importing it into the database.'
+            : undefined,
+          onResolveReference: (reference) => {
+            void this.database.commandCatalog(this.settings.databasePath).then((catalog) => {
+              openReferenceRepair(this.app, {
+                plugin: this,
+                reference,
+                catalog,
+                preferredTarget,
+                onStaged: async () => this.importActiveForm('daily'),
+              });
+            }).catch((error) => new Notice(error instanceof Error ? error.message : String(error), 10_000));
+          },
         });
         if (!confirmed) return;
         await this.logger.importHistoricalDaily(request);
         await this.markImportedEhFormFileIfComplete(file);
-        new Notice(`${form.date} imported successfully.`, 8_000);
+        new Notice('Imported successfully.', 8_000);
       }
       await this.refreshViews();
     } catch (error) {

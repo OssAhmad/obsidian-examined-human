@@ -1,59 +1,25 @@
 import { ItemView, moment, normalizePath, Notice, TFile, WorkspaceLeaf } from 'obsidian';
 import type { FormWorkflowServices } from './plugin-services.ts';
 import { buildDailyNoteList, type DailyNoteListItem } from './daily-note-index.ts';
-import { confirmDailyImport } from './DailyImportConfirmationModal.ts';
 import { confirmMealImport } from './MealImportConfirmationModal.ts';
-import type { CalendarEvent, ExerciseSetDetails, SessionExerciseDetails } from './events.ts';
-import {
-  formatExerciseNumber,
-  parseDatabaseTime,
-  titleForEngagement,
-} from './events.ts';
-import type {
-  DailyAssessmentQueryResult,
-  DailyMealRecord,
-  DailyMetricsRecord,
-} from './read-models/daily.ts';
-import type {
-  DashboardPreviewExercise,
-  DashboardPreviewTransaction,
-  DailyInspection,
-} from './logger/daily-note.ts';
-import { layoutOverlappingEvents } from './overlap.ts';
+import type { DailyAssessmentQueryResult } from './read-models/daily.ts';
+import type { DailyInspection } from './logger/daily-note.ts';
 import type { MealInspection } from './logger/meals.ts';
 import { backupMutationOutput } from './logger/service.ts';
 import { openReferenceRepair } from './CommandForms.ts';
-import { createSessionElement } from './session-element.ts';
 import { unresolvedReferencesFromErrors } from './unresolved-references.ts';
-import { layoutVisualStack } from './visual-stack.ts';
+import {
+  renderDailyAssessmentReport,
+  reportFromAssessment,
+  reportFromInspection,
+} from './DailyAssessmentReport.ts';
 
 export const EXAMINED_HUMAN_DAILY_ASSESSMENT_VIEW_TYPE = 'examined-human-daily-assessment';
 
 const FINGERPRINT_INTERVAL_MS = 10_000;
-const DAY_PX_PER_MINUTE = 0.8;
 
-interface DisplayExercise {
-  name: string;
-  category: string | null;
-  sets: ExerciseSetDetails[];
-  notes: string | null;
-}
-
-interface DisplayTransaction {
-  id: number;
-  accountName: string;
-  amount: number | string;
-  engagement: string;
-  description: string;
-}
-
-function formatDuration(totalMinutes: number): string {
-  const minutes = Math.max(0, Math.round(totalMinutes));
-  const hours = Math.floor(minutes / 60);
-  const remainder = minutes % 60;
-  if (hours === 0) return `${remainder}m`;
-  if (remainder === 0) return `${hours}h`;
-  return `${hours}h ${remainder}m`;
+function formatDecimal(value: number): string {
+  return value.toFixed(2);
 }
 
 export class DailyAssessmentView extends ItemView {
@@ -130,7 +96,15 @@ export class DailyAssessmentView extends ItemView {
       }
       this.selectedItem = items.find((item) => item.date === this.selectedDate) ?? null;
       this.assessment = this.selectedDate
-        ? await this.plugin.database.dailyAssessment(this.plugin.settings.databasePath, this.selectedDate, today)
+        ? await this.plugin.database.dailyAssessment(
+          this.plugin.settings.databasePath,
+          this.selectedDate,
+          today,
+          {
+            label: this.plugin.settings.valuationUnitLabel,
+            referenceUnit: this.plugin.settings.valuationReferenceUnit,
+          },
+        )
         : null;
       this.inspection = null;
       this.mealInspection = null;
@@ -157,6 +131,8 @@ export class DailyAssessmentView extends ItemView {
               filePath: this.selectedItem.filePath,
               sourceText,
               nutritionThresholds: thresholds,
+              valuationLabel: this.plugin.settings.valuationUnitLabel,
+              valuationReferenceUnit: this.plugin.settings.valuationReferenceUnit,
             });
           } catch (error) {
             this.loggerOutput = error instanceof Error ? error.message : String(error);
@@ -183,13 +159,17 @@ export class DailyAssessmentView extends ItemView {
     const body = this.contentEl.createDiv({ cls: 'examined-human-daily-layout' });
     this.renderSidebar(body);
     const main = body.createEl('main', { cls: 'examined-human-daily-main' });
-    const events = this.displayEvents();
     this.renderValidation(main);
-    this.renderDayTimeline(main, events);
-    this.renderEngagementTime(main, events);
-    this.renderMetrics(main);
-    this.renderTransactions(main);
-    this.renderExercises(main);
+    if (this.inspection?.errors.length) return;
+    const report = this.inspection && this.selectedItem.status !== 'imported'
+      ? reportFromInspection(this.inspection)
+      : reportFromAssessment(this.selectedItem.date, this.assessment);
+    if (this.inspection) report.warnings = [];
+    renderDailyAssessmentReport(this.app, main, report, {
+      sessionColors: this.plugin.settings.sessionColors,
+      initialScrollHour: this.plugin.settings.initialScrollHour,
+      valuationLabel: this.plugin.settings.valuationUnitLabel,
+    });
   }
 
   private renderHeader(): void {
@@ -211,8 +191,13 @@ export class DailyAssessmentView extends ItemView {
       this.actionButton.setText('Already imported');
       this.actionButton.disabled = true;
     } else {
-      this.actionButton.setText(this.selectedItem.status === 'current-future' ? 'Sync future' : 'Import');
-      this.actionButton.addEventListener('click', () => { void this.handleImport(); });
+      if (this.selectedItem.temporalState === 'future') {
+        this.actionButton.setText('Future assessment');
+        this.actionButton.disabled = true;
+      } else {
+        this.actionButton.setText('Import');
+        this.actionButton.addEventListener('click', () => { void this.handleImport(); });
+      }
     }
     const discoverButton = actions.createEl('button', { text: 'Discover forms', cls: 'examined-human-toolbar-button' });
     discoverButton.addEventListener('click', () => {
@@ -367,8 +352,8 @@ export class DailyAssessmentView extends ItemView {
       ['Foods', inspection.foodRowCount],
       ['Direct leisure', `${inspection.directLeisureMeals}/3`],
       ['Final leisure', `${inspection.leisureMeals}/3`],
-      ['Calories', inspection.nutrition.dailyCaloriesKcal ?? '—'],
-      ['Protein', inspection.nutrition.proteinG == null ? '—' : `${inspection.nutrition.proteinG} g`],
+      ['Calories', inspection.nutrition.dailyCaloriesKcal == null ? '—' : formatDecimal(inspection.nutrition.dailyCaloriesKcal)],
+      ['Protein', inspection.nutrition.proteinG == null ? '—' : `${formatDecimal(inspection.nutrition.proteinG)} g`],
       ['Dieted', inspection.nutrition.evaluatedDieted == null
         ? '—'
         : inspection.nutrition.evaluatedDieted === 1 ? 'Yes' : 'No'],
@@ -456,269 +441,6 @@ export class DailyAssessmentView extends ItemView {
     textarea.value = output;
   }
 
-  private renderDayTimeline(container: HTMLElement, events: CalendarEvent[]): void {
-    const section = container.createEl('section', { cls: 'examined-human-daily-panel' });
-    const heading = section.createDiv({ cls: 'examined-human-daily-section-heading' });
-    heading.createEl('h3', { text: 'Day timeline' });
-    heading.createSpan({ text: `${events.length} session${events.length === 1 ? '' : 's'}`, cls: 'examined-human-daily-section-meta' });
-    if (events.length === 0) {
-      section.createDiv({ cls: 'examined-human-daily-empty-inline', text: 'No sessions are available for this date.' });
-      return;
-    }
-    const scroll = section.createDiv({ cls: 'examined-human-daily-timeline-scroll' });
-    const grid = scroll.createDiv({ cls: 'examined-human-daily-timeline-grid' });
-    grid.style.height = `${1440 * DAY_PX_PER_MINUTE}px`;
-    grid.style.setProperty('--examined-human-px-per-minute', `${DAY_PX_PER_MINUTE}px`);
-    const gutter = grid.createDiv({ cls: 'examined-human-daily-time-gutter' });
-    const column = grid.createDiv({ cls: 'examined-human-day-column examined-human-daily-session-column' });
-    column.style.backgroundSize = `100% ${60 * DAY_PX_PER_MINUTE}px, 100% ${30 * DAY_PX_PER_MINUTE}px`;
-    for (let hour = 0; hour < 24; hour++) {
-      const label = gutter.createDiv({ cls: 'examined-human-hour-label', text: `${String(hour).padStart(2, '0')}:00` });
-      label.style.top = `${hour * 60 * DAY_PX_PER_MINUTE}px`;
-    }
-    const visualPositions = layoutVisualStack(events, DAY_PX_PER_MINUTE);
-    for (const positioned of layoutOverlappingEvents(events)) {
-      const vertical = visualPositions.get(positioned.event.id) ?? {
-        startMinutes: positioned.event.startMinutes,
-        durationMinutes: positioned.event.endMinutes - positioned.event.startMinutes,
-        stacked: false,
-      };
-      column.appendChild(createSessionElement(
-        this.app,
-        positioned.event,
-        positioned.column,
-        positioned.columnCount,
-        vertical,
-        DAY_PX_PER_MINUTE,
-        this.plugin.settings.sessionColors,
-      ));
-    }
-    window.requestAnimationFrame(() => {
-      scroll.scrollTop = this.plugin.settings.initialScrollHour * 60 * DAY_PX_PER_MINUTE;
-    });
-  }
-
-  private renderEngagementTime(container: HTMLElement, events: CalendarEvent[]): void {
-    const totals = new Map<string, number>();
-    for (const event of events) totals.set(event.engagementName, (totals.get(event.engagementName) ?? 0) + event.durationMinutes);
-    const rows = [...totals.entries()].sort((left, right) => right[1] - left[1]);
-    const section = container.createEl('section', { cls: 'examined-human-daily-panel' });
-    section.createEl('h3', { text: 'Time by engagement' });
-    section.createDiv({ cls: 'examined-human-daily-section-subtitle', text: 'Logged or inspected session minutes for the selected date' });
-    if (rows.length === 0) {
-      section.createDiv({ cls: 'examined-human-daily-empty-inline', text: 'No engagement time is available.' });
-      return;
-    }
-    const maximum = Math.max(...rows.map(([, minutes]) => minutes));
-    const chart = section.createDiv({ cls: 'examined-human-daily-engagement-chart' });
-    for (const [engagement, minutes] of rows) {
-      const row = chart.createDiv({ cls: 'examined-human-daily-engagement-row' });
-      const labels = row.createDiv({ cls: 'examined-human-daily-engagement-labels' });
-      labels.createSpan({ text: engagement });
-      labels.createEl('strong', { text: formatDuration(minutes) });
-      const track = row.createDiv({ cls: 'examined-human-daily-engagement-track' });
-      const bar = track.createDiv({ cls: 'examined-human-daily-engagement-bar' });
-      bar.style.width = `${minutes / maximum * 100}%`;
-    }
-  }
-
-  private renderMetrics(container: HTMLElement): void {
-    const metrics = this.displayMetrics();
-    const section = container.createEl('section', { cls: 'examined-human-daily-panel' });
-    section.createEl('h3', { text: 'Daily metrics' });
-    const grid = section.createDiv({ cls: 'examined-human-daily-metrics-grid' });
-    const definitions: Array<[string, keyof DailyMetricsRecord, string]> = [
-      ['Mood', 'mood', ''],
-      ['Energy', 'energy', ''],
-      ['Stress', 'stress', ''],
-      ['Weight', 'weightKg', ' kg'],
-      ['Sleep', 'sleepHours', ' h'],
-      ['Calories', 'calories', ' kcal'],
-      ['Protein', 'proteinG', ' g'],
-      ['Fasted', 'fasted', ''],
-      ['Dieted', 'dieted', ''],
-    ];
-    for (const [label, key, suffix] of definitions) {
-      const value = metrics?.[key] ?? null;
-      const card = grid.createDiv({ cls: `examined-human-daily-metric-card ${value == null ? 'is-empty' : ''}` });
-      card.createDiv({ cls: 'examined-human-weekly-eyebrow', text: label });
-      const display = (key === 'fasted' || key === 'dieted') && value != null
-        ? Number(value) === 1 ? 'Yes' : 'No'
-        : value == null ? '—' : `${value}${suffix}`;
-      card.createDiv({ cls: 'examined-human-daily-metric-value', text: display });
-    }
-    const meals = this.displayMeals();
-    if (meals.length > 0) {
-      section.createEl('h4', { text: 'Foods' });
-      const list = section.createEl('ul', { cls: 'examined-human-daily-food-list' });
-      for (const meal of meals) {
-        const details = [
-          meal.calories == null ? null : `${meal.calories} kcal`,
-          meal.proteinG == null ? null : `${meal.proteinG} g protein`,
-        ].filter(Boolean).join(' · ');
-        list.createEl('li', { text: details ? `${meal.food} — ${details}` : meal.food });
-      }
-    }
-  }
-
-  private renderTransactions(container: HTMLElement): void {
-    const transactions = this.displayTransactions();
-    const section = container.createEl('section', { cls: 'examined-human-daily-panel' });
-    const heading = section.createDiv({ cls: 'examined-human-daily-section-heading' });
-    heading.createEl('h3', { text: 'Transactions' });
-    heading.createSpan({ text: String(transactions.length), cls: 'examined-human-daily-section-meta' });
-    if (transactions.length === 0) {
-      section.createDiv({ cls: 'examined-human-daily-empty-inline', text: 'No transactions recorded.' });
-      return;
-    }
-    const wrap = section.createDiv({ cls: 'examined-human-exercise-table-wrap' });
-    const table = wrap.createEl('table', { cls: 'examined-human-exercise-table examined-human-daily-transaction-table' });
-    const header = table.createEl('thead').createEl('tr');
-    for (const label of ['Account', 'Amount', 'Engagement', 'Description']) header.createEl('th', { text: label });
-    const body = table.createEl('tbody');
-    for (const transaction of transactions) {
-      const row = body.createEl('tr');
-      row.createEl('td', { text: transaction.accountName });
-      row.createEl('td', { text: String(transaction.amount) });
-      row.createEl('td', { text: transaction.engagement || '—' });
-      row.createEl('td', { text: transaction.description || '—' });
-    }
-  }
-
-  private renderExercises(container: HTMLElement): void {
-    const exercises = this.displayExercises();
-    const section = container.createEl('section', { cls: 'examined-human-daily-panel' });
-    const heading = section.createDiv({ cls: 'examined-human-daily-section-heading' });
-    heading.createEl('h3', { text: 'Exercise details' });
-    heading.createSpan({ text: String(exercises.length), cls: 'examined-human-daily-section-meta' });
-    if (exercises.length === 0) {
-      section.createDiv({ cls: 'examined-human-daily-empty-inline', text: 'No exercise details recorded.' });
-      return;
-    }
-    const grid = section.createDiv({ cls: 'examined-human-daily-exercise-grid' });
-    for (const exercise of exercises) {
-      const card = grid.createDiv({ cls: 'examined-human-daily-exercise-card' });
-      card.createEl('h4', { text: exercise.name });
-      if (exercise.category) card.createDiv({ cls: 'examined-human-exercise-category', text: exercise.category });
-      if (exercise.sets.length > 0) {
-        const table = card.createEl('table', { cls: 'examined-human-exercise-table' });
-        const head = table.createEl('thead').createEl('tr');
-        for (const label of ['Set', 'Weight', 'Reps', 'Distance', 'Duration']) head.createEl('th', { text: label });
-        const body = table.createEl('tbody');
-        for (const [index, set] of exercise.sets.entries()) {
-          const row = body.createEl('tr');
-          row.createEl('td', { text: String(set.setNumber ?? index + 1) });
-          row.createEl('td', { text: set.weight == null ? '—' : formatExerciseNumber(set.weight) });
-          row.createEl('td', { text: set.reps == null ? '—' : formatExerciseNumber(set.reps) });
-          row.createEl('td', { text: set.distance == null ? '—' : formatExerciseNumber(set.distance) });
-          row.createEl('td', { text: set.durationMinutes == null ? '—' : formatDuration(set.durationMinutes) });
-        }
-      }
-      if (exercise.notes) card.createDiv({ cls: 'examined-human-session-notes', text: exercise.notes });
-    }
-  }
-
-  private displayEvents(): CalendarEvent[] {
-    if (this.selectedItem?.status !== 'imported' && this.inspection?.preview) {
-      return this.inspection.preview.sessions.flatMap((session) => {
-        const start = parseDatabaseTime(session.start_time ?? '');
-        const end = parseDatabaseTime(session.end_time ?? '');
-        if (start == null || end == null || end <= start) return [];
-        return [{
-          id: `inspection:${session.ordinal}`,
-          date: this.selectedItem?.date ?? this.inspection?.date ?? '',
-          sessionType: session.session_type,
-          engagementName: session.engagement,
-          engagementType: '',
-          title: titleForEngagement(session.engagement),
-          kind: 'timed' as const,
-          startMinutes: start,
-          endMinutes: end,
-          durationMinutes: session.duration_minutes ?? end - start,
-          notes: session.notes,
-          sourceKind: 'planned' as const,
-        }];
-      });
-    }
-    return this.assessment?.sessionResult.events ?? [];
-  }
-
-  private displayMetrics(): DailyMetricsRecord | null {
-    if (this.selectedItem?.status === 'imported') return this.assessment?.metrics ?? null;
-    const raw = this.inspection?.preview?.daily_metrics;
-    if (!raw) return this.assessment?.metrics ?? null;
-    const number = (key: string): number | null => {
-      const value = raw[key];
-      if (value == null || value === '') return null;
-      const parsed = Number(value);
-      return Number.isFinite(parsed) ? parsed : null;
-    };
-    return {
-      mood: number('mood'),
-      energy: number('energy'),
-      stress: number('stress'),
-      weightKg: number('weight_kg'),
-      sleepHours: number('sleep_hours'),
-      calories: number('calories'),
-      proteinG: number('protein_g'),
-      fasted: number('fasted'),
-      dieted: number('dieted'),
-    };
-  }
-
-  private displayMeals(): DailyMealRecord[] {
-    if (this.selectedItem?.status === 'imported') return this.assessment?.meals ?? [];
-    return (this.inspection?.preview?.meals ?? []).map((meal, index) => ({
-      id: index + 1,
-      food: meal.food,
-      calories: meal.calories,
-      proteinG: meal.protein_g,
-    }));
-  }
-
-  private displayTransactions(): DisplayTransaction[] {
-    if (this.selectedItem?.status === 'imported') return this.assessment?.transactions ?? [];
-    return (this.inspection?.preview?.transactions ?? []).map((transaction: DashboardPreviewTransaction) => ({
-      id: transaction.ordinal,
-      accountName: transaction.account,
-      amount: transaction.amount,
-      engagement: transaction.engagement,
-      description: transaction.description,
-    }));
-  }
-
-  private displayExercises(): DisplayExercise[] {
-    if (this.selectedItem?.status !== 'imported') {
-      return (this.inspection?.preview?.exercises ?? []).map((exercise: DashboardPreviewExercise) => ({
-        name: exercise.exercise,
-        category: null,
-        sets: exercise.sets.map((set, index) => ({
-          setNumber: set.set_number ?? index + 1,
-          weight: set.weight ?? null,
-          reps: set.reps ?? null,
-          distance: set.distance ?? null,
-          durationMinutes: set.duration_minutes ?? null,
-          notes: set.notes ?? null,
-        })),
-        notes: exercise.notes,
-      }));
-    }
-    const exercises: DisplayExercise[] = [];
-    for (const event of this.assessment?.sessionResult.events ?? []) {
-      for (const exercise of event.exerciseDetails ?? []) exercises.push(this.displayExerciseFromSession(exercise));
-    }
-    return exercises;
-  }
-
-  private displayExerciseFromSession(exercise: SessionExerciseDetails): DisplayExercise {
-    return {
-      name: exercise.name,
-      category: exercise.category,
-      sets: exercise.sets,
-      notes: null,
-    };
-  }
-
   private async handleNativeMealImport(): Promise<void> {
     const item = this.selectedItem;
     if (!item || item.status === 'imported') return;
@@ -786,6 +508,10 @@ export class DailyAssessmentView extends ItemView {
   private async handleImport(): Promise<void> {
     const item = this.selectedItem;
     if (!item || item.status === 'imported') return;
+    if (item.temporalState === 'future') {
+      new Notice('Future Daily Forms cannot be imported. Wait until that date.', 10_000);
+      return;
+    }
     this.actionButton?.setText('Validating…');
     const activeButton = this.actionButton;
     if (activeButton) activeButton.disabled = true;
@@ -805,67 +531,29 @@ export class DailyAssessmentView extends ItemView {
           dailyCalorieLimitKcal: this.plugin.settings.dailyCalorieLimitKcal,
           minimumProteinG: this.plugin.settings.minimumProteinG,
         },
+        valuationLabel: this.plugin.settings.valuationUnitLabel,
+        valuationReferenceUnit: this.plugin.settings.valuationReferenceUnit,
       };
       const inspection = await this.plugin.logger.inspectDaily(request);
       this.inspection = inspection;
-      if (item.status === 'needs-import' && !inspection.ready) {
+      if (!inspection.ready) {
         this.loggerOutput = inspection.errors.join('\n\n');
         this.renderDashboard();
-        new Notice('Dry run failed. Review and copy the validation errors.', 10000);
+        new Notice('Failed. Look at the errors in the assessment.', 10000);
         return;
       }
-
-      let dryRunOutput = 'Native validation completed successfully.';
-      let planningRequest: Awaited<ReturnType<DailyAssessmentView['planningSyncRequest']>> | null = null;
-      if (item.status === 'current-future') {
-        planningRequest = await this.planningSyncRequest();
-        const preview = await this.plugin.logger.previewPlanning(planningRequest);
-        dryRunOutput = [
-          `${preview.noteCount} current/future note${preview.noteCount === 1 ? '' : 's'} inspected.`,
-          `${preview.sessionCount} planned session${preview.sessionCount === 1 ? '' : 's'} projected.`,
-          `${preview.warningCount} warning${preview.warningCount === 1 ? '' : 's'}.`,
-          `${preview.deletedSourceCount} missing source${preview.deletedSourceCount === 1 ? '' : 's'} would be marked deleted.`,
-        ].join('\n');
-      }
-
-      const confirmed = await confirmDailyImport(this.app, {
-        title: item.status === 'current-future'
-          ? `Sync current and future plans from ${item.date}`
-          : `Import ${item.date}`,
-        explanation: item.status === 'current-future'
-          ? 'This replaces ephemeral planning projections for all current and future EH Daily Notes. It does not create canonical sessions or a database backup.'
-          : 'The native validation passed. This writes the canonical historical import for this date.',
-        confirmLabel: item.status === 'current-future' ? 'Sync future plans' : 'Import date',
-        inspection,
-        dryRunOutput,
-      });
-      if (!confirmed) return;
-
-      this.actionButton?.setText(item.status === 'current-future' ? 'Syncing…' : 'Importing…');
-      if (item.status === 'current-future') {
-        const result = await this.plugin.logger.syncPlanning(planningRequest!);
-        this.loggerOutput = [
-          `Projected ${result.sessionCount} session${result.sessionCount === 1 ? '' : 's'} from ${result.noteCount} note${result.noteCount === 1 ? '' : 's'}.`,
-          `Warnings: ${result.warningCount}. Missing sources marked deleted: ${result.deletedSourceCount}.`,
-          ...backupMutationOutput(result),
-        ].join('\n');
-      } else {
-        const result = await this.plugin.logger.importHistoricalDaily(request);
-        await this.plugin.markImportedEhFormFileIfComplete(noteFile);
-        this.loggerOutput = [
-          `Imported ${result.sessionCount} sessions, ${result.transactionCount} transactions, ${result.exerciseCount} exercises, and ${result.foodRowCount} food rows.`,
-          `Milestones: ${result.milestoneCount}. Admin events: ${result.adminEventCount}.`,
-          ...backupMutationOutput(result),
-        ].join('\n');
-      }
+      this.actionButton?.setText('Importing…');
+      const result = await this.plugin.logger.importHistoricalDaily(request);
+      await this.plugin.markImportedEhFormFileIfComplete(noteFile);
+      this.loggerOutput = [
+        `Imported ${result.sessionCount} sessions, ${result.transactionCount} transactions, ${result.exerciseCount} exercises, and ${result.foodRowCount} food rows.`,
+        `Milestones: ${result.milestoneCount}. Admin events: ${result.adminEventCount}.`,
+        ...backupMutationOutput(result),
+      ].join('\n');
       await this.refresh();
-      if (item.status === 'current-future') {
-        new Notice('Current and future planning projections were refreshed.', 8000);
-      } else {
-        const imported = this.selectedItem?.status === 'imported';
-        if (imported) new Notice(`${item.date} imported successfully.`, 8000);
-        else new Notice('Import did not complete. Review the logger output.', 10000);
-      }
+      const imported = this.selectedItem?.status === 'imported';
+      if (imported) new Notice('Imported successfully.', 8000);
+      else new Notice('Failed. Look at the errors in the assessment.', 10000);
     } catch (error) {
       this.loggerOutput = error instanceof Error ? error.message : String(error);
       this.renderDashboard();
@@ -873,36 +561,9 @@ export class DailyAssessmentView extends ItemView {
     } finally {
       if (activeButton?.isConnected) {
         activeButton.disabled = false;
-        activeButton.setText(item.status === 'current-future' ? 'Sync future' : 'Import');
+        activeButton.setText('Import');
       }
     }
-  }
-
-  private async planningSyncRequest(): Promise<{
-    databasePath: string;
-    cutoffDate: string;
-    notes: Array<{
-      noteDate: string;
-      fileName: string;
-      filePath: string;
-      sourceText: string;
-    }>;
-  }> {
-    const cutoffDate = moment().format('YYYY-MM-DD');
-    const candidates = this.items.filter((candidate) => (
-      candidate.status === 'current-future' && candidate.date >= cutoffDate
-    ));
-    const notes = await Promise.all(candidates.map(async (candidate) => {
-      const file = this.app.vault.getAbstractFileByPath(candidate.filePath);
-      if (!(file instanceof TFile)) throw new Error(`Daily Note not found: ${candidate.filePath}`);
-      return {
-        noteDate: candidate.date,
-        fileName: candidate.fileName,
-        filePath: candidate.filePath,
-        sourceText: await this.app.vault.read(file),
-      };
-    }));
-    return { databasePath: this.plugin.settings.databasePath, cutoffDate, notes };
   }
 
   private statusLabel(item: DailyNoteListItem): string {

@@ -147,6 +147,54 @@ test('native historical validation and import cover every Daily Note component',
   db.close();
 });
 
+test('today can be finalized with calculated nutrition, activity, and split sleep metrics', () => {
+  const db = database();
+  db.run(`
+    INSERT INTO engagements (name, type_id, status_id)
+    SELECT 'Sleep', et.id, es.id
+    FROM engagement_types et, engagement_statuses es
+    WHERE et.code = 'maintenance' AND es.code = 'active';
+    INSERT INTO sessions (engagement_id, date, start_time, end_time, duration_minutes, notes)
+    SELECT id, '2026-08-19', '22:00', '23:59', 119, 'first sleep segment'
+    FROM engagements WHERE name = 'Sleep';
+  `);
+  const sourceText = dailyNote().replace(
+    '07:00-08:00 | exercise | Project Alpha | morning run',
+    '00:00-07:00 |  | Sleep | second sleep segment\n07:00-08:00 | exercise | Project Alpha | morning run',
+  );
+  const input = {
+    noteDate: '2026-08-20', todayDate: '2026-08-20', fileName: '2026-08-20.md',
+    filePath: 'Journal/2026-08-20.md', sourceText, sourceChecksum: 'today-import',
+    pluginVersion: '0.9.4', nutritionThresholds: thresholds,
+  };
+  const inspection = inspectDailyNote(db, input);
+  assert.equal(inspection.ready, true, inspection.errors.join('\n'));
+  assert.equal(inspection.preview.daily_metrics.sleep_hours, 9);
+  assert.equal(inspection.preview.daily_metrics.calories, 2000);
+  assert.equal(inspection.preview.daily_metrics.protein_g, 100);
+  assert.equal(inspection.preview.daily_metrics.studied, 1);
+  assert.equal(inspection.preview.daily_metrics.worked, 0);
+  assert.equal(inspection.preview.daily_metrics.exercised, 1);
+  writeHistoricalDailyNote(db, input);
+  assert.deepEqual(db.exec(`
+    SELECT sleep_hours, calories, protein_g, studied, worked, exercised
+    FROM daily_metrics WHERE date = '2026-08-20'
+  `)[0].values[0], [9, 2000, 100, 1, 0, 1]);
+  db.close();
+});
+
+test('canonical Daily import refuses future dates', () => {
+  const db = database();
+  const input = {
+    noteDate: '2026-08-21', todayDate: '2026-08-20', fileName: '2026-08-21.md',
+    filePath: 'Journal/2026-08-21.md', sourceText: dailyNote('2026-08-21'),
+    sourceChecksum: 'future-import', pluginVersion: '0.9.4', nutritionThresholds: thresholds,
+  };
+  assert.throws(() => writeHistoricalDailyNote(db, input), /Future Daily Forms cannot be imported/);
+  assert.equal(db.exec('SELECT COUNT(*) FROM imported_notes')[0].values[0][0], 0);
+  db.close();
+});
+
 test('focused Admin Events safely maintain aliases, engagements, exercises, and accounts', () => {
   const db = database();
   const sourceText = dailyNote()

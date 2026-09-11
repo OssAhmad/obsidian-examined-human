@@ -1607,7 +1607,24 @@
 }
 
 .examined-human-daily-confirm-modal {
-  width: min(680px, calc(100vw - 32px));
+  width: min(1100px, calc(100vw - 32px));
+  max-height: calc(100vh - 32px);
+}
+
+.examined-human-daily-food-table tfoot,
+.examined-human-daily-transaction-table tfoot {
+  border-top: 2px solid var(--background-modifier-border);
+  background: var(--background-primary-alt);
+}
+
+.examined-human-daily-net-flow th {
+  color: var(--text-normal);
+  font-weight: 750;
+}
+
+.examined-human-daily-notes-list {
+  margin-bottom: 0;
+  white-space: pre-wrap;
 }
 
 .examined-human-daily-confirm-warning {

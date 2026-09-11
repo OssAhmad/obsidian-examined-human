@@ -273,7 +273,7 @@ test('sessions include linked milestones and their measurements', () => {
   }
 });
 
-test('planned sessions fill unimported dates and identify overdue notes', () => {
+test('Daily Form projections affect today only and never replace history or future Weekly Forms', () => {
   const db = fixture();
   try {
     addPlanningSchema(db);
@@ -295,24 +295,16 @@ test('planned sessions fill unimported dates and identify overdue notes', () => 
     const result = querySessions(db, '2026-07-19', '2026-07-22', '2026-07-21');
     const overdueEvents = result.events.filter((event) => event.date === '2026-07-19');
     assert.equal(overdueEvents.length, 1);
-    assert.equal(overdueEvents[0].id, 'planned:30');
-    assert.deepEqual(result.dayStates['2026-07-19'], {
-      source: 'planned', lifecycleState: 'awaiting_finalization', overdue: true, message: 'Fix the note',
-    });
-
-    const future = result.events.find((event) => event.id === 'planned:31');
-    assert.equal(future.title, 'Future Course');
-    assert.equal(future.startMinutes, 420);
-    assert.equal(future.timeEstimated, true);
-    assert.equal(future.sourceKind, 'planned');
-    assert.equal(result.dayStates['2026-07-22'].overdue, false);
-    assert.ok(result.issues.some((issue) => issue.message.includes('awaiting finalization')));
+    assert.equal(overdueEvents[0].id, '13');
+    assert.equal(result.events.some((event) => event.id === 'planned:30'), false);
+    assert.equal(result.events.some((event) => event.id === 'planned:31'), false);
+    assert.deepEqual(result.dayStates, {});
   } finally {
     db.close();
   }
 });
 
-test('an imported note makes canonical sessions win over its planned projection', () => {
+test('future canonical and Daily Form rows stay hidden when no Weekly Form supplies the date', () => {
   const db = fixture();
   try {
     addPlanningSchema(db);
@@ -327,7 +319,7 @@ test('an imported note makes canonical sessions win over its planned projection'
     `);
 
     const result = querySessions(db, '2026-07-22', '2026-07-22', '2026-07-21');
-    assert.deepEqual(result.events.map((event) => event.id), ['13']);
+    assert.deepEqual(result.events.map((event) => event.id), []);
     assert.deepEqual(result.dayStates, {});
   } finally {
     db.close();
@@ -377,7 +369,7 @@ test('imported weekly sessions fill current and future calendar dates without Da
   }
 });
 
-test('canonical history and Daily Form projections take precedence over imported weekly sessions', () => {
+test('today merges non-conflicting Daily and Weekly sessions while future uses Weekly only', () => {
   const db = fixture();
   try {
     addPlanningSchema(db);
@@ -405,12 +397,13 @@ test('canonical history and Daily Form projections take precedence over imported
       );
     `);
 
-    const result = querySessions(db, '2026-07-22', '2026-07-23', '2026-07-21');
-    assert.deepEqual(result.events.map((event) => event.id), ['planned:30', '13']);
-    assert.equal(result.events[0].planningSource, 'daily-note');
-    assert.equal(result.events[1].sourceKind, 'actual');
+    const result = querySessions(db, '2026-07-22', '2026-07-23', '2026-07-22');
+    assert.deepEqual(result.events.map((event) => event.id), ['weekly:41', 'planned:30', 'weekly:42']);
+    assert.equal(result.events[0].planningSource, 'weekly-plan');
+    assert.equal(result.events[1].planningSource, 'daily-note');
+    assert.equal(result.events[2].planningSource, 'weekly-plan');
     assert.equal(result.dayStates['2026-07-22'].lifecycleState, 'planned');
-    assert.equal(result.dayStates['2026-07-23'], undefined);
+    assert.equal(result.dayStates['2026-07-23'].lifecycleState, 'weekly-plan');
   } finally {
     db.close();
   }
@@ -487,6 +480,8 @@ test('daily assessment maps canonical metrics, meals, transactions, and note sta
       amount: -25.5,
       engagement: 'grocery',
       description: 'Milk',
+      currency: 'UNSPECIFIED',
+      valuationAmount: null,
     });
     assert.equal(result.transactions[1].engagement, 'MIT Differential Equations');
   } finally {

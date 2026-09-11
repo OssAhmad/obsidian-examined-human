@@ -1,4 +1,7 @@
 import type { Database, SqlValue } from 'sql.js';
+import { inferDailyActivity, inferSleepHours, type DailySessionSignal } from '../daily-inference.ts';
+import { normalizeValuationUnit } from '../domain/valuation.ts';
+import { parseDatabaseTime } from '../events.ts';
 import { entryLines, formSections, requireEhForm } from '../forms/form-document.ts';
 import { splitDelimitedFields } from '../forms/fields.ts';
 import { applyAdminEvents, type AdminEvent } from './admin/command-handlers.ts';
@@ -32,6 +35,8 @@ export interface DailyNoteInput {
   sourceChecksum: string;
   pluginVersion: string;
   nutritionThresholds: NutritionThresholds;
+  valuationLabel?: string;
+  valuationReferenceUnit?: string;
 }
 
 export interface DashboardCompleteness {
@@ -53,6 +58,7 @@ export interface DashboardPreviewSession {
   duration_minutes: number | null;
   session_type: string;
   engagement: string;
+  engagement_type: string;
   notes: string | null;
 }
 
@@ -64,6 +70,8 @@ export interface DashboardPreviewTransaction {
   engagement_raw: string;
   engagement_id: number | null;
   description: string;
+  currency: string;
+  valuation_amount: number | null;
 }
 
 export interface DashboardPreviewExerciseSet {
@@ -93,7 +101,18 @@ export interface DailyInspection {
   completeness: DashboardCompleteness;
   preview: {
     daily_metrics: Record<string, string | number | null>;
-    meals: Array<{ food: string; calories: number; protein_g: number }>;
+    meals: Array<{
+      meal_type: string;
+      food: string;
+      amount_g: number;
+      calories: number;
+      protein_g: number;
+      carbs_g: number;
+      fat_g: number;
+      salt_g: number;
+      fiber_g: number | null;
+      cholesterol_mg: number | null;
+    }>;
     sessions: DashboardPreviewSession[];
     transactions: DashboardPreviewTransaction[];
     exercises: DashboardPreviewExercise[];
@@ -137,6 +156,7 @@ interface ParsedSession {
   parsedInterval: ParsedInterval | null;
   sessionType: ResolvedTaxonomy | null;
   resolvedEngagement: ResolvedEntity | null;
+  engagementType: string;
 }
 
 interface ParsedTransaction {
@@ -198,7 +218,7 @@ interface PreparedDailyNote {
 const FEEDBACK_PATTERN = /(?:\r?\n)?<!-- EH LOGGER FEEDBACK START -->.*?<!-- EH LOGGER FEEDBACK END -->(?:\r?\n)?/gs;
 const METRIC_FIELDS = [
   'mood', 'energy', 'stress', 'weight_kg', 'sleep_hours',
-  'calories', 'protein_g', 'fasted', 'dieted',
+  'calories', 'protein_g', 'fasted', 'dieted', 'studied', 'worked', 'exercised',
 ] as const;
 function splitFields(line: string, expected?: number): string[] {
   return splitDelimitedFields(line, expected);
@@ -401,7 +421,7 @@ function parseDaily(db: Database, sourceText: string, noteDate: string, threshol
     const [interval = '', type = '', engagement = '', notes = ''] = parts;
     return {
       ordinal: index + 1, interval, type, engagement, notes,
-      parsedInterval: null, sessionType: null, resolvedEngagement: null,
+      parsedInterval: null, sessionType: null, resolvedEngagement: null, engagementType: '',
     };
   });
   const transactions: ParsedTransaction[] = entries(sections.get('transactions')).map((line, index) => {
@@ -479,6 +499,15 @@ function validateFacts(db: Database, parsed: ParsedDailyNote, errors: string[], 
     session.resolvedEngagement = resolveEntity(db, session.engagement, 'engagements');
     if (!session.engagement) errors.push(`Session #${session.ordinal} has an empty engagement.`);
     else if (!session.resolvedEngagement) errors.push(`Unknown engagement in session #${session.ordinal}: '${session.engagement}'.`);
+    else {
+      const row = queryRows(db, `
+        SELECT engagement_type.code
+        FROM engagements AS engagement
+        JOIN engagement_types AS engagement_type ON engagement_type.id = engagement.type_id
+        WHERE engagement.id = ?
+      `, [session.resolvedEngagement.id])[0];
+      session.engagementType = String(row?.code ?? '');
+    }
   }
   intervals.sort((left, right) => left.start.localeCompare(right.start));
   for (let index = 1; index < intervals.length; index += 1) {
@@ -541,7 +570,93 @@ function validateFacts(db: Database, parsed: ParsedDailyNote, errors: string[], 
   warnings.push(...parsed.mealInspection.warnings);
 }
 
+function canonicalPreviousSleepSignals(db: Database, assessmentDate: string): DailySessionSignal[] {
+  return queryRows(db, `
+    SELECT session.date, session.start_time, session.end_time,
+           session_type.code AS session_type,
+           engagement_type.code AS engagement_type,
+           engagement.name AS engagement_name
+    FROM sessions AS session
+    JOIN engagements AS engagement ON engagement.id = session.engagement_id
+    JOIN engagement_types AS engagement_type ON engagement_type.id = engagement.type_id
+    LEFT JOIN session_types AS session_type ON session_type.id = session.session_type_id
+    WHERE session.date = date(?, '-1 day')
+  `, [assessmentDate]).flatMap((row) => {
+    const start = parseDatabaseTime(String(row.start_time ?? ''));
+    const end = parseDatabaseTime(String(row.end_time ?? ''));
+    if (start == null || end == null || end <= start) return [];
+    return [{
+      date: String(row.date),
+      startMinutes: start,
+      endMinutes: end,
+      sessionType: String(row.session_type ?? ''),
+      engagementType: String(row.engagement_type ?? ''),
+      engagementName: String(row.engagement_name ?? ''),
+    }];
+  });
+}
+
+function applyInferredMetrics(db: Database, parsed: ParsedDailyNote, input: DailyNoteInput, warnings: string[]): void {
+  const currentSignals: DailySessionSignal[] = parsed.sessions.flatMap((session) => {
+    if (!session.parsedInterval) return [];
+    return [{
+      date: input.noteDate,
+      startMinutes: Number(session.parsedInterval.start.slice(0, 2)) * 60 + Number(session.parsedInterval.start.slice(3, 5)),
+      endMinutes: Number(session.parsedInterval.end.slice(0, 2)) * 60 + Number(session.parsedInterval.end.slice(3, 5)),
+      sessionType: session.sessionType?.code ?? session.type,
+      engagementType: session.engagementType,
+      engagementName: session.resolvedEngagement?.name ?? session.engagement,
+      hasExerciseDetails: parsed.exercises.length > 0 && session.sessionType?.code === 'exercise',
+    }];
+  });
+  const activity = inferDailyActivity(currentSignals);
+  const sleepHours = inferSleepHours(input.noteDate, [
+    ...canonicalPreviousSleepSignals(db, input.noteDate),
+    ...currentSignals,
+  ]);
+  const derived: Record<string, number> = {
+    calories: parsed.mealInspection.nutrition.dailyCaloriesKcal ?? 0,
+    protein_g: parsed.mealInspection.nutrition.proteinG ?? 0,
+    sleep_hours: sleepHours,
+    studied: activity.studied,
+    worked: activity.worked,
+    exercised: activity.exercised,
+  };
+  for (const [field, value] of Object.entries(derived)) {
+    const manual = parsed.metrics[field];
+    if (manual != null && Number(manual) !== value) {
+      warnings.push(`${field} was inferred as ${value}; the calculated value replaces the Daily Metrics entry.`);
+    }
+    parsed.metrics[field] = value;
+  }
+  parsed.metrics.dieted = parsed.mealInspection.nutrition.evaluatedDieted ?? parsed.metrics.dieted ?? null;
+}
+
+function historicalValuationRate(
+  db: Database,
+  unit: string,
+  date: string,
+  referenceUnit: string,
+): number | null {
+  const unitKey = normalizeValuationUnit(unit);
+  if (unitKey === normalizeValuationUnit(referenceUnit)) return 1;
+  try {
+    const row = queryRows(db, `
+      SELECT rate.value
+      FROM valuation_rates AS rate
+      JOIN valuation_rate_sets AS rate_set ON rate_set.id = rate.rate_set_id
+      WHERE rate.unit_key = ? AND rate_set.rate_date <= ?
+      ORDER BY rate_set.rate_date DESC, rate.id DESC
+      LIMIT 1
+    `, [unitKey, date])[0];
+    return row == null ? null : Number(row.value);
+  } catch {
+    return null;
+  }
+}
+
 function inspectionFor(
+  db: Database,
   input: DailyNoteInput,
   parsed: ParsedDailyNote,
   imported: boolean,
@@ -568,9 +683,21 @@ function inspectionFor(
       valuation_rate_count: parsed.valuationRates.length,
     },
     preview: {
-      daily_metrics: Object.fromEntries(METRIC_FIELDS.map((field) => [field, parsed.metrics[field] ?? null])),
+      daily_metrics: {
+        ...Object.fromEntries(METRIC_FIELDS.map((field) => [field, parsed.metrics[field] ?? null])),
+        notes: parsed.metrics.notes ?? null,
+      },
       meals: parsed.mealInspection.meals.flatMap((meal) => meal.items.map((item) => ({
-        food: item.food, calories: item.caloriesKcal, protein_g: item.proteinG,
+        meal_type: meal.type,
+        food: item.food,
+        amount_g: item.amountG,
+        calories: item.caloriesKcal,
+        protein_g: item.proteinG,
+        carbs_g: item.carbsG,
+        fat_g: item.fatG,
+        salt_g: item.saltG,
+        fiber_g: item.fiberG,
+        cholesterol_mg: item.cholesterolMg,
       }))),
       sessions: parsed.sessions.map((session) => ({
         ordinal: session.ordinal,
@@ -580,17 +707,35 @@ function inspectionFor(
         duration_minutes: session.parsedInterval?.durationMinutes ?? null,
         session_type: session.sessionType?.code ?? session.type,
         engagement: session.resolvedEngagement?.name ?? session.engagement,
+        engagement_type: session.engagementType,
         notes: session.notes || null,
       })),
-      transactions: parsed.transactions.map((transaction) => ({
-        ordinal: transaction.ordinal,
-        amount: transaction.amount ?? transaction.amountRaw,
-        account: transaction.resolvedAccount?.name ?? transaction.account,
-        engagement: transaction.resolvedEngagement?.name ?? transaction.engagement,
-        engagement_raw: transaction.engagement,
-        engagement_id: transaction.resolvedEngagement?.id ?? null,
-        description: transaction.description,
-      })),
+      transactions: parsed.transactions.map((transaction) => {
+        const account = transaction.resolvedAccount == null ? null : queryRows(
+          db,
+          'SELECT currency FROM accounts WHERE id = ?',
+          [transaction.resolvedAccount.id],
+        )[0];
+        const currency = normalizeValuationUnit(String(account?.currency ?? '')) || 'Unspecified';
+        const amount = transaction.amount;
+        const rate = historicalValuationRate(
+          db,
+          currency,
+          input.noteDate,
+          input.valuationReferenceUnit ?? 'USD',
+        );
+        return {
+          ordinal: transaction.ordinal,
+          amount: amount ?? transaction.amountRaw,
+          account: transaction.resolvedAccount?.name ?? transaction.account,
+          engagement: transaction.resolvedEngagement?.name ?? transaction.engagement,
+          engagement_raw: transaction.engagement,
+          engagement_id: transaction.resolvedEngagement?.id ?? null,
+          description: transaction.description,
+          currency,
+          valuation_amount: amount == null || (rate == null && amount !== 0) ? null : amount * (rate ?? 0),
+        };
+      }),
       exercises: parsed.exercises.map((exercise) => ({
         ordinal: exercise.ordinal,
         exercise: exercise.resolvedExercise?.name ?? exercise.exercise,
@@ -641,7 +786,8 @@ function prepareDaily(db: Database, input: DailyNoteInput): PreparedDailyNote {
       errors.push(`Historical Meals for ${input.noteDate} differ from the finalized meal component and cannot be replaced.`);
     }
   }
-  return { parsed, inspection: inspectionFor(input, parsed, imported, errors, warnings) };
+  if (errors.length === 0) applyInferredMetrics(db, parsed, input, warnings);
+  return { parsed, inspection: inspectionFor(db, input, parsed, imported, errors, warnings) };
 }
 
 export function inspectDailyNote(db: Database, input: DailyNoteInput): DailyInspection {
@@ -667,7 +813,7 @@ function insertComponent(
 }
 
 export function writeHistoricalDailyNote(db: Database, input: DailyNoteInput): DailyImportResult {
-  if (input.noteDate >= input.todayDate) throw new Error('Canonical Daily Note import is historical-only. Use planning sync for today and future notes.');
+  if (input.noteDate > input.todayDate) throw new Error('Future Daily Forms cannot be imported. Wait until that date before creating a canonical Daily receipt.');
   const prepared = prepareDaily(db, input);
   if (!prepared.inspection.ready) throw new Error(prepared.inspection.errors.join('\n\n'));
   const parsed = prepared.parsed;
@@ -701,7 +847,7 @@ export function writeHistoricalDailyNote(db: Database, input: DailyNoteInput): D
     input.noteDate, metrics.mood, metrics.energy, metrics.stress,
     metrics.weight_kg, metrics.sleep_hours,
     parsed.mealInspection.nutrition.dailyCaloriesKcal,
-    metrics.protein_g,
+    parsed.mealInspection.nutrition.proteinG,
     metrics.fasted ?? 0,
     parsed.mealInspection.nutrition.evaluatedDieted ?? metrics.dieted ?? 0,
     metrics.studied ?? 0, metrics.worked ?? 0, metrics.exercised ?? 0,

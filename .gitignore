@@ -7,3 +7,4 @@ node_modules/
 *.db-shm
 data.json
 test-output/
+/verify-build-deploy-wax.ps1

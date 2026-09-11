@@ -68,8 +68,9 @@ export class ExaminedHumanDatabase {
     databasePath: string,
     date: string,
     todayDate: string,
+    valuationOptions: FinancialValuationOptions = { label: 'EHM', referenceUnit: 'USD' },
   ): Promise<DailyAssessmentQueryResult> {
-    return this.withDatabase(databasePath, (db) => queryDailyAssessment(db, date, todayDate));
+    return this.withDatabase(databasePath, (db) => queryDailyAssessment(db, date, todayDate, valuationOptions));
   }
 
   async engagementDashboard(

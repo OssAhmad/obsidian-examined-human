@@ -11,6 +11,13 @@ import type {
 import { parseDatabaseTime, titleForEngagement } from './events.ts';
 import { normalizeValuationUnit } from './domain/valuation.ts';
 import {
+  eventSignal,
+  inferDailyActivity,
+  inferSleepHours,
+  mergeTodayWithWeekly,
+  type DailySessionSignal,
+} from './daily-inference.ts';
+import {
   hasTableColumns as hasColumns,
   queryRows as rows,
   validateSchemaContract,
@@ -171,8 +178,9 @@ function queryPlanningState(
     SELECT note_date, lifecycle_state, parse_status, last_error
     FROM note_sources
     WHERE note_date >= ? AND note_date <= ?
+      AND note_date = ?
       AND lifecycle_state NOT IN ('finalized', 'deleted')
-  `, [startDate, endDate]);
+  `, [startDate, endDate, todayDate]);
   for (const row of sourceRows) {
     const date = String(row.note_date);
     if (importedDates.has(date)) continue;
@@ -192,6 +200,7 @@ function queryPlannedEvents(
   startDate: string,
   endDate: string,
   importedDates: Set<string>,
+  todayDate: string,
   issues: DataIssue[],
 ): CalendarEvent[] {
   if (!hasPlanningSchema(db)) return [];
@@ -215,9 +224,10 @@ function queryPlannedEvents(
     LEFT JOIN engagement_types AS et ON et.id = e.type_id
     LEFT JOIN session_types AS st ON st.id = ps.resolved_session_type_id
     WHERE ps.date >= ? AND ps.date <= ?
+      AND ps.date = ?
       AND ns.lifecycle_state NOT IN ('finalized', 'deleted')
     ORDER BY ps.date, ps.start_time, ps.source_ordinal, ps.id
-  `, [startDate, endDate]);
+  `, [startDate, endDate, todayDate]);
 
   const events: CalendarEvent[] = [];
   for (const row of plannedRows) {
@@ -260,7 +270,7 @@ function queryWeeklyPlannedEvents(
   startDate: string,
   endDate: string,
   todayDate: string,
-  excludedDates: Set<string>,
+  primaryTodayEvents: CalendarEvent[],
   issues: DataIssue[],
 ): { events: CalendarEvent[]; dayStates: Record<string, CalendarDayState> } {
   const events: CalendarEvent[] = [];
@@ -290,7 +300,6 @@ function queryWeeklyPlannedEvents(
 
   for (const row of weeklyRows) {
     const date = String(row.date);
-    if (excludedDates.has(date)) continue;
     const id = `weekly:${String(row.id)}`;
     const start = parseDatabaseTime(String(row.start_time ?? ''));
     const end = parseDatabaseTime(String(row.end_time ?? ''));
@@ -326,7 +335,11 @@ function queryWeeklyPlannedEvents(
     };
   }
 
-  return { events, dayStates };
+  const todayWeekly = events.filter((event) => event.date === todayDate);
+  const futureWeekly = events.filter((event) => event.date > todayDate);
+  const mergedToday = mergeTodayWithWeekly(primaryTodayEvents, todayWeekly)
+    .filter((event) => event.planningSource === 'weekly-plan');
+  return { events: [...mergedToday, ...futureWeekly], dayStates };
 }
 
 function nullableNumber(value: SqlValue | undefined): number | null {
@@ -507,20 +520,27 @@ export function queryDailyAssessment(
   db: Database,
   date: string,
   todayDate: string,
+  valuationOptions: FinancialValuationOptions = { label: 'EHM', referenceUnit: 'USD' },
 ): DailyAssessmentQueryResult {
   validateSchema(db);
   const sessionResult = querySessions(db, date, date, todayDate);
-  const metricRows = hasColumns(db, 'daily_metrics', [
+  const hasCoreMetrics = hasColumns(db, 'daily_metrics', [
     'date', 'mood', 'energy', 'stress', 'weight_kg', 'sleep_hours',
     'calories', 'protein_g', 'fasted', 'dieted',
-  ]) ? rows(db, `
+  ]);
+  const metricField = (field: string): string => hasColumns(db, 'daily_metrics', [field])
+    ? field
+    : `NULL AS ${field}`;
+  const metricRows = hasCoreMetrics ? rows(db, `
     SELECT mood, energy, stress, weight_kg, sleep_hours,
-           calories, protein_g, fasted, dieted
+           calories, protein_g, fasted, dieted,
+           ${metricField('studied')}, ${metricField('worked')},
+           ${metricField('exercised')}, ${metricField('notes')}
     FROM daily_metrics
     WHERE date = ?
   `, [date]) : [];
   const metricRow = metricRows[0];
-  const metrics = metricRow ? {
+  let metrics = metricRow ? {
     mood: nullableNumber(metricRow.mood),
     energy: nullableNumber(metricRow.energy),
     stress: nullableNumber(metricRow.stress),
@@ -530,24 +550,108 @@ export function queryDailyAssessment(
     proteinG: nullableNumber(metricRow.protein_g),
     fasted: nullableNumber(metricRow.fasted),
     dieted: nullableNumber(metricRow.dieted),
+    studied: nullableNumber(metricRow.studied),
+    worked: nullableNumber(metricRow.worked),
+    exercised: nullableNumber(metricRow.exercised),
+    notes: nullableText(metricRow.notes),
   } : null;
-  const meals = hasColumns(db, 'daily_meals', ['id', 'day', 'food', 'calories', 'protein_g'])
+  const detailedMeals = hasColumns(db, 'daily_meals', [
+    'id', 'day', 'food', 'amount_g', 'calories', 'protein_g', 'carbs_g', 'fat_g',
+    'salt_g', 'fiber_g', 'cholesterol_mg', 'meal_event_id',
+  ]) && hasColumns(db, 'meal_events', ['id', 'meal_type']);
+  const meals = detailedMeals
     ? rows(db, `
-        SELECT id, food, calories, protein_g
-        FROM daily_meals
-        WHERE day = ?
-        ORDER BY id
+        SELECT daily_meal.id, meal_event.meal_type, daily_meal.food, daily_meal.amount_g,
+               daily_meal.calories, daily_meal.protein_g, daily_meal.carbs_g,
+               daily_meal.fat_g, daily_meal.salt_g, daily_meal.fiber_g,
+               daily_meal.cholesterol_mg
+        FROM daily_meals AS daily_meal
+        LEFT JOIN meal_events AS meal_event ON meal_event.id = daily_meal.meal_event_id
+        WHERE daily_meal.day = ?
+        ORDER BY daily_meal.id
       `, [date]).map((row) => ({
         id: Number(row.id),
+        mealType: nullableText(row.meal_type),
         food: String(row.food),
+        amountG: nullableNumber(row.amount_g),
         calories: nullableNumber(row.calories),
         proteinG: nullableNumber(row.protein_g),
+        carbsG: nullableNumber(row.carbs_g),
+        fatG: nullableNumber(row.fat_g),
+        saltG: nullableNumber(row.salt_g),
+        fiberG: nullableNumber(row.fiber_g),
+        cholesterolMg: nullableNumber(row.cholesterol_mg),
       }))
-    : [];
+    : hasColumns(db, 'daily_meals', ['id', 'day', 'food', 'calories', 'protein_g'])
+      ? rows(db, `SELECT id, food, calories, protein_g FROM daily_meals WHERE day = ? ORDER BY id`, [date])
+        .map((row) => ({
+          id: Number(row.id), mealType: null, food: String(row.food), amountG: null,
+          calories: nullableNumber(row.calories), proteinG: nullableNumber(row.protein_g),
+          carbsG: null, fatG: null, saltG: null, fiberG: null, cholesterolMg: null,
+        }))
+      : [];
+  const mealAssessment = hasColumns(db, 'daily_meal_assessments', ['day', 'daily_calories_kcal', 'protein_g'])
+    ? rows(db, 'SELECT daily_calories_kcal, protein_g FROM daily_meal_assessments WHERE day = ? LIMIT 1', [date])[0]
+    : null;
+  const activity = inferDailyActivity(sessionResult.events.map(eventSignal));
+  const previousSleepSignals: DailySessionSignal[] = rows(db, `
+    SELECT session.date, session.start_time, session.end_time,
+           session_type.code AS session_type, engagement_type.code AS engagement_type,
+           engagement.name AS engagement_name
+    FROM sessions AS session
+    JOIN engagements AS engagement ON engagement.id = session.engagement_id
+    JOIN engagement_types AS engagement_type ON engagement_type.id = engagement.type_id
+    LEFT JOIN session_types AS session_type ON session_type.id = session.session_type_id
+    WHERE session.date = date(?, '-1 day')
+  `, [date]).flatMap((row) => {
+    const start = parseDatabaseTime(String(row.start_time ?? ''));
+    const end = parseDatabaseTime(String(row.end_time ?? ''));
+    return start == null || end == null || end <= start ? [] : [{
+      date: String(row.date), startMinutes: start, endMinutes: end,
+      sessionType: String(row.session_type ?? ''), engagementType: String(row.engagement_type ?? ''),
+      engagementName: String(row.engagement_name ?? ''),
+    }];
+  });
+  const inferredSleepHours = inferSleepHours(date, [
+    ...previousSleepSignals,
+    ...sessionResult.events.map(eventSignal),
+  ]);
+  metrics = {
+    mood: metrics?.mood ?? null,
+    energy: metrics?.energy ?? null,
+    stress: metrics?.stress ?? null,
+    weightKg: metrics?.weightKg ?? null,
+    sleepHours: inferredSleepHours,
+    calories: mealAssessment ? nullableNumber(mealAssessment.daily_calories_kcal) : metrics?.calories ?? null,
+    proteinG: mealAssessment ? nullableNumber(mealAssessment.protein_g) : metrics?.proteinG ?? null,
+    fasted: metrics?.fasted ?? null,
+    dieted: metrics?.dieted ?? null,
+    studied: activity.studied,
+    worked: activity.worked,
+    exercised: activity.exercised,
+    notes: metrics?.notes ?? null,
+  };
+  const referenceUnit = normalizeValuationUnit(valuationOptions.referenceUnit) || 'USD';
+  const valuationRateFor = (unit: string): number | null => {
+    const unitKey = normalizeValuationUnit(unit);
+    if (unitKey === referenceUnit) return 1;
+    if (!hasColumns(db, 'valuation_rate_sets', ['id', 'rate_date'])
+      || !hasColumns(db, 'valuation_rates', ['id', 'rate_set_id', 'unit_key', 'value'])) return null;
+    const row = rows(db, `
+      SELECT rate.value
+      FROM valuation_rates AS rate
+      JOIN valuation_rate_sets AS rate_set ON rate_set.id = rate.rate_set_id
+      WHERE rate.unit_key = ? AND rate_set.rate_date <= ?
+      ORDER BY rate_set.rate_date DESC, rate.id DESC
+      LIMIT 1
+    `, [unitKey, date])[0];
+    return row == null ? null : Number(row.value);
+  };
+  const hasAccountCurrency = hasColumns(db, 'accounts', ['currency']);
   const transactions = hasColumns(db, 'transactions', ['id', 'account_id', 'date', 'amount', 'category', 'description'])
     && hasColumns(db, 'accounts', ['id', 'name'])
     ? rows(db, `
-        SELECT t.id, a.name AS account_name, t.amount,
+        SELECT t.id, a.name AS account_name, ${hasAccountCurrency ? 'a.currency' : "'Unspecified' AS currency"}, t.amount,
                COALESCE(e.name, CAST(t.category AS TEXT)) AS engagement_display,
                t.description
         FROM transactions AS t
@@ -555,13 +659,16 @@ export function queryDailyAssessment(
         LEFT JOIN engagements AS e ON CAST(e.id AS TEXT) = TRIM(CAST(t.category AS TEXT))
         WHERE t.date = ?
         ORDER BY t.id
-      `, [date]).map((row) => ({
-        id: Number(row.id),
-        accountName: String(row.account_name),
-        amount: Number(row.amount),
-        engagement: String(row.engagement_display ?? ''),
-        description: String(row.description ?? ''),
-      }))
+      `, [date]).map((row) => {
+        const amount = Number(row.amount);
+        const currency = normalizeValuationUnit(String(row.currency ?? '')) || 'Unspecified';
+        const rate = valuationRateFor(currency);
+        return {
+          id: Number(row.id), accountName: String(row.account_name), amount,
+          engagement: String(row.engagement_display ?? ''), description: String(row.description ?? ''),
+          currency, valuationAmount: rate == null && amount !== 0 ? null : amount * (rate ?? 0),
+        };
+      })
     : [];
   const importedRows = hasColumns(db, 'imported_notes', ['note_date', 'imported_at'])
     ? rows(db, `SELECT imported_at FROM imported_notes WHERE note_date = ? LIMIT 1`, [date])
@@ -1347,6 +1454,7 @@ export function querySessions(
   const issues: DataIssue[] = [];
   for (const row of sourceRows) {
     const date = String(row.date);
+    if (date > todayDate) continue;
     if (unfinalizedDates.has(date)) continue;
     const id = String(row.id);
     const start = parseDatabaseTime(String(row.start_time ?? ''));
@@ -1387,22 +1495,18 @@ export function querySessions(
   attachExerciseDetails(db, startDate, endDate, events);
   attachMilestoneDetails(db, startDate, endDate, events);
   if (includePlanning) {
-    events.push(...queryPlannedEvents(db, startDate, endDate, importedDates, issues));
-    const excludedWeeklyDates = new Set([
-      ...importedDates,
-      ...Object.keys(dayStates),
-      ...events.filter((event) => event.sourceKind !== 'planned').map((event) => event.date),
-    ]);
+    events.push(...queryPlannedEvents(db, startDate, endDate, importedDates, todayDate, issues));
+    const primaryTodayEvents = events.filter((event) => event.date === todayDate);
     const weeklyPlanning = queryWeeklyPlannedEvents(
       db,
       startDate,
       endDate,
       todayDate,
-      excludedWeeklyDates,
+      primaryTodayEvents,
       issues,
     );
     events.push(...weeklyPlanning.events);
-    Object.assign(dayStates, weeklyPlanning.dayStates);
+    for (const [date, state] of Object.entries(weeklyPlanning.dayStates)) dayStates[date] ??= state;
   }
   for (const [date, state] of Object.entries(dayStates)) {
     if (state.overdue) {
