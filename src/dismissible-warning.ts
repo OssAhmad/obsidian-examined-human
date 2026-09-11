@@ -1,9 +1,9 @@
 import { setIcon } from 'obsidian';
-import type ExaminedHumanPlugin from './main.ts';
+import type { DashboardServices } from './plugin-services.ts';
 
 export function renderDismissibleWarning(
   container: HTMLElement,
-  plugin: ExaminedHumanPlugin,
+  plugin: Pick<DashboardServices, 'saveSettings' | 'settings'>,
   key: string,
   message: string,
   className: string,

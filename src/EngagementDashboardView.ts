@@ -1,12 +1,12 @@
 import { ItemView, moment, normalizePath, WorkspaceLeaf } from 'obsidian';
 import { renderDismissibleWarning } from './dismissible-warning.ts';
 import { engagementMatchesSearch } from './engagement-search.ts';
-import type ExaminedHumanPlugin from './main.ts';
+import type { DashboardServices } from './plugin-services.ts';
 import type {
   EngagementActivityRecord,
   EngagementDashboardQueryResult,
   EngagementDashboardSummaryRecord,
-} from './examined-human-query.ts';
+} from './read-models/engagement.ts';
 import { DASHBOARD_WARNING_KEYS } from './warning-preferences.ts';
 
 export const EXAMINED_HUMAN_ENGAGEMENT_DASHBOARD_VIEW_TYPE = 'examined-human-engagement-dashboard';
@@ -117,7 +117,7 @@ export class EngagementDashboardView extends ItemView {
   private fingerprintTimer: number | null = null;
   private lastFingerprint: string | null = null;
 
-  constructor(leaf: WorkspaceLeaf, private plugin: ExaminedHumanPlugin) {
+  constructor(leaf: WorkspaceLeaf, private plugin: DashboardServices) {
     super(leaf);
   }
 
@@ -140,7 +140,7 @@ export class EngagementDashboardView extends ItemView {
       try {
         const databaseChanged = normalizePath(file.path)
           === this.plugin.database.normalizeVaultPath(this.plugin.settings.databasePath);
-        if (databaseChanged && !this.plugin.nativeLogger.isRunning) void this.refresh();
+        if (databaseChanged && !this.plugin.logger.isRunning) void this.refresh();
       } catch {
         // Invalid database paths are explained by the visible query error.
       }
@@ -601,7 +601,7 @@ export class EngagementDashboardView extends ItemView {
   }
 
   private async checkDatabaseFingerprint(): Promise<void> {
-    if (this.plugin.nativeLogger.isRunning) return;
+    if (this.plugin.logger.isRunning) return;
     try {
       const next = await this.plugin.database.fingerprint(this.plugin.settings.databasePath);
       if (this.lastFingerprint !== null && next !== this.lastFingerprint) await this.refresh();

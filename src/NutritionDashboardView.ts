@@ -11,8 +11,8 @@ import {
   renderDashboardTrend,
 } from './DashboardViewBase.ts';
 import { renderDismissibleWarning } from './dismissible-warning.ts';
-import type ExaminedHumanPlugin from './main.ts';
-import type { NutritionDashboardQueryResult, NutritionDailyRecord } from './examined-human-query.ts';
+import type { DashboardServices } from './plugin-services.ts';
+import type { NutritionDashboardQueryResult, NutritionDailyRecord } from './read-models/nutrition.ts';
 import { DASHBOARD_WARNING_KEYS } from './warning-preferences.ts';
 
 export const EXAMINED_HUMAN_NUTRITION_DASHBOARD_VIEW_TYPE = 'examined-human-nutrition-dashboard';
@@ -27,7 +27,7 @@ function latestDailyRecords(records: NutritionDailyRecord[]): NutritionDailyReco
 }
 
 export class NutritionDashboardView extends DashboardViewBase<NutritionDashboardQueryResult> {
-  constructor(leaf: WorkspaceLeaf, plugin: ExaminedHumanPlugin) {
+  constructor(leaf: WorkspaceLeaf, plugin: DashboardServices) {
     super(leaf, plugin);
   }
 

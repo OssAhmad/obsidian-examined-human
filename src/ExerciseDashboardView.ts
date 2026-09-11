@@ -11,15 +11,15 @@ import {
   renderDashboardTrend,
 } from './DashboardViewBase.ts';
 import { renderDismissibleWarning } from './dismissible-warning.ts';
-import type ExaminedHumanPlugin from './main.ts';
-import type { ExerciseDashboardQueryResult, ExerciseWorkoutRecord } from './examined-human-query.ts';
+import type { DashboardServices } from './plugin-services.ts';
+import type { ExerciseDashboardQueryResult, ExerciseWorkoutRecord } from './read-models/exercise.ts';
 import { SessionDetailsModal } from './SessionDetailsModal.ts';
 import { DASHBOARD_WARNING_KEYS } from './warning-preferences.ts';
 
 export const EXAMINED_HUMAN_EXERCISE_DASHBOARD_VIEW_TYPE = 'examined-human-exercise-dashboard';
 
 export class ExerciseDashboardView extends DashboardViewBase<ExerciseDashboardQueryResult> {
-  constructor(leaf: WorkspaceLeaf, plugin: ExaminedHumanPlugin) {
+  constructor(leaf: WorkspaceLeaf, plugin: DashboardServices) {
     super(leaf, plugin);
   }
 

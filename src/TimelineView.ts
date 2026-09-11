@@ -1,8 +1,8 @@
 import { ItemView, moment, normalizePath, Notice, Platform, WorkspaceLeaf } from 'obsidian';
 import { renderDismissibleWarning } from './dismissible-warning.ts';
-import type ExaminedHumanPlugin from './main.ts';
+import type { TimelineServices } from './plugin-services.ts';
 import type { CalendarDayState, CalendarEvent } from './events.ts';
-import type { SessionQueryResult } from './examined-human-query.ts';
+import type { SessionQueryResult } from './read-models/calendar.ts';
 import { layoutOverlappingEvents } from './overlap.ts';
 import { createSessionElement } from './session-element.ts';
 import { layoutVisualStack } from './visual-stack.ts';
@@ -42,7 +42,7 @@ export class TimelineView extends ItemView {
   private lastFingerprint: string | null = null;
   private warningNoticeShown = false;
 
-  constructor(leaf: WorkspaceLeaf, private plugin: ExaminedHumanPlugin) {
+  constructor(leaf: WorkspaceLeaf, private plugin: TimelineServices) {
     super(leaf);
   }
 
@@ -72,7 +72,7 @@ export class TimelineView extends ItemView {
       const configuredPath = this.plugin.settings.databasePath;
       try {
         if (normalizePath(file.path) === this.plugin.database.normalizeVaultPath(configuredPath)
-          && !this.plugin.nativeLogger.isRunning) void this.refresh();
+          && !this.plugin.logger.isRunning) void this.refresh();
       } catch {
         // The visible query error explains an invalid path; unrelated vault changes should remain safe.
       }

@@ -1,5 +1,5 @@
 import { ItemView, moment, normalizePath, WorkspaceLeaf } from 'obsidian';
-import type ExaminedHumanPlugin from './main.ts';
+import type { DashboardServices } from './plugin-services.ts';
 
 const FINGERPRINT_INTERVAL_MS = 10_000;
 
@@ -224,7 +224,7 @@ export function renderDashboardTrend(container: HTMLElement, records: DashboardT
   }
 }
 
-export abstract class DashboardViewBase<T> extends ItemView {
+export abstract class DashboardViewBase<T, TServices extends DashboardServices = DashboardServices> extends ItemView {
   protected result: T | null = null;
   protected selectedRange: DashboardRangeKey = 'days';
   protected startDate: string | null = null;
@@ -239,7 +239,7 @@ export abstract class DashboardViewBase<T> extends ItemView {
   private fingerprintTimer: number | null = null;
   private lastFingerprint: string | null = null;
 
-  constructor(leaf: WorkspaceLeaf, protected plugin: ExaminedHumanPlugin) {
+  constructor(leaf: WorkspaceLeaf, protected plugin: TServices) {
     super(leaf);
   }
 
@@ -254,7 +254,7 @@ export abstract class DashboardViewBase<T> extends ItemView {
       try {
         const databaseChanged = normalizePath(file.path)
           === this.plugin.database.normalizeVaultPath(this.plugin.settings.databasePath);
-        if (databaseChanged && !this.plugin.nativeLogger.isRunning) void this.refresh();
+        if (databaseChanged && !this.plugin.logger.isRunning) void this.refresh();
       } catch {
         // The dashboard renders invalid path and database errors in its own view.
       }
@@ -351,7 +351,7 @@ export abstract class DashboardViewBase<T> extends ItemView {
   private async checkDatabaseFingerprint(): Promise<void> {
     try {
       const fingerprint = await this.plugin.database.fingerprint(this.plugin.settings.databasePath);
-      if (this.lastFingerprint !== null && fingerprint !== this.lastFingerprint && !this.plugin.nativeLogger.isRunning) {
+      if (this.lastFingerprint !== null && fingerprint !== this.lastFingerprint && !this.plugin.logger.isRunning) {
         this.lastFingerprint = fingerprint;
         await this.refresh();
       } else {

@@ -1,6 +1,6 @@
 import type { App } from 'obsidian';
 import type { NoteTemporalState } from './daily-note-index.ts';
-import type { WeeklyPlanIndexQueryResult } from './examined-human-query.ts';
+import type { WeeklyPlanIndexQueryResult } from './read-models/weekly.ts';
 import type { DiscoveredEhForm } from './form-discovery.ts';
 
 export type WeeklyNoteStatus = 'pending' | 'imported';

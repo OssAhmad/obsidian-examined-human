@@ -6,7 +6,7 @@ This document records how the first SQL.js-backed version works, why its boundar
 
 Treat these as part of the plugin contract unless a deliberate product decision changes them:
 
-1. The `ExaminedHumanDatabase` dashboard query layer is permanently read-only. Approved mutations belong only in `NativeLoggerWriteService`; never add write APIs to the reader.
+1. The `ExaminedHumanDatabase` dashboard query layer is permanently read-only. Approved mutations belong only in `LoggerService`; never add write APIs to the reader.
 2. `EH.db`, SQLite sidecar files, and Obsidian's local `data.json` must never be committed.
 3. A card title is the engagement's canonical name. Session type is optional secondary metadata shown only when the rendered card has enough room, and remains available in the tooltip and details modal when present. A typeless session uses its engagement type for calendar color.
 4. A card duration is shown as zero-padded `hh:mm`.
@@ -52,7 +52,7 @@ ExaminedHumanDatabase
 sql.js in-memory Database -- PRAGMA query_only = ON
         |
         v
-examined-human-query schema validation + JOIN + row mapping
+feature read model + shared SQL/schema helpers
         |
         v
 CalendarEvent[] + DataIssue[]
@@ -114,23 +114,27 @@ Finance / Nutrition / Exercise Dashboard commands
         |
         +--> shared range controls + read-only refresh/fingerprint lifecycle
         |
-        +--> ExaminedHumanDatabase --> domain query in examined-human-query.ts
+        +--> ExaminedHumanDatabase --> feature query in read-models/
                  |
                  +--> Finance: currency-safe flow, linkage, accounts, engagements, detail
                  +--> Nutrition: effective daily values, adherence, meals, foods, leisure debt
                  +--> Exercise: canonical workout time, sets, performance, muscles, detail coverage
 ```
 
-The source database is read into memory for each inspection or range query. sql.js operates on that in-memory copy and the database instance is always closed in a `finally` block. `PRAGMA query_only = ON` is defense in depth, and the reader exposes no mutation API. Approved writes cross the separate `NativeLoggerWriteService` boundary. Because SQL.js exports a whole replacement file, that service uses checksums, a serialized queue, transactions, and post-write verification for every write. It creates backups only for durable/finalized mutations; unlimited current/future Meals replacements and planning-projection refreshes are intentionally backup-free because they are explicitly ephemeral. Hidden `.examined-human-backups` storage is probed and written through the vault adapter because Obsidian may omit dot-prefixed folders from its indexed `TFolder` tree; this also makes repeated durable writes and external folder-creation races safe on desktop and mobile. After a verified durable write, a positive `backupRetentionLimit` lists that exact database's EH-named backups, protects the current backup, and deletes excess files oldest-first. Zero keeps all. Cleanup failures are reported separately and never misrepresent the already verified database write as failed. Preview operations mutate only an in-memory clone, which allows admin commands and dependent facts to be assessed together without touching the vault database.
+The source database is read into memory for each inspection or range query. sql.js operates on that in-memory copy and the database instance is always closed in a `finally` block. `PRAGMA query_only = ON` is defense in depth, and the reader exposes no mutation API. Approved writes cross the separate `LoggerService` boundary. Because SQL.js exports a whole replacement file, that service uses checksums, a serialized queue, transactions, and post-write verification for every write. It creates backups only for durable/finalized mutations; unlimited current/future Meals replacements and planning-projection refreshes are intentionally backup-free because they are explicitly ephemeral. Hidden `.examined-human-backups` storage is probed and written through the vault adapter because Obsidian may omit dot-prefixed folders from its indexed `TFolder` tree; this also makes repeated durable writes and external folder-creation races safe on desktop and mobile. After a verified durable write, a positive `backupRetentionLimit` lists that exact database's EH-named backups, protects the current backup, and deletes excess files oldest-first. Zero keeps all. Cleanup failures are reported separately and never misrepresent the already verified database write as failed. Preview operations mutate only an in-memory clone, which allows admin commands and dependent facts to be assessed together without touching the vault database.
 
 ## Repository map
 
 ### Runtime
 
 - `src/main.ts` — plugin lifecycle, settings load/save, view registration, ribbon icon, commands, and refreshing all open dashboard views.
+- `src/plugin-services.ts` — stable capability contract supplied to views and staging workflows, avoiding dependencies on the complete plugin lifecycle class.
 - `src/examined-human-database.ts` — resolves configured paths, reads database bytes, initializes SQL.js, creates short-lived read-only database instances, and computes file fingerprints.
 - `src/sql-runtime.ts` — shared, embedded SQL.js initialization used by the isolated reader and writer services.
-- `src/examined-human-query.ts` — validates the required schema, performs SQL queries, maps rows into domain events, sorts events, and emits data-quality issues.
+- `src/read-models/` — owns every feature query contract, shared SQL/schema/value helpers, and the extracted command catalog, database inspection, weekly, nutrition, and exercise implementations.
+- `src/examined-human-query.ts` — compatibility export surface plus the calendar, daily, engagement, and finance implementations whose shared precedence and ledger helpers still make a separate move riskier; existing public imports remain valid.
+- `src/forms/` — shared EH Form boundary, section, `ENTRIES`, labeled-field, and delimited-row primitives.
+- `src/domain/` — runtime-neutral date and valuation normalization rules shared by readers and importers.
 - `src/events.ts` — shared event model, known session and engagement types, default colors, time parsing, duration/time formatting, card-label policy, and the hard-coded gray `chor` rule.
 - `src/TimelineView.ts` — calendar range management, SQL queries, toolbar, sticky grid, scrolling, zoom, event rendering, warnings, and automatic refresh.
 - `src/WeeklyAssessmentView.ts` — unified weekly-note navigation, direction and total cards, commitment goals, target/actual bars, and native confirmation-gated actions.
@@ -150,15 +154,20 @@ The source database is read into memory for each inspection or range query. sql.
 - `src/form-discovery.ts` — opt-in/journal-folder form discovery, descriptor cache, and bounded form/date parsing.
 - `src/form-status.ts` — case-insensitive YAML lifecycle semantics and shared-file completion rules.
 - `src/budget-note-index.ts` — fast filename/path filtering and chosen-note loading for explicit Budget Form import; it never reads the entire vault to find form contents.
-- `src/native-logger/meals.ts` — pure new-schema Meals and supporting Daily Metrics parser/evaluator.
-- `src/native-logger/meal-import.ts` — official Schema v1 capability checks, lifecycle policy, and normalized Meals SQL writes.
-- `src/native-logger/daily-note.ts` — strict full Daily Note parser, validators, admin command application, canonical import, and milestone reconciliation.
-- `src/native-logger/planning.ts` — tolerant current/future parser and replaceable `note_sources`/`planned_sessions` projection.
-- `src/native-logger/weekly.ts` — strict weekly parser/import and weekly-to-Daily-Note write preparation.
-- `src/native-logger/database-utils.ts` — shared schema, taxonomy, alias, date, and query helpers.
-- `src/native-logger/write-service.ts` — serialized vault writer, SHA-256 conflict detection, backup creation, transaction staging, database creation, multi-note rollback, and post-write verification.
-- `src/native-logger/checksum.ts` — mobile-safe Web Crypto checksum helpers.
-- `src/NativeMealImportConfirmationModal.ts` — native Meals preview and explicit write confirmation boundary.
+- `src/logger/meals.ts` — pure new-schema Meals and supporting Daily Metrics parser/evaluator.
+- `src/logger/meal-import.ts` — official Schema v1 capability checks, lifecycle policy, and normalized Meals SQL writes.
+- `src/logger/daily-note.ts` — strict full Daily Note grammar, validators, admin command application, canonical import, and milestone reconciliation built on the shared form primitives.
+- `src/logger/planning.ts` — tolerant current/future parser and replaceable `note_sources`/`planned_sessions` projection.
+- `src/logger/weekly.ts` — strict weekly parser/import and weekly-to-Daily-Note write preparation.
+- `src/logger/admin/command-registry.ts` — declarative Admin Event names, argument arities, and validation metadata.
+- `src/logger/admin/command-handlers.ts` — database-side Admin Event command execution, isolated from Daily Form parsing and validation.
+- `src/logger/note-staging.ts` — bounded, configurable Daily Form section mutation used by Admin, Finance, and Valuation staging.
+- `src/logger/database-utils.ts` — shared schema, taxonomy, alias, and query helpers plus compatibility exports for moved date utilities.
+- `src/logger/persistence/sqlite-transaction.ts` — reusable transaction staging and SQLite integrity/foreign-key verification.
+- `src/logger/service.ts` — serialized vault writer, SHA-256 conflict detection, backup policy, database creation, multi-note rollback, and verified replacement orchestration.
+- `src/logger/checksum.ts` — mobile-safe Web Crypto checksum helpers.
+- `src/native-logger/` — temporary compatibility modules that reexport the corresponding `src/logger/` entry points.
+- `src/MealImportConfirmationModal.ts` — Meals preview and explicit write confirmation boundary.
 - `src/DailyImportConfirmationModal.ts` — completeness review and the Daily Assessment confirmation boundary.
 - `src/WeeklyActionConfirmationModal.ts` — weekly dry-run review and confirmation boundary.
 - `src/session-element.ts` — shared calendar/Daily Assessment session-card renderer.
@@ -175,13 +184,15 @@ The source database is read into memory for each inspection or range query. sql.
 - `migrations/000_create_schema_v1.sql` — complete empty official Schema v1 creation script with public taxonomy seeds and no user data.
 - `migrations/001_upgrade_v5_to_schema_v1.sql` through `migrations/005_make_session_type_optional_schema_v1.sql` — the guarded pre-1.0/current-v1 upgrade path into the current official Schema v1 foundations.
 - `src/*.test.mjs` — Node tests for mapping, time formatting, `chor`, and overlap behavior.
+- `test-support/database.mjs` — canonical in-memory database builder loaded from the official Schema v1 migration.
+- `test-support/forms.mjs` — canonical EH Form fixture builders.
 - `scripts/validate-database.mjs` — validates a real database without printing engagement names or notes.
 - `scripts/check-release.mjs` — checks version agreement and required release assets.
 - `docs/RELEASING.md` — release procedure.
 
 ### Local-only and generated files
 
-- `main.js` is generated by `npm run build` and intentionally ignored.
+- `main.js` is a tracked generated release artifact. Regenerate it with `npm run build`; do not hand-edit it.
 - `data.json` is generated by Obsidian and intentionally ignored because it contains local settings.
 - `EH.db`, `*.db-journal`, `*.db-wal`, and `*.db-shm` are intentionally ignored.
 
@@ -374,9 +385,9 @@ These are boundaries, not accidental promises. Add future behavior behind a clea
 
 ## Recommended extension seams
 
-- Add new read models in `examined-human-query.ts`; keep raw SQL out of `TimelineView.ts`.
+- Add new read models under `src/read-models/`; keep raw SQL out of views and keep the compatibility query surface stable while callers migrate.
 - Add future-event sources behind a provider interface that returns `CalendarEvent`-compatible objects.
-- Extend `NativeLoggerWriteService` and pure component import modules for future mutations. Preserve backups, transactions, conflict handling, explicit confirmation, and the read-only reader invariant.
+- Extend `LoggerService` and pure component import modules for future mutations. Preserve backups, transactions, conflict handling, explicit confirmation, and the read-only reader invariant.
 - Add filters as view state operating on mapped events, not as ad hoc DOM hiding.
 - Add schema/version adaptation before changing the required column contract.
 - Keep format and color policy in `events.ts` so cards, modals, exports, and future views agree.

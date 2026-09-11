@@ -87,7 +87,7 @@ export class ExaminedHumanSettingTab extends PluginSettingTab {
         .onClick(async () => {
           button.setDisabled(true);
           try {
-            const result = await this.plugin.nativeLogger.createDatabase(this.plugin.settings.databasePath);
+            const result = await this.plugin.logger.createDatabase(this.plugin.settings.databasePath);
             new Notice(`Created an empty Examined Human Data Schema v${result.schemaVersion} database at ${result.databasePath}.`, 9000);
             await this.plugin.refreshViews();
           } catch (error) {
@@ -133,7 +133,7 @@ export class ExaminedHumanSettingTab extends PluginSettingTab {
         .onClick(async () => {
           button.setDisabled(true);
           try {
-            const preview = await this.plugin.nativeLogger.inspectSchemaV1Upgrade(this.plugin.settings.databasePath);
+            const preview = await this.plugin.logger.inspectSchemaV1Upgrade(this.plugin.settings.databasePath);
             const confirmed = await confirmWeeklyAction(this.app, {
               title: 'Upgrade to official Data Schema v1',
               explanation: 'This guarded upgrade adds any missing official Schema v1 foundations, including optional canonical session types. Existing session type values and linked exercise details are preserved.',
@@ -142,7 +142,7 @@ export class ExaminedHumanSettingTab extends PluginSettingTab {
               warning: 'A backup, transaction, integrity checks, and post-write verification will run before the upgraded database becomes the source of truth.',
             });
             if (!confirmed) return;
-            const result = await this.plugin.nativeLogger.upgradeToOfficialSchemaV1(this.plugin.settings.databasePath);
+            const result = await this.plugin.logger.upgradeToOfficialSchemaV1(this.plugin.settings.databasePath);
             new Notice(`Upgraded ${result.databasePath} to official Data Schema v1. ${result.backupPath ? `Backup: ${result.backupPath}` : ''}`, 12_000);
             await this.plugin.refreshViews();
             this.display();

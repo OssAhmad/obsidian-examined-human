@@ -1,5 +1,5 @@
 import type { App } from 'obsidian';
-import type { DailyNoteIndexQueryResult, DailyNoteSourceRecord } from './examined-human-query.ts';
+import type { DailyNoteIndexQueryResult, DailyNoteSourceRecord } from './read-models/daily.ts';
 import type { DiscoveredEhForm } from './form-discovery.ts';
 
 export type DailyNoteStatus = 'needs-import' | 'current-future' | 'imported';

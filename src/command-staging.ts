@@ -1,16 +1,16 @@
 import { moment, Notice, TFile } from 'obsidian';
 import { chooseAdminEventStageTarget, confirmAdminEventStage } from './AdminEventStageModal.ts';
 import { buildDailyNoteList, type DailyNoteListItem } from './daily-note-index.ts';
-import type ExaminedHumanPlugin from './main.ts';
+import type { NoteStagingServices } from './plugin-services.ts';
 
 export interface StageCommandsOptions {
-  plugin: ExaminedHumanPlugin;
+  plugin: NoteStagingServices;
   commands: string[];
   preferredTarget?: DailyNoteListItem | null;
 }
 
 export async function chooseUnimportedDailyNote(
-  plugin: ExaminedHumanPlugin,
+  plugin: NoteStagingServices,
   preferredTarget: DailyNoteListItem | null | undefined,
 ): Promise<DailyNoteListItem | null> {
   if (preferredTarget && preferredTarget.status !== 'imported') return preferredTarget;
@@ -37,7 +37,7 @@ export async function stageAdminCommands(options: StageCommandsOptions): Promise
   if (!target) return null;
   const file = options.plugin.app.vault.getAbstractFileByPath(target.filePath);
   if (!(file instanceof TFile)) throw new Error(`Daily Note not found: ${target.filePath}`);
-  const preview = await options.plugin.nativeLogger.previewAdminEventStage({
+  const preview = await options.plugin.logger.previewAdminEventStage({
     noteDate: target.date,
     fileName: target.fileName,
     filePath: target.filePath,
@@ -45,7 +45,7 @@ export async function stageAdminCommands(options: StageCommandsOptions): Promise
     commands,
   });
   if (!await confirmAdminEventStage(options.plugin.app, preview)) return null;
-  await options.plugin.nativeLogger.stageAdminEvent(preview);
+  await options.plugin.logger.stageAdminEvent(preview);
   new Notice(`${commands.length === 1 ? 'Command staged' : `${commands.length} commands staged`} in ${target.fileName}.`, 8000);
   return target;
 }

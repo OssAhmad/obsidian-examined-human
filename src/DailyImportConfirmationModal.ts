@@ -1,11 +1,11 @@
 import { App, Modal } from 'obsidian';
-import type { NativeDailyInspection } from './native-logger/daily-note.ts';
+import type { DailyInspection } from './logger/daily-note.ts';
 
 export interface DailyImportConfirmationOptions {
   title: string;
   explanation: string;
   confirmLabel: string;
-  inspection: NativeDailyInspection;
+  inspection: DailyInspection;
   dryRunOutput?: string;
 }
 

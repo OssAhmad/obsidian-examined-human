@@ -1,8 +1,6 @@
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
-import { createRequire } from 'node:module';
 import test from 'node:test';
-import initSqlJs from 'sql.js';
+import { createSchemaV1Database, SQL } from '../../test-support/database.mjs';
 import { inspectDailyNote, writeHistoricalDailyNote } from './daily-note.ts';
 import { queryMealComponentState, writeMealInspection } from './meal-import.ts';
 import { inspectMeals } from './meals.ts';
@@ -13,15 +11,8 @@ import {
   writeWeeklyPlan,
 } from './weekly.ts';
 
-const require = createRequire(import.meta.url);
-const wasmBinary = await readFile(require.resolve('sql.js/dist/sql-wasm.wasm'));
-const schema = await readFile(new URL('../../migrations/000_create_schema_v1.sql', import.meta.url), 'utf8');
-const SQL = await initSqlJs({ wasmBinary });
-
 function database() {
-  const db = new SQL.Database();
-  db.run(schema);
-  db.run('PRAGMA foreign_keys = ON');
+  const db = createSchemaV1Database();
   db.run(`
     INSERT INTO engagements (name, type_id, status_id)
     SELECT 'Project Alpha', et.id, es.id

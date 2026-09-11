@@ -1,18 +1,10 @@
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
-import { createRequire } from 'node:module';
 import test from 'node:test';
-import initSqlJs from 'sql.js';
+import { createSchemaV1Database } from '../../test-support/database.mjs';
 import { inspectBudgetForm, writeBudgetForm } from './budget.ts';
 
-const require = createRequire(import.meta.url);
-const wasmBinary = await readFile(require.resolve('sql.js/dist/sql-wasm.wasm'));
-const schema = await readFile(new URL('../../migrations/000_create_schema_v1.sql', import.meta.url), 'utf8');
-const SQL = await initSqlJs({ wasmBinary });
-
 function fixture() {
-  const db = new SQL.Database();
-  db.run(schema);
+  const db = createSchemaV1Database();
   db.run(`
     INSERT INTO engagements (id, name, type_id, status_id) VALUES
       (1, 'Food', (SELECT id FROM engagement_types WHERE code = 'maintenance'), (SELECT id FROM engagement_statuses WHERE code = 'active')),

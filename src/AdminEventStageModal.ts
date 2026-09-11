@@ -1,6 +1,6 @@
 import { App, Modal } from 'obsidian';
 import type { DailyNoteListItem } from './daily-note-index.ts';
-import type { AdminEventStagePreview } from './native-logger/admin-event-stage.ts';
+import type { AdminEventStagePreview } from './logger/admin-event-stage.ts';
 
 export function chooseAdminEventStageTarget(
   app: App,

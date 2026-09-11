@@ -1,5 +1,5 @@
 import { App, TFile } from 'obsidian';
-import { hasBudgetForm } from './native-logger/budget.ts';
+import { hasBudgetForm } from './logger/budget.ts';
 
 export interface BudgetNoteListItem {
   fileName: string;

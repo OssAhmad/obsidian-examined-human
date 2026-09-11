@@ -8,9 +8,9 @@ import type {
   CommandEngagementRecord,
   CommandExerciseRecord,
   FoodLibraryRecord,
-  FinancialDashboardQueryResult,
-} from './examined-human-query.ts';
-import type ExaminedHumanPlugin from './main.ts';
+} from './read-models/command-catalog.ts';
+import type { FinancialDashboardQueryResult } from './read-models/finance.ts';
+import type { CommandServices } from './plugin-services.ts';
 
 export const EXAMINED_HUMAN_COMMAND_CENTER_VIEW_TYPE = 'examined-human-command-center';
 type CommandCenterTab = 'foods' | 'engagements' | 'exercises' | 'accounts' | 'valuation' | 'batch';
@@ -42,7 +42,7 @@ export class CommandCenterView extends ItemView {
   private grams = 100;
   private activeTab: CommandCenterTab = 'foods';
 
-  constructor(leaf: WorkspaceLeaf, private plugin: ExaminedHumanPlugin) {
+  constructor(leaf: WorkspaceLeaf, private plugin: CommandServices) {
     super(leaf);
   }
 
@@ -464,7 +464,7 @@ export class CommandCenterView extends ItemView {
 class FoodDeleteModal extends Modal {
   constructor(
     app: import('obsidian').App,
-    private plugin: ExaminedHumanPlugin,
+    private plugin: CommandServices,
     private food: FoodLibraryRecord,
     private onStaged: () => Promise<void>,
   ) { super(app); }
@@ -494,7 +494,7 @@ class FoodAliasMoveModal extends Modal {
   private destination: string;
   constructor(
     app: import('obsidian').App,
-    private plugin: ExaminedHumanPlugin,
+    private plugin: CommandServices,
     private source: FoodLibraryRecord,
     private alias: string,
     foods: FoodLibraryRecord[],
@@ -535,7 +535,7 @@ class ValuationRateStageModal extends Modal {
 
   constructor(
     app: import('obsidian').App,
-    private plugin: ExaminedHumanPlugin,
+    private plugin: CommandServices,
     private onStaged: () => Promise<void>,
   ) { super(app); }
 
@@ -562,7 +562,7 @@ class ValuationRateStageModal extends Modal {
       if (!target) return;
       const file = this.app.vault.getAbstractFileByPath(target.filePath);
       if (!(file instanceof TFile)) throw new Error(`Daily Note not found: ${target.filePath}`);
-      const preview = await this.plugin.nativeLogger.previewValuationRateStage({
+      const preview = await this.plugin.logger.previewValuationRateStage({
         noteDate: target.date, fileName: target.fileName, filePath: target.filePath,
         sourceText: await this.app.vault.read(file), lines,
       });
@@ -573,7 +573,7 @@ class ValuationRateStageModal extends Modal {
         warning: 'Nothing has changed yet. Unit matching is case-insensitive, and a Daily Note may contain only one valuation rate set.',
       });
       if (!confirmed) return;
-      await this.plugin.nativeLogger.stageValuationRates(preview);
+      await this.plugin.logger.stageValuationRates(preview);
       new Notice(`Valuation Rates staged in ${target.fileName}.`, 8000);
       this.close();
       await this.onStaged();
@@ -589,7 +589,7 @@ class EntityAliasMoveModal extends Modal {
   private destination: string;
   constructor(
     app: import('obsidian').App,
-    private plugin: ExaminedHumanPlugin,
+    private plugin: CommandServices,
     private kind: 'engagement' | 'exercise' | 'account',
     private sourceName: string,
     private alias: string,

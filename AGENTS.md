@@ -5,7 +5,7 @@ Read `docs/ARCHITECTURE.md` before structural changes. It is the durable design 
 ## Product contract
 
 - Desktop and mobile Obsidian plugin reading an Examined Human SQLite database through sql.js.
-- `ExaminedHumanDatabase` access is permanently read-only. Approved mutations belong only in `NativeLoggerWriteService`, with backups, transaction staging, conflict checks, and explicit confirmation.
+- `ExaminedHumanDatabase` access is permanently read-only. Approved mutations belong only in `LoggerService`, with backups, transaction staging, conflict checks, and explicit confirmation.
 - Durable/finalized writes create backups; ephemeral Meals and planning-projection replacements do not. Backup retention is user-configurable: `0` keeps all, and a positive whole number keeps that many newest backups. Prune only exact EH-created backup names after verified durable writes; never remove unrelated files or turn a cleanup failure into a false database-write failure.
 - The database path must be relative to the vault root. Node filesystem/process modules are forbidden in runtime plugin code; every import workflow must remain mobile-safe.
 - A session title is the engagement's canonical name. Session type is optional; when present, show it only as secondary metadata on sufficiently tall, non-stacked cards and in accessible/details text. Typeless sessions use their engagement type for calendar color.
@@ -29,8 +29,10 @@ Read `docs/ARCHITECTURE.md` before structural changes. It is the durable design 
 ## Architecture
 
 - `src/examined-human-database.ts`: file access, sql.js initialization, read-only database lifetime.
-- `src/examined-human-query.ts`: schema validation and SQL-to-domain mapping.
-- `src/native-logger/`: pure parsing/import logic plus the isolated guarded writer.
+- `src/read-models/`: feature-specific read-model entry points plus shared SQL/schema helpers.
+- `src/examined-human-query.ts`: compatibility export surface plus the tightly coupled calendar, daily, engagement, and finance implementations.
+- `src/forms/`: shared bounded-form, section, ENTRIES, field, and row primitives.
+- `src/logger/`: pure parsing/import logic plus the isolated guarded writer and shared persistence infrastructure. `src/native-logger/` contains temporary compatibility reexports only.
 - `src/events.ts`: session domain model and formatting/color rules.
 - `src/TimelineView.ts`: calendar viewport and rendering.
 - `src/overlap.ts`: side-by-side placement for concurrent sessions.

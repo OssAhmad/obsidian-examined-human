@@ -1,18 +1,18 @@
 import { ItemView, moment, normalizePath, Notice, TFile, WorkspaceLeaf } from 'obsidian';
-import type ExaminedHumanPlugin from './main.ts';
+import type { FormWorkflowServices } from './plugin-services.ts';
 import { buildDailyNoteList } from './daily-note-index.ts';
 import { pathIsInJournalFolder } from './journal-folder.ts';
 import type {
-  FinancialDashboardQueryResult,
   WeeklyAssessmentQueryResult,
   WeeklyCommitmentAssessmentRecord,
-} from './examined-human-query.ts';
+} from './read-models/weekly.ts';
+import type { FinancialDashboardQueryResult } from './read-models/finance.ts';
 import { formatDashboardAmount, formatDashboardDate } from './DashboardViewBase.ts';
 import { confirmWeeklyAction } from './WeeklyActionConfirmationModal.ts';
 import { buildWeeklyNoteList, type WeeklyNoteListItem } from './weekly-note-index.ts';
-import type { WeeklyImportResult, WeeklyNoteWritePreview } from './native-logger/weekly.ts';
-import type { PlanningSyncResult } from './native-logger/planning.ts';
-import { backupMutationOutput } from './native-logger/write-service.ts';
+import type { WeeklyImportResult, WeeklyNoteWritePreview } from './logger/weekly.ts';
+import type { PlanningSyncResult } from './logger/planning.ts';
+import { backupMutationOutput } from './logger/service.ts';
 
 export const EXAMINED_HUMAN_WEEKLY_ASSESSMENT_VIEW_TYPE = 'examined-human-weekly-assessment';
 
@@ -82,7 +82,7 @@ export class WeeklyAssessmentView extends ItemView {
   private lastFingerprint: string | null = null;
   private actionButton: HTMLButtonElement | null = null;
 
-  constructor(leaf: WorkspaceLeaf, private plugin: ExaminedHumanPlugin) {
+  constructor(leaf: WorkspaceLeaf, private plugin: FormWorkflowServices) {
     super(leaf);
   }
 
@@ -106,7 +106,7 @@ export class WeeklyAssessmentView extends ItemView {
         const databaseChanged = normalizePath(file.path)
           === this.plugin.database.normalizeVaultPath(this.plugin.settings.databasePath);
         const selectedNoteChanged = file.path === this.selectedItem?.filePath;
-        if ((databaseChanged || selectedNoteChanged) && !this.plugin.nativeLogger.isRunning) void this.refresh();
+        if ((databaseChanged || selectedNoteChanged) && !this.plugin.logger.isRunning) void this.refresh();
       } catch {
         // Invalid database paths are explained by the visible query error.
       }
@@ -524,7 +524,7 @@ export class WeeklyAssessmentView extends ItemView {
       filePath: item.filePath,
       sourceText: await this.app.vault.read(file),
     };
-    const preview = await this.plugin.nativeLogger.inspectWeekly(request);
+    const preview = await this.plugin.logger.inspectWeekly(request);
     const output = weeklyImportOutput(preview);
     const confirmed = await confirmWeeklyAction(this.app, {
       title: `Import ${item.weekLabel}`,
@@ -535,7 +535,7 @@ export class WeeklyAssessmentView extends ItemView {
     });
     if (!confirmed) return;
     this.actionButton?.setText('Importing…');
-    const live = await this.plugin.nativeLogger.importWeekly(request);
+    const live = await this.plugin.logger.importWeekly(request);
     await this.plugin.markImportedEhFormFileIfComplete(file);
     this.loggerOutput = [weeklyImportOutput(live), ...backupMutationOutput(live)].join('\n');
     await this.plugin.refreshViews();
@@ -544,7 +544,7 @@ export class WeeklyAssessmentView extends ItemView {
 
   private async syncSelectedWeek(item: WeeklyNoteListItem): Promise<void> {
     const writeRequest = await this.weeklyDailyNoteRequest(item);
-    const dryWrite = await this.plugin.nativeLogger.previewWeeklyDailyNoteWrites(writeRequest);
+    const dryWrite = await this.plugin.logger.previewWeeklyDailyNoteWrites(writeRequest);
     const preview = weeklyWriteOutput(dryWrite);
     const confirmed = await confirmWeeklyAction(this.app, {
       title: `Sync ${item.weekLabel}`,
@@ -556,14 +556,14 @@ export class WeeklyAssessmentView extends ItemView {
     if (!confirmed) return;
 
     this.actionButton?.setText('Writing notes…');
-    const liveWrite = await this.plugin.nativeLogger.writeWeeklyDailyNotes(writeRequest);
+    const liveWrite = await this.plugin.logger.writeWeeklyDailyNotes(writeRequest);
 
     this.actionButton?.setText('Checking projections…');
     const planningRequest = await this.planningSyncRequest();
-    const futureDryRun = await this.plugin.nativeLogger.previewPlanning(planningRequest);
+    const futureDryRun = await this.plugin.logger.previewPlanning(planningRequest);
 
     this.actionButton?.setText('Syncing projections…');
-    const futureLive = await this.plugin.nativeLogger.syncPlanning(planningRequest);
+    const futureLive = await this.plugin.logger.syncPlanning(planningRequest);
     this.loggerOutput = [
       `Week note write\n${weeklyWriteOutput(liveWrite)}`,
       `Future projection preview\n${planningOutput(futureDryRun)}`,
@@ -651,7 +651,7 @@ export class WeeklyAssessmentView extends ItemView {
     try {
       const fingerprint = await this.plugin.database.fingerprint(this.plugin.settings.databasePath);
       if (this.lastFingerprint != null && fingerprint !== this.lastFingerprint
-        && !this.plugin.nativeLogger.isRunning) await this.refresh();
+        && !this.plugin.logger.isRunning) await this.refresh();
       this.lastFingerprint = fingerprint;
     } catch {
       // The visible error state or next successful poll will explain/recover.

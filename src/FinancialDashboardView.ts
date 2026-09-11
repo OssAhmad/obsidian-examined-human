@@ -1,4 +1,4 @@
-import { Modal, Notice, moment, TFile, WorkspaceLeaf } from 'obsidian';
+import { App, Modal, Notice, moment, TFile, WorkspaceLeaf } from 'obsidian';
 import {
   createDashboardPanel,
   createDashboardMetric,
@@ -9,7 +9,7 @@ import {
   renderDashboardLine,
   type DashboardLineRecord,
 } from './DashboardViewBase.ts';
-import type ExaminedHumanPlugin from './main.ts';
+import type { FinancialDashboardServices } from './plugin-services.ts';
 import { budgetNoteCandidates, readBudgetNote, type BudgetNoteListItem } from './budget-note-index.ts';
 import { buildDailyNoteList, type DailyNoteListItem } from './daily-note-index.ts';
 import { confirmWeeklyAction } from './WeeklyActionConfirmationModal.ts';
@@ -18,7 +18,7 @@ import type {
   FinancialBalanceHistoryRecord,
   FinancialDashboardQueryResult,
   FinancialExplorerEngagementRecord,
-} from './examined-human-query.ts';
+} from './read-models/finance.ts';
 
 export const EXAMINED_HUMAN_FINANCIAL_DASHBOARD_VIEW_TYPE = 'examined-human-financial-dashboard';
 
@@ -37,23 +37,23 @@ function sampledBalanceHistory(records: FinancialBalanceHistoryRecord[]): Financ
 
 function formattedEntryAmount(value: number): string { return value > 0 ? `+${value}` : String(value); }
 
-function chooseBudgetNote(app: ExaminedHumanPlugin['app'], candidates: BudgetNoteListItem[]): Promise<BudgetNoteListItem | null> {
+function chooseBudgetNote(app: App, candidates: BudgetNoteListItem[]): Promise<BudgetNoteListItem | null> {
   return new Promise((resolve) => new BudgetNotePickerModal(app, candidates, resolve).open());
 }
 
-function chooseBalanceEntry(app: ExaminedHumanPlugin['app'], account: FinancialAccountRecord, kind: BalanceEntryInput['kind']): Promise<BalanceEntryInput | null> {
+function chooseBalanceEntry(app: App, account: FinancialAccountRecord, kind: BalanceEntryInput['kind']): Promise<BalanceEntryInput | null> {
   return new Promise((resolve) => new BalanceEntryModal(app, account, kind, resolve).open());
 }
 
-function chooseDailyNote(app: ExaminedHumanPlugin['app'], targets: DailyNoteListItem[]): Promise<DailyNoteListItem | null> {
+function chooseDailyNote(app: App, targets: DailyNoteListItem[]): Promise<DailyNoteListItem | null> {
   return new Promise((resolve) => new FinanceDailyNotePickerModal(app, targets, resolve).open());
 }
 
-export class FinancialDashboardView extends DashboardViewBase<FinancialDashboardQueryResult> {
+export class FinancialDashboardView extends DashboardViewBase<FinancialDashboardQueryResult, FinancialDashboardServices> {
   private selectedAccountId: number | null = null;
   private displayMode: FinancialDisplayMode = 'valuation';
 
-  constructor(leaf: WorkspaceLeaf, plugin: ExaminedHumanPlugin) { super(leaf, plugin); }
+  constructor(leaf: WorkspaceLeaf, plugin: FinancialDashboardServices) { super(leaf, plugin); }
   getViewType(): string { return EXAMINED_HUMAN_FINANCIAL_DASHBOARD_VIEW_TYPE; }
   getDisplayText(): string { return 'Examined Human — Finance'; }
   getIcon(): string { return 'landmark'; }
@@ -289,7 +289,7 @@ export class FinancialDashboardView extends DashboardViewBase<FinancialDashboard
       const choice = await chooseBudgetNote(this.app, budgetNoteCandidates(this.app)); if (!choice) return;
       const candidate = await readBudgetNote(this.app, choice);
       const request = { databasePath: this.plugin.settings.databasePath, fileName: candidate.fileName, filePath: candidate.filePath, sourceText: candidate.sourceText };
-      const preview = await this.plugin.nativeLogger.inspectBudget(request);
+      const preview = await this.plugin.logger.inspectBudget(request);
       const confirmed = await confirmWeeklyAction(this.app, {
         title: 'Import Budget Form', explanation: preview.updatedExistingBudget ? 'This updates the stored budget with the same start and end dates. The note remains untouched in your vault.' : 'This adds a dated Budget Form to the database.',
         confirmLabel: preview.updatedExistingBudget ? 'Update budget' : 'Import budget',
@@ -297,7 +297,7 @@ export class FinancialDashboardView extends DashboardViewBase<FinancialDashboard
         warning: 'Nothing has changed yet. Expected movements are planning records only and never create transactions or reminders.',
       });
       if (!confirmed) return;
-      const result = await this.plugin.nativeLogger.importBudget(request);
+      const result = await this.plugin.logger.importBudget(request);
       new Notice(`Imported Budget Form for ${result.periodStart} through ${result.periodEnd}. ${result.backupPath ? `Backup: ${result.backupPath}` : ''}`, 10_000);
       await this.plugin.refreshViews();
     } catch (error) { new Notice(`Budget Form was not imported: ${error instanceof Error ? error.message : String(error)}`, 12_000); }
@@ -320,7 +320,7 @@ export class FinancialDashboardView extends DashboardViewBase<FinancialDashboard
       const marker = kind === 'opening' ? '[EH opening balance]' : '[EH reconciliation]';
       const description = entry.reason ? `${marker} ${entry.reason}` : marker;
       const line = `${formattedEntryAmount(amount)} | ${account.accountName} | Finance | ${description}`;
-      const preview = await this.plugin.nativeLogger.previewFinanceEntryStage({ noteDate: target.date, fileName: target.fileName, filePath: target.filePath, sourceText, line });
+      const preview = await this.plugin.logger.previewFinanceEntryStage({ noteDate: target.date, fileName: target.fileName, filePath: target.filePath, sourceText, line });
       const confirmed = await confirmWeeklyAction(this.app, {
         title: kind === 'opening' ? 'Stage opening balance' : 'Stage reconciliation',
         explanation: `This writes one normal Transaction line into ${target.fileName}; the database changes only when that Daily Note is imported.`,
@@ -328,14 +328,14 @@ export class FinancialDashboardView extends DashboardViewBase<FinancialDashboard
         warning: 'Nothing has been changed yet. The Daily Note importer will validate the account and Finance engagement later.',
       });
       if (!confirmed) return;
-      await this.plugin.nativeLogger.stageFinanceEntry(preview);
+      await this.plugin.logger.stageFinanceEntry(preview);
       new Notice(`Staged ${kind === 'opening' ? 'opening balance' : 'reconciliation'} in ${target.fileName}. Import that Daily Note to update the ledger.`, 10_000);
     } catch (error) { new Notice(`Financial entry was not staged: ${error instanceof Error ? error.message : String(error)}`, 12_000); }
   }
 }
 
 class BudgetNotePickerModal extends Modal {
-  constructor(app: ExaminedHumanPlugin['app'], private candidates: BudgetNoteListItem[], private resolveChoice: (candidate: BudgetNoteListItem | null) => void) { super(app); }
+  constructor(app: App, private candidates: BudgetNoteListItem[], private resolveChoice: (candidate: BudgetNoteListItem | null) => void) { super(app); }
   onOpen(): void {
     this.contentEl.createEl('h2', { text: 'Choose EH Budget Form' });
     if (this.candidates.length === 0) { this.contentEl.createEl('p', { text: 'This vault has no Markdown notes.' }); this.contentEl.createEl('button', { text: 'Close' }).addEventListener('click', () => { this.resolveChoice(null); this.close(); }); return; }
@@ -360,7 +360,7 @@ class BudgetNotePickerModal extends Modal {
 class BalanceEntryModal extends Modal {
   private actualInput!: HTMLInputElement;
   private reasonInput!: HTMLInputElement;
-  constructor(app: ExaminedHumanPlugin['app'], private account: FinancialAccountRecord, private kind: BalanceEntryInput['kind'], private resolveChoice: (entry: BalanceEntryInput | null) => void) { super(app); }
+  constructor(app: App, private account: FinancialAccountRecord, private kind: BalanceEntryInput['kind'], private resolveChoice: (entry: BalanceEntryInput | null) => void) { super(app); }
   onOpen(): void {
     const isOpening = this.kind === 'opening';
     this.contentEl.createEl('h2', { text: isOpening ? `Set opening balance — ${this.account.accountName}` : `Reconcile — ${this.account.accountName}` });
@@ -376,7 +376,7 @@ class BalanceEntryModal extends Modal {
 }
 
 class FinanceDailyNotePickerModal extends Modal {
-  constructor(app: ExaminedHumanPlugin['app'], private targets: DailyNoteListItem[], private resolveChoice: (target: DailyNoteListItem | null) => void) { super(app); }
+  constructor(app: App, private targets: DailyNoteListItem[], private resolveChoice: (target: DailyNoteListItem | null) => void) { super(app); }
   onOpen(): void {
     this.contentEl.createEl('h2', { text: 'Choose current or future Daily Note' });
     this.contentEl.createEl('p', { text: 'The adjustment will become a normal Transaction line. It will affect the database only when this unimported note is validated and imported.' });

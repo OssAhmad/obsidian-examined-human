@@ -20,16 +20,4 @@ export default defineConfig([
       'obsidianmd/ui/sentence-case': 'off',
     },
   },
-  {
-    files: ['src/logger-bridge.ts'],
-    rules: {
-      // This module is loaded on every platform but evaluates Node imports only
-      // after a Platform.isDesktopApp guard. Mobile dashboards never call it.
-      'obsidianmd/no-nodejs-modules': 'off',
-      // Obsidian's desktop plugin loader is CommonJS. A lazy require inside the
-      // desktop guard avoids an eager mobile dependency and a broken browser-like
-      // import("node:...") fetch in Electron.
-      '@typescript-eslint/no-require-imports': 'off',
-    },
-  },
 ]);

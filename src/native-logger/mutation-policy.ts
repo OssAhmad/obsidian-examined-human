@@ -1,5 +1,2 @@
-export type DatabaseMutationDurability = 'durable' | 'ephemeral';
-
-export function shouldCreateDatabaseBackup(durability: DatabaseMutationDurability): boolean {
-  return durability === 'durable';
-}
+/** @deprecated Import from logger/mutation-policy.ts. */
+export * from '../logger/mutation-policy.ts';

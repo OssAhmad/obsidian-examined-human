@@ -1,24 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createRequire } from 'node:module';
-import { readFile } from 'node:fs/promises';
-import initSqlJs from 'sql.js';
-import {
-  queryExerciseDashboard,
-  queryCommandCatalog,
-  queryFinancialDashboard,
-  queryFoodLibrary,
-  queryNutritionDashboard,
-} from './examined-human-query.ts';
-
-const require = createRequire(import.meta.url);
-const wasmBinary = await readFile(require.resolve('sql.js/dist/sql-wasm.wasm'));
-const schema = await readFile(new URL('../migrations/000_create_schema_v1.sql', import.meta.url), 'utf8');
-const SQL = await initSqlJs({ wasmBinary });
+import { createSchemaV1Database } from '../test-support/database.mjs';
+import { queryCommandCatalog, queryFoodLibrary } from './read-models/command-catalog.ts';
+import { queryExerciseDashboard } from './read-models/exercise.ts';
+import { queryFinancialDashboard } from './read-models/finance.ts';
+import { queryNutritionDashboard } from './read-models/nutrition.ts';
 
 function fixture() {
-  const db = new SQL.Database();
-  db.run(schema);
+  const db = createSchemaV1Database();
   db.run(`
     INSERT INTO engagements (id, name, type_id, status_id)
     VALUES (

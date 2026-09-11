@@ -17,8 +17,13 @@ npm install
 ## Repository map
 
 - `src/examined-human-database.ts` owns read-only database access and sql.js lifetime.
-- `src/examined-human-query.ts` contains schema validation, SQL, and row-to-domain mapping.
-- `src/native-logger/` contains pure parsing/import logic and the isolated guarded writer.
+- `src/read-models/` owns feature query contracts, shared SQL/schema helpers, and the extracted command, inspection, weekly, nutrition, and exercise implementations.
+- `src/examined-human-query.ts` remains the compatibility export surface and houses the still-coupled calendar, daily, engagement, and finance implementations.
+- `src/forms/` contains shared bounded-form, section, `ENTRIES`, labeled-field, and row primitives.
+- `src/logger/` contains pure parsing/import logic and the isolated guarded writer.
+- `src/logger/persistence/` owns reusable transaction and integrity verification infrastructure.
+- `src/native-logger/` contains deprecated compatibility reexports; new code must not import from it.
+- `src/plugin-services.ts` is the stable capability interface supplied to views and note-staging workflows.
 - `src/form-discovery.ts` discovers bounded Daily, Weekly, and Budget Forms in Markdown notes.
 - `src/events.ts` owns the session domain model plus shared formatting and color policy.
 - `src/TimelineView.ts` renders the calendar viewport.
@@ -38,7 +43,7 @@ The plugin uses sql.js to read a SQLite database stored inside the Obsidian vaul
 The read boundary and write boundary are intentionally separate:
 
 - `ExaminedHumanDatabase` and dashboard queries are permanently read-only.
-- Approved mutations belong only in `NativeLoggerWriteService`.
+- Approved mutations belong only in `LoggerService`.
 - Durable writes use preview, explicit confirmation, transaction staging, stale-file conflict checks, backup creation, integrity checks, and verified replacement.
 - Current/future planning projections and replaceable Meals components follow their documented ephemeral mutation policy. Calendar open/refresh performs one narrow, idempotent, backup-free reconciliation for today's Daily Form; broad current/future synchronization remains previewed and confirmed.
 
@@ -156,6 +161,8 @@ SQL.js, the SQLite WebAssembly runtime, and the required SQL assets are bundled 
 - `manifest.json`
 - `styles.css`
 
+`main.js` is tracked as a generated release artifact. Always regenerate it through the production build and never edit it by hand.
+
 After a plugin-facing change, manually test those current artifacts in a disposable or development vault. A Wax Vault deployment contains only the same three files under `.obsidian/plugins/examined-human/`.
 
 Never deploy or copy:
@@ -213,8 +220,9 @@ Preserve unrelated user changes in a dirty worktree.
 
 ## Extension seams
 
-- Add read models in `src/examined-human-query.ts`.
-- Add approved writes through `NativeLoggerWriteService` and pure native-logger modules.
+- Add read models in the appropriate feature module under `src/read-models/`; preserve compatibility exports when existing imports depend on them.
+- Add approved writes through `LoggerService` and pure logger modules.
+- Reuse `src/forms/` for EH Form boundaries, sections, `ENTRIES`, labeled fields, and delimited rows instead of adding parser-local variants.
 - Add future event sources behind a provider that returns the shared session/event domain model.
 - Keep filters as view state over mapped domain records.
 - Keep formatting and color policy centralized in `src/events.ts`.

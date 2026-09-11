@@ -1,23 +1,11 @@
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
-import { createRequire } from 'node:module';
 import test from 'node:test';
-import initSqlJs from 'sql.js';
+import { createSchemaV1Database } from '../../test-support/database.mjs';
 import { assertMealImportSchema } from './meal-import.ts';
 
-const require = createRequire(import.meta.url);
-const wasmBinary = await readFile(require.resolve('sql.js/dist/sql-wasm.wasm'));
-const createSchemaSql = await readFile(
-  new URL('../../migrations/000_create_schema_v1.sql', import.meta.url),
-  'utf8',
-);
-const SQL = await initSqlJs({ wasmBinary });
-
 test('native database creation SQL builds official Data Schema v1', () => {
-  const db = new SQL.Database();
+  const db = createSchemaV1Database();
   try {
-    db.run(createSchemaSql);
-    db.run('PRAGMA foreign_keys = ON');
     assertMealImportSchema(db);
     assert.equal(db.exec('PRAGMA quick_check')[0].values[0][0], 'ok');
     assert.equal(db.exec('PRAGMA foreign_key_check').length, 0);

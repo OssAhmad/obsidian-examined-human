@@ -19,7 +19,7 @@ import {
   ehFormFrontmatterStatus,
   fileHasCompletedImportableForms,
 } from './form-status.ts';
-import { NativeLoggerWriteService } from './native-logger/write-service.ts';
+import { LoggerService } from './logger/service.ts';
 import { NutritionDashboardView, EXAMINED_HUMAN_NUTRITION_DASHBOARD_VIEW_TYPE } from './NutritionDashboardView.ts';
 import { TimelineView, EXAMINED_HUMAN_CALENDAR_VIEW_TYPE } from './TimelineView.ts';
 import { WeeklyAssessmentView, EXAMINED_HUMAN_WEEKLY_ASSESSMENT_VIEW_TYPE } from './WeeklyAssessmentView.ts';
@@ -53,7 +53,9 @@ function storedText(value: unknown, fallback: string): string {
 export default class ExaminedHumanPlugin extends Plugin {
   settings: ExaminedHumanSettings = DEFAULT_SETTINGS;
   database!: ExaminedHumanDatabase;
-  nativeLogger!: NativeLoggerWriteService;
+  logger!: LoggerService;
+  /** @deprecated Use logger. Retained temporarily for integration compatibility. */
+  get nativeLogger(): LoggerService { return this.logger; }
   private refreshPromise: Promise<void> | null = null;
   private todayPlanningSyncPromise: Promise<void> | null = null;
   private lastTodayPlanningSyncError: string | null = null;
@@ -61,7 +63,7 @@ export default class ExaminedHumanPlugin extends Plugin {
   async onload(): Promise<void> {
     await this.loadSettings();
     this.database = new ExaminedHumanDatabase(this.app);
-    this.nativeLogger = new NativeLoggerWriteService(
+    this.logger = new LoggerService(
       this.app,
       this.manifest.version,
       () => this.settings.backupRetentionLimit,
@@ -138,7 +140,7 @@ export default class ExaminedHumanPlugin extends Plugin {
     });
     this.addSettingTab(new ExaminedHumanSettingTab(this.app, this));
     this.registerInterval(window.setInterval(() => {
-      if (!this.nativeLogger.isRunning) void this.refreshViews();
+      if (!this.logger.isRunning) void this.refreshViews();
     }, AUTHORITATIVE_DATABASE_RELOAD_INTERVAL_MS));
   }
 
@@ -213,7 +215,7 @@ export default class ExaminedHumanPlugin extends Plugin {
 
   async syncTodayPlanningFromDailyForm(): Promise<void> {
     if (this.todayPlanningSyncPromise) return this.todayPlanningSyncPromise;
-    if (this.nativeLogger.isRunning) return;
+    if (this.logger.isRunning) return;
     this.todayPlanningSyncPromise = this.performTodayPlanningSync();
     try {
       await this.todayPlanningSyncPromise;
@@ -255,7 +257,7 @@ export default class ExaminedHumanPlugin extends Plugin {
       note = { noteDate: today, fileName: file.name, filePath: file.path, sourceText };
     }
 
-    const result = await this.nativeLogger.syncPlanningDate({
+    const result = await this.logger.syncPlanningDate({
       databasePath: this.settings.databasePath,
       noteDate: today,
       note,
@@ -313,7 +315,7 @@ export default class ExaminedHumanPlugin extends Plugin {
     try {
       const { file, sourceText, form } = await this.activeForm(kind);
       if (kind === 'weekly') {
-        const preview = await this.nativeLogger.inspectWeekly({
+        const preview = await this.logger.inspectWeekly({
           databasePath: this.settings.databasePath, weekStartDate: form.startDate!, fileName: file.name, filePath: file.path, sourceText,
         });
         const confirmed = await confirmWeeklyAction(this.app, {
@@ -324,11 +326,11 @@ export default class ExaminedHumanPlugin extends Plugin {
           warning: 'Nothing has changed yet. This does not write daily-note sessions; use Sync week in Weekly Assessment when you are ready.',
         });
         if (!confirmed) return;
-        await this.nativeLogger.importWeekly({ databasePath: this.settings.databasePath, weekStartDate: form.startDate!, fileName: file.name, filePath: file.path, sourceText });
+        await this.logger.importWeekly({ databasePath: this.settings.databasePath, weekStartDate: form.startDate!, fileName: file.name, filePath: file.path, sourceText });
         await this.markImportedEhFormFileIfComplete(file);
         new Notice(`Imported Weekly Form starting ${preview.weekStart}.`, 8_000);
       } else if (kind === 'budget') {
-        const preview = await this.nativeLogger.inspectBudget({ databasePath: this.settings.databasePath, fileName: file.name, filePath: file.path, sourceText });
+        const preview = await this.logger.inspectBudget({ databasePath: this.settings.databasePath, fileName: file.name, filePath: file.path, sourceText });
         const confirmed = await confirmWeeklyAction(this.app, {
           title: 'Import Budget Form',
           explanation: preview.updatedExistingBudget ? 'This updates the stored Budget Form with the same start and end dates.' : 'This adds this dated Budget Form to the database.',
@@ -337,7 +339,7 @@ export default class ExaminedHumanPlugin extends Plugin {
           warning: 'Nothing has changed yet. Expected movements are planning evidence only; they never create transactions or reminders.',
         });
         if (!confirmed) return;
-        await this.nativeLogger.importBudget({ databasePath: this.settings.databasePath, fileName: file.name, filePath: file.path, sourceText });
+        await this.logger.importBudget({ databasePath: this.settings.databasePath, fileName: file.name, filePath: file.path, sourceText });
         new Notice(`Imported Budget Form for ${preview.periodStart} through ${preview.periodEnd}.`, 8_000);
       } else {
         const today = moment().format('YYYY-MM-DD');
@@ -349,7 +351,7 @@ export default class ExaminedHumanPlugin extends Plugin {
             minimumProteinG: this.settings.minimumProteinG,
           },
         };
-        const inspection = await this.nativeLogger.inspectDaily(request);
+        const inspection = await this.logger.inspectDaily(request);
         if (form.date! >= today) {
           const byDate = new Map<string, { noteDate: string; fileName: string; filePath: string; sourceText: string }>();
           for (const known of this.knownForms()) {
@@ -363,7 +365,7 @@ export default class ExaminedHumanPlugin extends Plugin {
           }
           byDate.set(form.date!, { noteDate: form.date!, fileName: file.name, filePath: file.path, sourceText });
           const planningRequest = { databasePath: this.settings.databasePath, cutoffDate: today, notes: [...byDate.values()] };
-          const preview = await this.nativeLogger.previewPlanning(planningRequest);
+          const preview = await this.logger.previewPlanning(planningRequest);
           const confirmed = await confirmDailyImport(this.app, {
             title: `Sync current and future plans from ${form.date}`,
             explanation: 'This replaces ephemeral planning projections for all discovered current and future EH Daily Forms. It does not create canonical sessions or a database backup.',
@@ -371,7 +373,7 @@ export default class ExaminedHumanPlugin extends Plugin {
             dryRunOutput: `${preview.noteCount} current/future note${preview.noteCount === 1 ? '' : 's'} inspected.\n${preview.sessionCount} planned session${preview.sessionCount === 1 ? '' : 's'} projected.\n${preview.warningCount} warning${preview.warningCount === 1 ? '' : 's'}.\n${preview.deletedSourceCount} missing source${preview.deletedSourceCount === 1 ? '' : 's'} would be marked deleted.`,
           });
           if (!confirmed) return;
-          await this.nativeLogger.syncPlanning(planningRequest);
+          await this.logger.syncPlanning(planningRequest);
           new Notice('Current and future planning projections were refreshed.', 8_000);
           return;
         }
@@ -382,7 +384,7 @@ export default class ExaminedHumanPlugin extends Plugin {
           dryRunOutput: `Source: ${file.path}\nNative validation completed successfully.`,
         });
         if (!confirmed) return;
-        await this.nativeLogger.importHistoricalDaily(request);
+        await this.logger.importHistoricalDaily(request);
         await this.markImportedEhFormFileIfComplete(file);
         new Notice(`${form.date} imported successfully.`, 8_000);
       }
@@ -466,7 +468,7 @@ export default class ExaminedHumanPlugin extends Plugin {
 
   async refreshViews(): Promise<void> {
     if (this.refreshPromise) return this.refreshPromise;
-    if (this.nativeLogger.isRunning) return;
+    if (this.logger.isRunning) return;
     this.refreshPromise = this.performAuthoritativeRefresh();
     try {
       await this.refreshPromise;

@@ -1,8 +1,10 @@
 import type { App, TFile } from 'obsidian';
 import { ehFormFrontmatterStatus, shouldDiscoverEhFormFile } from './form-status.ts';
 import { pathIsInJournalFolder } from './journal-folder.ts';
+import { findAllEhForms, type EhFormKind } from './forms/form-document.ts';
+import { addIsoDays, isIsoDate } from './domain/date.ts';
 
-export type EhFormKind = 'daily' | 'weekly' | 'budget';
+export type { EhFormKind } from './forms/form-document.ts';
 export type FormDiscoveryMode = 'tagged-vault' | 'journal-folder';
 
 export interface DiscoveredEhForm {
@@ -35,27 +37,12 @@ export interface FormDiscoveryResult {
   reusedFileCount: number;
 }
 
-const HEADING = /^####\s+EH\s+(Daily|Weekly|Budget)\s+Form\s*$/gmi;
-const END = /^####\s+END\s*$/gmi;
-
 export const EMPTY_FORM_DISCOVERY_CACHE: FormDiscoveryCache = { version: 1, entries: {} };
-
-function validIsoDate(value: string): boolean {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
-  const parsed = new Date(`${value}T00:00:00Z`);
-  return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
-}
 
 function labeledDate(formText: string, label: string): string | null {
   const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const value = new RegExp(`^${escaped}:\\s*(.*?)\\s*$`, 'im').exec(formText)?.[1]?.trim() ?? '';
-  return validIsoDate(value) ? value : null;
-}
-
-function plusDays(date: string, days: number): string {
-  const parsed = new Date(`${date}T00:00:00Z`);
-  parsed.setUTCDate(parsed.getUTCDate() + days);
-  return parsed.toISOString().slice(0, 10);
+  return isIsoDate(value) ? value : null;
 }
 
 function formDates(kind: EhFormKind, formText: string): Pick<CachedEhForm, 'date' | 'startDate' | 'endDate'> {
@@ -68,7 +55,7 @@ function formDates(kind: EhFormKind, formText: string): Pick<CachedEhForm, 'date
     const startDate = labeledDate(formText, 'start date');
     const endDate = labeledDate(formText, 'end date');
     if (!startDate || !endDate) throw new Error('EH Weekly Form requires valid start date: and end date: YYYY-MM-DD fields.');
-    if (startDate && endDate && plusDays(startDate, 6) !== endDate) {
+    if (startDate && endDate && addIsoDays(startDate, 6) !== endDate) {
       throw new Error(`Weekly Form declares ${startDate} through ${endDate}; end date must be start date + 6 days.`);
     }
     return { date: null, startDate, endDate };
@@ -85,20 +72,18 @@ function formDates(kind: EhFormKind, formText: string): Pick<CachedEhForm, 'date
 
 /** Extract every complete EH form from a single Markdown file. */
 export function formsInText(file: Pick<TFile, 'name' | 'path'>, sourceText: string): DiscoveredEhForm[] {
-  const forms: DiscoveredEhForm[] = [];
-  HEADING.lastIndex = 0;
-  let heading: RegExpExecArray | null;
-  while ((heading = HEADING.exec(sourceText)) != null) {
-    const kind = heading[1].toLowerCase() as EhFormKind;
-    END.lastIndex = heading.index + heading[0].length;
-    const end = END.exec(sourceText);
-    if (!end || end.index == null) throw new Error(`${file.path}: ${heading[0]} has no matching #### END marker.`);
-    const formText = sourceText.slice(heading.index, end.index + end[0].length);
-    const dates = formDates(kind, formText);
-    forms.push({ kind, ...dates, fileName: file.name, filePath: file.path, formText });
-    HEADING.lastIndex = end.index + end[0].length;
+  try {
+    return findAllEhForms(sourceText).map((form) => ({
+      kind: form.kind,
+      ...formDates(form.kind, form.text),
+      fileName: file.name,
+      filePath: file.path,
+      formText: form.text,
+    }));
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`${file.path}: ${message}`);
   }
-  return forms;
 }
 
 function discoveryStatus(app: App, file: TFile): ReturnType<typeof ehFormFrontmatterStatus> {

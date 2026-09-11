@@ -7,8 +7,8 @@ import type {
   CommandEngagementRecord,
   CommandExerciseRecord,
   FoodLibraryRecord,
-} from './examined-human-query.ts';
-import type ExaminedHumanPlugin from './main.ts';
+} from './read-models/command-catalog.ts';
+import type { CommandServices } from './plugin-services.ts';
 import type { ReferenceKind, UnresolvedReference } from './unresolved-references.ts';
 
 function commandValue(value: string, label: string, allowBlank = false): string {
@@ -53,7 +53,7 @@ function collectionFor(catalog: CommandCatalog, kind: ReferenceKind): Array<{ id
 }
 
 export interface ReferenceRepairOptions {
-  plugin: ExaminedHumanPlugin;
+  plugin: CommandServices;
   reference: UnresolvedReference;
   catalog: CommandCatalog;
   preferredTarget: DailyNoteListItem | null;
@@ -254,7 +254,7 @@ class ReferenceRepairModal extends Modal {
 }
 
 export interface FoodEditorOptions {
-  plugin: ExaminedHumanPlugin;
+  plugin: CommandServices;
   food?: FoodLibraryRecord;
   preferredTarget?: DailyNoteListItem | null;
   onStaged: () => Promise<void>;
@@ -374,7 +374,7 @@ export type CommandEntityKind = 'engagement' | 'exercise' | 'account';
 type CommandEntityRecord = CommandEngagementRecord | CommandExerciseRecord | CommandAccountRecord;
 
 export interface EntityEditorOptions {
-  plugin: ExaminedHumanPlugin;
+  plugin: CommandServices;
   catalog: CommandCatalog;
   kind: CommandEntityKind;
   entity?: CommandEntityRecord;

@@ -1,8 +1,8 @@
 import { ItemView, moment, normalizePath, Notice, TFile, WorkspaceLeaf } from 'obsidian';
-import type ExaminedHumanPlugin from './main.ts';
+import type { FormWorkflowServices } from './plugin-services.ts';
 import { buildDailyNoteList, type DailyNoteListItem } from './daily-note-index.ts';
 import { confirmDailyImport } from './DailyImportConfirmationModal.ts';
-import { confirmNativeMealImport } from './NativeMealImportConfirmationModal.ts';
+import { confirmMealImport } from './MealImportConfirmationModal.ts';
 import type { CalendarEvent, ExerciseSetDetails, SessionExerciseDetails } from './events.ts';
 import {
   formatExerciseNumber,
@@ -13,15 +13,15 @@ import type {
   DailyAssessmentQueryResult,
   DailyMealRecord,
   DailyMetricsRecord,
-} from './examined-human-query.ts';
+} from './read-models/daily.ts';
 import type {
   DashboardPreviewExercise,
   DashboardPreviewTransaction,
-  NativeDailyInspection,
-} from './native-logger/daily-note.ts';
+  DailyInspection,
+} from './logger/daily-note.ts';
 import { layoutOverlappingEvents } from './overlap.ts';
-import type { MealInspection } from './native-logger/meals.ts';
-import { backupMutationOutput } from './native-logger/write-service.ts';
+import type { MealInspection } from './logger/meals.ts';
+import { backupMutationOutput } from './logger/service.ts';
 import { openReferenceRepair } from './CommandForms.ts';
 import { createSessionElement } from './session-element.ts';
 import { unresolvedReferencesFromErrors } from './unresolved-references.ts';
@@ -61,7 +61,7 @@ export class DailyAssessmentView extends ItemView {
   private items: DailyNoteListItem[] = [];
   private selectedItem: DailyNoteListItem | null = null;
   private assessment: DailyAssessmentQueryResult | null = null;
-  private inspection: NativeDailyInspection | null = null;
+  private inspection: DailyInspection | null = null;
   private mealInspection: MealInspection | null = null;
   private loggerOutput: string | null = null;
   private renderGeneration = 0;
@@ -69,7 +69,7 @@ export class DailyAssessmentView extends ItemView {
   private lastFingerprint: string | null = null;
   private actionButton: HTMLButtonElement | null = null;
 
-  constructor(leaf: WorkspaceLeaf, private plugin: ExaminedHumanPlugin) {
+  constructor(leaf: WorkspaceLeaf, private plugin: FormWorkflowServices) {
     super(leaf);
   }
 
@@ -94,7 +94,7 @@ export class DailyAssessmentView extends ItemView {
           === this.plugin.database.normalizeVaultPath(this.plugin.settings.databasePath);
         const selectedNoteChanged = file.path === this.selectedItem?.filePath;
         if ((databaseChanged || selectedNoteChanged)
-          && !this.plugin.nativeLogger.isRunning) void this.refresh();
+          && !this.plugin.logger.isRunning) void this.refresh();
       } catch {
         // The visible error state explains invalid paths.
       }
@@ -143,13 +143,13 @@ export class DailyAssessmentView extends ItemView {
             dailyCalorieLimitKcal: this.plugin.settings.dailyCalorieLimitKcal,
             minimumProteinG: this.plugin.settings.minimumProteinG,
           };
-          this.mealInspection = await this.plugin.nativeLogger.inspectMeals({
+          this.mealInspection = await this.plugin.logger.inspectMeals({
             databasePath: this.plugin.settings.databasePath,
             sourceText,
             nutritionThresholds: thresholds,
           });
           try {
-            this.inspection = await this.plugin.nativeLogger.inspectDaily({
+            this.inspection = await this.plugin.logger.inspectDaily({
               databasePath: this.plugin.settings.databasePath,
               noteDate: this.selectedItem.date,
               todayDate: today,
@@ -389,7 +389,7 @@ export class DailyAssessmentView extends ItemView {
       cls: 'mod-cta',
       text: component ? 'Replace Meals' : 'Import Meals',
     });
-    button.disabled = !inspection.ready || this.plugin.nativeLogger.isRunning;
+    button.disabled = !inspection.ready || this.plugin.logger.isRunning;
     button.addEventListener('click', () => { void this.handleNativeMealImport(); });
     if (component) {
       actions.createSpan({
@@ -410,7 +410,7 @@ export class DailyAssessmentView extends ItemView {
     }
   }
 
-  private renderCompleteness(container: HTMLElement, inspection: NativeDailyInspection): void {
+  private renderCompleteness(container: HTMLElement, inspection: DailyInspection): void {
     const completeness = inspection.completeness;
     if (!completeness) return;
     const grid = container.createDiv({ cls: 'examined-human-daily-completeness-grid' });
@@ -735,7 +735,7 @@ export class DailyAssessmentView extends ItemView {
 
     try {
       const sourceText = await this.app.vault.read(noteFile);
-      const inspection = await this.plugin.nativeLogger.inspectMeals({
+      const inspection = await this.plugin.logger.inspectMeals({
         databasePath: this.plugin.settings.databasePath,
         sourceText,
         nutritionThresholds: {
@@ -750,7 +750,7 @@ export class DailyAssessmentView extends ItemView {
         new Notice('Meals validation failed. Review the blockers before importing.', 10000);
         return;
       }
-      const confirmed = await confirmNativeMealImport(this.app, {
+      const confirmed = await confirmMealImport(this.app, {
         date: item.date,
         historical: item.status === 'needs-import',
         replacing: this.assessment?.mealImport != null,
@@ -758,7 +758,7 @@ export class DailyAssessmentView extends ItemView {
       });
       if (!confirmed) return;
 
-      const result = await this.plugin.nativeLogger.importMeals({
+      const result = await this.plugin.logger.importMeals({
         databasePath: this.plugin.settings.databasePath,
         noteDate: item.date,
         todayDate: moment().format('YYYY-MM-DD'),
@@ -806,7 +806,7 @@ export class DailyAssessmentView extends ItemView {
           minimumProteinG: this.plugin.settings.minimumProteinG,
         },
       };
-      const inspection = await this.plugin.nativeLogger.inspectDaily(request);
+      const inspection = await this.plugin.logger.inspectDaily(request);
       this.inspection = inspection;
       if (item.status === 'needs-import' && !inspection.ready) {
         this.loggerOutput = inspection.errors.join('\n\n');
@@ -819,7 +819,7 @@ export class DailyAssessmentView extends ItemView {
       let planningRequest: Awaited<ReturnType<DailyAssessmentView['planningSyncRequest']>> | null = null;
       if (item.status === 'current-future') {
         planningRequest = await this.planningSyncRequest();
-        const preview = await this.plugin.nativeLogger.previewPlanning(planningRequest);
+        const preview = await this.plugin.logger.previewPlanning(planningRequest);
         dryRunOutput = [
           `${preview.noteCount} current/future note${preview.noteCount === 1 ? '' : 's'} inspected.`,
           `${preview.sessionCount} planned session${preview.sessionCount === 1 ? '' : 's'} projected.`,
@@ -843,14 +843,14 @@ export class DailyAssessmentView extends ItemView {
 
       this.actionButton?.setText(item.status === 'current-future' ? 'Syncing…' : 'Importing…');
       if (item.status === 'current-future') {
-        const result = await this.plugin.nativeLogger.syncPlanning(planningRequest!);
+        const result = await this.plugin.logger.syncPlanning(planningRequest!);
         this.loggerOutput = [
           `Projected ${result.sessionCount} session${result.sessionCount === 1 ? '' : 's'} from ${result.noteCount} note${result.noteCount === 1 ? '' : 's'}.`,
           `Warnings: ${result.warningCount}. Missing sources marked deleted: ${result.deletedSourceCount}.`,
           ...backupMutationOutput(result),
         ].join('\n');
       } else {
-        const result = await this.plugin.nativeLogger.importHistoricalDaily(request);
+        const result = await this.plugin.logger.importHistoricalDaily(request);
         await this.plugin.markImportedEhFormFileIfComplete(noteFile);
         this.loggerOutput = [
           `Imported ${result.sessionCount} sessions, ${result.transactionCount} transactions, ${result.exerciseCount} exercises, and ${result.foodRowCount} food rows.`,
@@ -923,7 +923,7 @@ export class DailyAssessmentView extends ItemView {
       const fingerprint = await this.plugin.database.fingerprint(this.plugin.settings.databasePath);
       if (this.lastFingerprint != null
         && fingerprint !== this.lastFingerprint
-        && !this.plugin.nativeLogger.isRunning) {
+        && !this.plugin.logger.isRunning) {
         await this.refresh();
       }
       this.lastFingerprint = fingerprint;

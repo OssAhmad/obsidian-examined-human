@@ -3,34 +3,29 @@ import type { Database } from 'sql.js';
 import { normalizeVaultDatabasePath } from './database-path.ts';
 import { hasUncheckpointedWal, UNCHECKPOINTED_WAL_MESSAGE } from './database-source.ts';
 import type {
-  DailyAssessmentQueryResult,
   CommandCatalog,
-  DailyNoteIndexQueryResult,
-  DatabaseInspection,
-  EngagementDashboardQueryResult,
-  ExerciseDashboardQueryResult,
-  FinancialDashboardQueryResult,
-  FinancialValuationOptions,
   FoodLibraryRecord,
-  NutritionDashboardQueryResult,
-  SessionQueryResult,
-  WeeklyAssessmentQueryResult,
-  WeeklyPlanIndexQueryResult,
-} from './examined-human-query.ts';
+} from './read-models/command-catalog.ts';
+import { queryCommandCatalog, queryFoodLibrary } from './read-models/command-catalog.ts';
+import type { SessionQueryResult } from './read-models/calendar.ts';
+import { querySessions } from './read-models/calendar.ts';
+import type { DailyAssessmentQueryResult, DailyNoteIndexQueryResult } from './read-models/daily.ts';
+import { queryDailyAssessment, queryDailyNoteIndex } from './read-models/daily.ts';
+import type { DatabaseInspection } from './read-models/database-inspection.ts';
+import { inspectDatabase } from './read-models/database-inspection.ts';
+import type { EngagementDashboardQueryResult } from './read-models/engagement.ts';
+import { queryEngagementDashboard } from './read-models/engagement.ts';
+import type { ExerciseDashboardQueryResult } from './read-models/exercise.ts';
+import { queryExerciseDashboard } from './read-models/exercise.ts';
+import type { FinancialDashboardQueryResult, FinancialValuationOptions } from './read-models/finance.ts';
+import { queryFinancialDashboard } from './read-models/finance.ts';
+import type { NutritionDashboardQueryResult } from './read-models/nutrition.ts';
+import { queryNutritionDashboard } from './read-models/nutrition.ts';
+import type { WeeklyAssessmentQueryResult, WeeklyPlanIndexQueryResult } from './read-models/weekly.ts';
 import {
-  inspectDatabase,
-  queryCommandCatalog,
-  queryDailyAssessment,
-  queryDailyNoteIndex,
-  queryEngagementDashboard,
-  queryExerciseDashboard,
-  queryFinancialDashboard,
-  queryFoodLibrary,
-  queryNutritionDashboard,
-  querySessions,
   queryWeeklyAssessment,
   queryWeeklyPlanIndex,
-} from './examined-human-query.ts';
+} from './read-models/weekly.ts';
 import { getSqlJs } from './sql-runtime.ts';
 
 export class ExaminedHumanDatabase {
