@@ -2547,10 +2547,13 @@ function previousIsoDate(date) {
     String(previous.getUTCDate()).padStart(2, "0")
   ].join("-");
 }
-function inferSleepHours(assessmentDate, sessions) {
+function inferSleepHours(assessmentDate, sessions, boundaryHour = 21) {
+  if (!Number.isSafeInteger(boundaryHour) || boundaryHour < 0 || boundaryHour > 23) {
+    throw new Error("Sleep day boundary must be a whole hour from 0 through 23.");
+  }
   const previousDate = previousIsoDate(assessmentDate);
-  const windowStart = 21 * 60;
-  const windowEnd = 24 * 60 + 21 * 60;
+  const windowStart = boundaryHour * 60;
+  const windowEnd = 24 * 60 + boundaryHour * 60;
   const intervals = sessions.flatMap((session) => {
     if (!isSleepSession(session)) return [];
     const dayOffset = session.date === previousDate ? 0 : session.date === assessmentDate ? 24 * 60 : null;
@@ -3493,7 +3496,7 @@ function queryDailyNoteIndex(db) {
   })) : [];
   return { importedNotes, noteSources };
 }
-function queryDailyAssessment(db, date, todayDate, valuationOptions = { label: "EHM", referenceUnit: "USD" }) {
+function queryDailyAssessment(db, date, todayDate, valuationOptions = { label: "EHM", referenceUnit: "USD" }, sleepDayBoundaryHour = 21) {
   var _a, _b, _c, _d, _e, _f, _g, _h, _i;
   validateSchema(db);
   const sessionResult = querySessions(db, date, date, todayDate);
@@ -3609,7 +3612,7 @@ function queryDailyAssessment(db, date, todayDate, valuationOptions = { label: "
   const inferredSleepHours = inferSleepHours(date, [
     ...previousSleepSignals,
     ...sessionResult.events.map(eventSignal)
-  ]);
+  ], sleepDayBoundaryHour);
   metrics = {
     mood: (_a = metrics == null ? void 0 : metrics.mood) != null ? _a : null,
     energy: (_b = metrics == null ? void 0 : metrics.energy) != null ? _b : null,
@@ -4421,7 +4424,7 @@ function querySessions(db, startDate, endDate, todayDate = startDate, includePla
   const issues = [];
   for (const row of sourceRows) {
     const date = String(row.date);
-    if (date > todayDate) continue;
+    if (includePlanning && date > todayDate) continue;
     if (unfinalizedDates.has(date)) continue;
     const id = String(row.id);
     const start = parseDatabaseTime(String((_a = row.start_time) != null ? _a : ""));
@@ -4525,8 +4528,11 @@ var ExaminedHumanDatabase = class {
   async dailyNoteIndex(databasePath) {
     return this.withDatabase(databasePath, queryDailyNoteIndex);
   }
-  async dailyAssessment(databasePath, date, todayDate, valuationOptions = { label: "EHM", referenceUnit: "USD" }) {
-    return this.withDatabase(databasePath, (db) => queryDailyAssessment(db, date, todayDate, valuationOptions));
+  async dailyAssessment(databasePath, date, todayDate, valuationOptions = { label: "EHM", referenceUnit: "USD" }, sleepDayBoundaryHour = 21) {
+    return this.withDatabase(
+      databasePath,
+      (db) => queryDailyAssessment(db, date, todayDate, valuationOptions, sleepDayBoundaryHour)
+    );
   }
   async engagementDashboard(databasePath, engagementId, startDate, endDate) {
     return this.withDatabase(
@@ -6355,9 +6361,9 @@ function canonicalPreviousSleepSignals(db, assessmentDate) {
   });
 }
 function applyInferredMetrics(db, parsed, input, warnings) {
-  var _a, _b, _c, _d;
+  var _a, _b, _c, _d, _e;
   const currentSignals = parsed.sessions.flatMap((session) => {
-    var _a2, _b2, _c2, _d2, _e;
+    var _a2, _b2, _c2, _d2, _e2;
     if (!session.parsedInterval) return [];
     return [{
       date: input.noteDate,
@@ -6366,17 +6372,17 @@ function applyInferredMetrics(db, parsed, input, warnings) {
       sessionType: (_b2 = (_a2 = session.sessionType) == null ? void 0 : _a2.code) != null ? _b2 : session.type,
       engagementType: session.engagementType,
       engagementName: (_d2 = (_c2 = session.resolvedEngagement) == null ? void 0 : _c2.name) != null ? _d2 : session.engagement,
-      hasExerciseDetails: parsed.exercises.length > 0 && ((_e = session.sessionType) == null ? void 0 : _e.code) === "exercise"
+      hasExerciseDetails: parsed.exercises.length > 0 && ((_e2 = session.sessionType) == null ? void 0 : _e2.code) === "exercise"
     }];
   });
   const activity = inferDailyActivity(currentSignals);
   const sleepHours = inferSleepHours(input.noteDate, [
     ...canonicalPreviousSleepSignals(db, input.noteDate),
     ...currentSignals
-  ]);
+  ], (_a = input.sleepDayBoundaryHour) != null ? _a : 21);
   const derived = {
-    calories: (_a = parsed.mealInspection.nutrition.dailyCaloriesKcal) != null ? _a : 0,
-    protein_g: (_b = parsed.mealInspection.nutrition.proteinG) != null ? _b : 0,
+    calories: (_b = parsed.mealInspection.nutrition.dailyCaloriesKcal) != null ? _b : 0,
+    protein_g: (_c = parsed.mealInspection.nutrition.proteinG) != null ? _c : 0,
     sleep_hours: sleepHours,
     studied: activity.studied,
     worked: activity.worked,
@@ -6389,7 +6395,7 @@ function applyInferredMetrics(db, parsed, input, warnings) {
     }
     parsed.metrics[field] = value;
   }
-  parsed.metrics.dieted = (_d = (_c = parsed.mealInspection.nutrition.evaluatedDieted) != null ? _c : parsed.metrics.dieted) != null ? _d : null;
+  parsed.metrics.dieted = (_e = (_d = parsed.mealInspection.nutrition.evaluatedDieted) != null ? _d : parsed.metrics.dieted) != null ? _e : null;
 }
 function historicalValuationRate(db, unit, date, referenceUnit) {
   const unitKey = normalizeValuationUnit(unit);
@@ -10032,7 +10038,8 @@ var DailyAssessmentView = class extends import_obsidian8.ItemView {
         {
           label: this.plugin.settings.valuationUnitLabel,
           referenceUnit: this.plugin.settings.valuationReferenceUnit
-        }
+        },
+        this.plugin.settings.sleepDayBoundaryHour
       ) : null;
       this.inspection = null;
       this.mealInspection = null;
@@ -10060,7 +10067,8 @@ var DailyAssessmentView = class extends import_obsidian8.ItemView {
               sourceText,
               nutritionThresholds: thresholds,
               valuationLabel: this.plugin.settings.valuationUnitLabel,
-              valuationReferenceUnit: this.plugin.settings.valuationReferenceUnit
+              valuationReferenceUnit: this.plugin.settings.valuationReferenceUnit,
+              sleepDayBoundaryHour: this.plugin.settings.sleepDayBoundaryHour
             });
           } catch (error) {
             this.loggerOutput = error instanceof Error ? error.message : String(error);
@@ -10448,7 +10456,8 @@ var DailyAssessmentView = class extends import_obsidian8.ItemView {
           minimumProteinG: this.plugin.settings.minimumProteinG
         },
         valuationLabel: this.plugin.settings.valuationUnitLabel,
-        valuationReferenceUnit: this.plugin.settings.valuationReferenceUnit
+        valuationReferenceUnit: this.plugin.settings.valuationReferenceUnit,
+        sleepDayBoundaryHour: this.plugin.settings.sleepDayBoundaryHour
       };
       const inspection = await this.plugin.logger.inspectDaily(request);
       this.inspection = inspection;
@@ -14043,6 +14052,7 @@ var DEFAULT_SETTINGS = {
   mealCalorieLimitKcal: 0,
   dailyCalorieLimitKcal: 1850,
   minimumProteinG: 0,
+  sleepDayBoundaryHour: 21,
   backupRetentionLimit: 0,
   dismissedWarningKeys: [],
   initialScrollHour: 7,
@@ -14168,6 +14178,25 @@ New daily_meals links when needed: food_id, amount_g, nutrient snapshots`,
       this.plugin.settings.formDiscoveryMode = value === "journal-folder" ? "journal-folder" : "tagged-vault";
       await this.plugin.saveSettings();
     }));
+    new import_obsidian20.Setting(containerEl).setName("Daily assessment").setHeading();
+    containerEl.createEl("p", {
+      text: "Calculated daily values use your sessions and structured food records. The sleep boundary controls which 24-hour window belongs to an assessment date.",
+      cls: "setting-item-description"
+    });
+    new import_obsidian20.Setting(containerEl).setName("Sleep day boundary").setDesc("Sleep from this hour on the previous date up to the same hour on the assessment date counts toward that day. Default: 21:00.").addDropdown((dropdown) => {
+      for (let hour = 0; hour < 24; hour += 1) {
+        const label = `${String(hour).padStart(2, "0")}:00`;
+        dropdown.addOption(String(hour), label);
+      }
+      dropdown.setValue(String(this.plugin.settings.sleepDayBoundaryHour));
+      dropdown.onChange(async (value) => {
+        const hour = Number(value);
+        if (!Number.isSafeInteger(hour) || hour < 0 || hour > 23) return;
+        this.plugin.settings.sleepDayBoundaryHour = hour;
+        await this.plugin.saveSettings();
+        await this.plugin.refreshViews();
+      });
+    });
     new import_obsidian20.Setting(containerEl).setName("Nutrition evaluation").setHeading();
     containerEl.createEl("p", {
       text: "These limits are used by the native Meals inspector. Zero disables that automatic rule. When both daily calories and minimum protein are zero, the EH Form dieted value is trusted.",
@@ -14493,6 +14522,12 @@ var ExaminedHumanPlugin = class extends import_obsidian22.Plugin {
         1,
         3650
       ),
+      sleepDayBoundaryHour: boundedInteger(
+        stored == null ? void 0 : stored.sleepDayBoundaryHour,
+        DEFAULT_SETTINGS.sleepDayBoundaryHour,
+        0,
+        23
+      ),
       valuationUnitLabel: storedText(stored == null ? void 0 : stored.valuationUnitLabel, DEFAULT_SETTINGS.valuationUnitLabel),
       valuationReferenceUnit: storedText(stored == null ? void 0 : stored.valuationReferenceUnit, DEFAULT_SETTINGS.valuationReferenceUnit),
       dismissedWarningKeys: sanitizeDismissedWarningKeys(stored == null ? void 0 : stored.dismissedWarningKeys)
@@ -14669,7 +14704,8 @@ Expected movements: ${preview.expectedMovementCount}`,
             minimumProteinG: this.settings.minimumProteinG
           },
           valuationLabel: this.settings.valuationUnitLabel,
-          valuationReferenceUnit: this.settings.valuationReferenceUnit
+          valuationReferenceUnit: this.settings.valuationReferenceUnit,
+          sleepDayBoundaryHour: this.settings.sleepDayBoundaryHour
         };
         const inspection = await this.logger.inspectDaily(request);
         const temporalState2 = noteDate < today ? "overdue" : noteDate === today ? "current" : "future";

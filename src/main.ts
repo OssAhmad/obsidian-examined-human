@@ -179,6 +179,12 @@ export default class ExaminedHumanPlugin extends Plugin {
         1,
         3650,
       ),
+      sleepDayBoundaryHour: boundedInteger(
+        stored?.sleepDayBoundaryHour,
+        DEFAULT_SETTINGS.sleepDayBoundaryHour,
+        0,
+        23,
+      ),
       valuationUnitLabel: storedText(stored?.valuationUnitLabel, DEFAULT_SETTINGS.valuationUnitLabel),
       valuationReferenceUnit: storedText(stored?.valuationReferenceUnit, DEFAULT_SETTINGS.valuationReferenceUnit),
       dismissedWarningKeys: sanitizeDismissedWarningKeys(stored?.dismissedWarningKeys),
@@ -356,6 +362,7 @@ export default class ExaminedHumanPlugin extends Plugin {
           },
           valuationLabel: this.settings.valuationUnitLabel,
           valuationReferenceUnit: this.settings.valuationReferenceUnit,
+          sleepDayBoundaryHour: this.settings.sleepDayBoundaryHour,
         };
         const inspection = await this.logger.inspectDaily(request);
         const temporalState: DailyNoteListItem['temporalState'] = noteDate < today

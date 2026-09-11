@@ -69,8 +69,12 @@ export class ExaminedHumanDatabase {
     date: string,
     todayDate: string,
     valuationOptions: FinancialValuationOptions = { label: 'EHM', referenceUnit: 'USD' },
+    sleepDayBoundaryHour = 21,
   ): Promise<DailyAssessmentQueryResult> {
-    return this.withDatabase(databasePath, (db) => queryDailyAssessment(db, date, todayDate, valuationOptions));
+    return this.withDatabase(
+      databasePath,
+      (db) => queryDailyAssessment(db, date, todayDate, valuationOptions, sleepDayBoundaryHour),
+    );
   }
 
   async engagementDashboard(

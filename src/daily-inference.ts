@@ -57,14 +57,22 @@ function previousIsoDate(date: string): string {
 }
 
 /**
- * Counts sleep in [21:00 on the previous date, 21:00 on the assessment date).
+ * Counts sleep in [the configured hour on the previous date, the same hour on
+ * the assessment date). The boundary is deliberately limited to whole hours.
  * A 23:59 endpoint is treated as midnight so split overnight entries do not
  * lose the otherwise unrepresentable final minute of the day.
  */
-export function inferSleepHours(assessmentDate: string, sessions: DailySessionSignal[]): number {
+export function inferSleepHours(
+  assessmentDate: string,
+  sessions: DailySessionSignal[],
+  boundaryHour = 21,
+): number {
+  if (!Number.isSafeInteger(boundaryHour) || boundaryHour < 0 || boundaryHour > 23) {
+    throw new Error('Sleep day boundary must be a whole hour from 0 through 23.');
+  }
   const previousDate = previousIsoDate(assessmentDate);
-  const windowStart = 21 * 60;
-  const windowEnd = 24 * 60 + 21 * 60;
+  const windowStart = boundaryHour * 60;
+  const windowEnd = 24 * 60 + boundaryHour * 60;
   const intervals = sessions.flatMap((session): Array<[number, number]> => {
     if (!isSleepSession(session)) return [];
     const dayOffset = session.date === previousDate ? 0 : session.date === assessmentDate ? 24 * 60 : null;

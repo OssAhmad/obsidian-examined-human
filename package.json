@@ -1,6 +1,6 @@
 {
   "name": "obsidian-examined-human",
-  "version": "0.9.4",
+  "version": "0.9.5",
   "type": "module",
   "description": "Personal dashboards and guarded native data import",
   "main": "main.js",

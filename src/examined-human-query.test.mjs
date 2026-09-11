@@ -326,6 +326,21 @@ test('future canonical and Daily Form rows stay hidden when no Weekly Form suppl
   }
 });
 
+test('canonical-only range queries retain sessions after the supplied calendar date', () => {
+  const db = fixture();
+  try {
+    db.run(`
+      INSERT INTO sessions VALUES (13, 1, '2026-07-21', '09:00', '10:00', 60, 1, 'later canonical');
+      INSERT INTO sessions VALUES (14, 1, '2026-07-22', '09:00', '10:00', 60, 1, 'latest canonical');
+    `);
+
+    const result = querySessions(db, '2026-07-20', '2026-07-22', '2026-07-20', false);
+    assert.deepEqual(result.events.map((event) => event.id), ['10', '11', '12', '13', '14']);
+  } finally {
+    db.close();
+  }
+});
+
 test('imported weekly sessions fill current and future calendar dates without Daily Notes', () => {
   const db = fixture();
   try {
@@ -484,6 +499,29 @@ test('daily assessment maps canonical metrics, meals, transactions, and note sta
       valuationAmount: null,
     });
     assert.equal(result.transactions[1].engagement, 'MIT Differential Equations');
+  } finally {
+    db.close();
+  }
+});
+
+test('daily assessment applies the configured sleep day boundary', () => {
+  const db = fixture();
+  try {
+    db.run(`
+      INSERT INTO engagements VALUES (2, 'Sleep', 1);
+      INSERT INTO sessions VALUES (20, 2, '2026-07-19', '22:00', '23:59', 119, NULL, NULL);
+      INSERT INTO sessions VALUES (21, 2, '2026-07-20', '00:00', '07:00', 420, NULL, NULL);
+      INSERT INTO sessions VALUES (22, 2, '2026-07-20', '19:00', '20:00', 60, NULL, NULL);
+    `);
+
+    const result = queryDailyAssessment(
+      db,
+      '2026-07-20',
+      '2026-07-20',
+      { label: 'EHM', referenceUnit: 'USD' },
+      18,
+    );
+    assert.equal(result.metrics.sleepHours, 9);
   } finally {
     db.close();
   }

@@ -33,6 +33,14 @@ test('sleep inference merges overlaps instead of double-counting them', () => {
   ]), 8);
 });
 
+test('sleep inference honors a configurable whole-hour day boundary', () => {
+  assert.equal(inferSleepHours('2026-09-11', [
+    signal({ date: '2026-09-10', startMinutes: 17 * 60, endMinutes: 19 * 60, sessionType: 'sleep' }),
+    signal({ startMinutes: 17 * 60, endMinutes: 19 * 60, engagementName: 'Sleep' }),
+  ], 18), 2);
+  assert.throws(() => inferSleepHours('2026-09-11', [], 18.5), /whole hour/);
+});
+
 test('today keeps non-conflicting weekly sessions and gives daily sessions overlap priority', () => {
   const event = (id, startMinutes, endMinutes, planningSource) => ({
     id, date: '2026-09-11', sessionType: '', engagementType: '', engagementName: id,

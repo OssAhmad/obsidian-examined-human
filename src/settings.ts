@@ -13,6 +13,7 @@ export interface ExaminedHumanSettings {
   mealCalorieLimitKcal: number;
   dailyCalorieLimitKcal: number;
   minimumProteinG: number;
+  sleepDayBoundaryHour: number;
   backupRetentionLimit: number;
   dismissedWarningKeys: string[];
   initialScrollHour: number;
@@ -32,6 +33,7 @@ export const DEFAULT_SETTINGS: ExaminedHumanSettings = {
   mealCalorieLimitKcal: 0,
   dailyCalorieLimitKcal: 1850,
   minimumProteinG: 0,
+  sleepDayBoundaryHour: 21,
   backupRetentionLimit: 0,
   dismissedWarningKeys: [],
   initialScrollHour: 7,
@@ -202,6 +204,30 @@ export class ExaminedHumanSettingTab extends PluginSettingTab {
           this.plugin.settings.formDiscoveryMode = value === 'journal-folder' ? 'journal-folder' : 'tagged-vault';
           await this.plugin.saveSettings();
         }));
+
+    new Setting(containerEl).setName('Daily assessment').setHeading();
+    containerEl.createEl('p', {
+      text: 'Calculated daily values use your sessions and structured food records. The sleep boundary controls which 24-hour window belongs to an assessment date.',
+      cls: 'setting-item-description',
+    });
+
+    new Setting(containerEl)
+      .setName('Sleep day boundary')
+      .setDesc('Sleep from this hour on the previous date up to the same hour on the assessment date counts toward that day. Default: 21:00.')
+      .addDropdown((dropdown) => {
+        for (let hour = 0; hour < 24; hour += 1) {
+          const label = `${String(hour).padStart(2, '0')}:00`;
+          dropdown.addOption(String(hour), label);
+        }
+        dropdown.setValue(String(this.plugin.settings.sleepDayBoundaryHour));
+        dropdown.onChange(async (value) => {
+          const hour = Number(value);
+          if (!Number.isSafeInteger(hour) || hour < 0 || hour > 23) return;
+          this.plugin.settings.sleepDayBoundaryHour = hour;
+          await this.plugin.saveSettings();
+          await this.plugin.refreshViews();
+        });
+      });
 
     new Setting(containerEl).setName('Nutrition evaluation').setHeading();
     containerEl.createEl('p', {

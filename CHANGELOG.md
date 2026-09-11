@@ -2,14 +2,30 @@
 
 ## [Unreleased]
 
+## [0.9.5] - 2026-09-11
+
+### Added
+
+- Added one shared Daily Assessment report for dashboard and active-file review, including inferred and entered metrics, the session calendar, food nutrient totals, currency-aware finance totals and valued net flow, exercise sets, and notes
+- Added a whole-hour Sleep day boundary setting, defaulting to 21:00, for choosing the 24-hour window used by automatic sleep calculation
+- Added contextual hard-error resolution to active-file Daily import, with automatic reinspection after a correction is staged
+- Added soft-deactivation/reactivation Admin Events for session and engagement types: `SESSION_TYPE_ADD`, `SESSION_TYPE_REMOVE`, `ENGAGEMENT_TYPE_ADD`, and `ENGAGEMENT_TYPE_REMOVE`
+
 ### Changed
 
 - Made session type optional across Daily Forms, Weekly Forms, planning projections, canonical imports, queries, and calendar rendering; typeless sessions use engagement type colors
 - Required exactly one `exercise`-typed owner session whenever a Daily Form contains Exercise Details, while preserving the existing one-session ownership model for all exercises and sets
-- Added soft-deactivation/reactivation Admin Events for session and engagement types: `SESSION_TYPE_ADD`, `SESSION_TYPE_REMOVE`, `ENGAGEMENT_TYPE_ADD`, and `ENGAGEMENT_TYPE_REMOVE`
 - Added a backup- and confirmation-gated Schema v1 upgrade that makes `sessions.session_type_id` nullable while preserving session IDs and linked exercise or milestone rows
-- Made the Calendar render current and future sessions directly from the latest imported version of the covering Weekly Form when no canonical Daily history or Daily Form projection owns that date; Sync week is now optional for note materialization rather than required for calendar visibility
+- Made future Calendar rendering depend only on the latest imported Weekly Form; today merges Daily and Weekly sessions while giving overlapping Daily intervals precedence
 - Made Calendar open and refresh automatically reconcile the eligible Daily Form dated today into the backup-free `planned_sessions` projection, without changing projections for other dates
+- Made structured food rows authoritative for daily calories and protein, and derived study, work, exercise, and sleep values from session evidence instead of requiring manual metric entries
+- Allowed canonical Daily import for today and past dates after report review, while future Daily Forms remain review-only until their date arrives
+
+### Fixed
+
+- Kept cached discovered forms visible after ordinary source-file edits instead of unexpectedly removing them from Daily Assessment
+- Restricted Daily parsing to bounded form sections and complete-line `ENTRIES:` markers so examples and unrelated form content cannot leak into session rows
+- Preserved complete canonical session ranges in read-only validation and non-planning queries while still hiding future canonical rows from the Calendar
 
 ## [0.9.4] - 2026-09-02
 

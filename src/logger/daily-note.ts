@@ -37,6 +37,7 @@ export interface DailyNoteInput {
   nutritionThresholds: NutritionThresholds;
   valuationLabel?: string;
   valuationReferenceUnit?: string;
+  sleepDayBoundaryHour?: number;
 }
 
 export interface DashboardCompleteness {
@@ -613,7 +614,7 @@ function applyInferredMetrics(db: Database, parsed: ParsedDailyNote, input: Dail
   const sleepHours = inferSleepHours(input.noteDate, [
     ...canonicalPreviousSleepSignals(db, input.noteDate),
     ...currentSignals,
-  ]);
+  ], input.sleepDayBoundaryHour ?? 21);
   const derived: Record<string, number> = {
     calories: parsed.mealInspection.nutrition.dailyCaloriesKcal ?? 0,
     protein_g: parsed.mealInspection.nutrition.proteinG ?? 0,

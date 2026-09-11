@@ -104,6 +104,7 @@ export class DailyAssessmentView extends ItemView {
             label: this.plugin.settings.valuationUnitLabel,
             referenceUnit: this.plugin.settings.valuationReferenceUnit,
           },
+          this.plugin.settings.sleepDayBoundaryHour,
         )
         : null;
       this.inspection = null;
@@ -133,6 +134,7 @@ export class DailyAssessmentView extends ItemView {
               nutritionThresholds: thresholds,
               valuationLabel: this.plugin.settings.valuationUnitLabel,
               valuationReferenceUnit: this.plugin.settings.valuationReferenceUnit,
+              sleepDayBoundaryHour: this.plugin.settings.sleepDayBoundaryHour,
             });
           } catch (error) {
             this.loggerOutput = error instanceof Error ? error.message : String(error);
@@ -533,6 +535,7 @@ export class DailyAssessmentView extends ItemView {
         },
         valuationLabel: this.plugin.settings.valuationUnitLabel,
         valuationReferenceUnit: this.plugin.settings.valuationReferenceUnit,
+        sleepDayBoundaryHour: this.plugin.settings.sleepDayBoundaryHour,
       };
       const inspection = await this.plugin.logger.inspectDaily(request);
       this.inspection = inspection;

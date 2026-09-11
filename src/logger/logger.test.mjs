@@ -147,7 +147,7 @@ test('native historical validation and import cover every Daily Note component',
   db.close();
 });
 
-test('today can be finalized with calculated nutrition, activity, and split sleep metrics', () => {
+test('today can be finalized with calculated nutrition, activity, and a configured sleep boundary', () => {
   const db = database();
   db.run(`
     INSERT INTO engagements (name, type_id, status_id)
@@ -160,12 +160,12 @@ test('today can be finalized with calculated nutrition, activity, and split slee
   `);
   const sourceText = dailyNote().replace(
     '07:00-08:00 | exercise | Project Alpha | morning run',
-    '00:00-07:00 |  | Sleep | second sleep segment\n07:00-08:00 | exercise | Project Alpha | morning run',
+    '00:00-07:00 |  | Sleep | second sleep segment\n07:00-08:00 | exercise | Project Alpha | morning run\n19:00-20:00 |  | Sleep | belongs to the next assessment window',
   );
   const input = {
     noteDate: '2026-08-20', todayDate: '2026-08-20', fileName: '2026-08-20.md',
     filePath: 'Journal/2026-08-20.md', sourceText, sourceChecksum: 'today-import',
-    pluginVersion: '0.9.4', nutritionThresholds: thresholds,
+    pluginVersion: '0.9.5', nutritionThresholds: thresholds, sleepDayBoundaryHour: 18,
   };
   const inspection = inspectDailyNote(db, input);
   assert.equal(inspection.ready, true, inspection.errors.join('\n'));

@@ -521,6 +521,7 @@ export function queryDailyAssessment(
   date: string,
   todayDate: string,
   valuationOptions: FinancialValuationOptions = { label: 'EHM', referenceUnit: 'USD' },
+  sleepDayBoundaryHour = 21,
 ): DailyAssessmentQueryResult {
   validateSchema(db);
   const sessionResult = querySessions(db, date, date, todayDate);
@@ -615,7 +616,7 @@ export function queryDailyAssessment(
   const inferredSleepHours = inferSleepHours(date, [
     ...previousSleepSignals,
     ...sessionResult.events.map(eventSignal),
-  ]);
+  ], sleepDayBoundaryHour);
   metrics = {
     mood: metrics?.mood ?? null,
     energy: metrics?.energy ?? null,
@@ -1454,7 +1455,7 @@ export function querySessions(
   const issues: DataIssue[] = [];
   for (const row of sourceRows) {
     const date = String(row.date);
-    if (date > todayDate) continue;
+    if (includePlanning && date > todayDate) continue;
     if (unfinalizedDates.has(date)) continue;
     const id = String(row.id);
     const start = parseDatabaseTime(String(row.start_time ?? ''));

@@ -8,7 +8,7 @@ The connecting idea is an **engagement**: anything you meaningfully engage with,
 
 Examined Human runs on desktop and mobile. Your notes and database remain in your vault. It does not require an account, server, Python installation, or cloud service.
 
-> Current release: **0.9.4**
+> Current release: **0.9.5**
 > Requires Obsidian **1.8.7 or newer**
 
 ## What you can do with it
@@ -199,7 +199,7 @@ Session rows use `interval | type (optional) | engagement | notes`. Leave the ty
 - For a **past date**, importing creates the canonical historical record after validation and confirmation.
 - Once a Daily Form is finalized, changed facts are rejected rather than silently replacing the receipt.
 
-Calories and protein are calculated from every structured food row, including snacks, and are displayed to two decimal places. The plugin also derives `studied`, `worked`, and `exercised` from session/engagement types: `study` or `course` counts as study, `work` counts as work, and `exercise` or `fitness` plus structured exercise rows count as exercise. Sleep is calculated from matching sleep sessions between 21:00 on the previous date and 21:00 on the assessed date; a session type, engagement type, or canonical engagement name of `sleep` qualifies.
+Calories and protein are calculated from every structured food row, including snacks, and are displayed to two decimal places. The plugin also derives `studied`, `worked`, and `exercised` from session/engagement types: `study` or `course` counts as study, `work` counts as work, and `exercise` or `fitness` plus structured exercise rows count as exercise. Sleep is calculated from matching sleep sessions during a configurable 24-hour assessment window, defaulting to 21:00 on the previous date through 21:00 on the assessed date; a session type, engagement type, or canonical engagement name of `sleep` qualifies.
 
 Use **Examined Human: Import Daily Form from Active File** while the note is open, or work from **Daily Assessment**.
 
