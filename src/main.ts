@@ -14,6 +14,7 @@ import {
   type EhFormKind,
   type FormDiscoveryResult,
 } from './form-discovery.ts';
+import { requireEhForm } from './forms/form-document.ts';
 import {
   ehFormFrontmatterEntry,
   ehFormFrontmatterStatus,
@@ -188,6 +189,9 @@ export default class ExaminedHumanPlugin extends Plugin {
       valuationUnitLabel: storedText(stored?.valuationUnitLabel, DEFAULT_SETTINGS.valuationUnitLabel),
       valuationReferenceUnit: storedText(stored?.valuationReferenceUnit, DEFAULT_SETTINGS.valuationReferenceUnit),
       dismissedWarningKeys: sanitizeDismissedWarningKeys(stored?.dismissedWarningKeys),
+      removeFormAfterDailyImport: stored?.removeFormAfterDailyImport === true,
+      removeFormAfterWeeklyImport: stored?.removeFormAfterWeeklyImport === true,
+      removeFormAfterBudgetImport: stored?.removeFormAfterBudgetImport === true,
     };
     if (hadLegacyPythonSetting) await this.saveData(this.settings);
   }
@@ -310,6 +314,38 @@ export default class ExaminedHumanPlugin extends Plugin {
     }
   }
 
+  async removeImportedFormAfterImport(
+    file: TFile,
+    kind: EhFormKind,
+    importedSourceText: string,
+  ): Promise<'disabled' | 'removed' | 'retained'> {
+    const enabled = kind === 'daily'
+      ? this.settings.removeFormAfterDailyImport
+      : kind === 'weekly'
+        ? this.settings.removeFormAfterWeeklyImport
+        : this.settings.removeFormAfterBudgetImport;
+    if (!enabled) return 'disabled';
+
+    try {
+      const expectedFormText = requireEhForm(importedSourceText, kind).text;
+      await this.logger.removeImportedForm({
+        fileName: file.name,
+        filePath: file.path,
+        kind,
+        expectedFormText,
+      });
+      delete this.settings.formDiscoveryCache.entries[file.path];
+      await this.saveSettings();
+      return 'removed';
+    } catch (error) {
+      new Notice(
+        `The form was imported successfully, but its source block was retained: ${error instanceof Error ? error.message : String(error)}`,
+        12_000,
+      );
+      return 'retained';
+    }
+  }
+
   private async activeForm(kind: EhFormKind): Promise<{ file: TFile; sourceText: string; form: FormDiscoveryResult['forms'][number] }> {
     const file = this.app.workspace.getActiveFile();
     if (!(file instanceof TFile)) throw new Error('Open a Markdown note that contains the form you want to import.');
@@ -332,12 +368,15 @@ export default class ExaminedHumanPlugin extends Plugin {
           explanation: 'This records the weekly direction, schedule, and commitments. Reimporting the same start date updates that weekly plan.',
           confirmLabel: 'Import week',
           dryRunOutput: `Source: ${file.path}\nWeek: ${preview.weekStart}\nCommitments: ${preview.commitmentCount}\nPlanned sessions: ${preview.sessionCount}\nPlanned time: ${preview.plannedMinutes} minutes`,
-          warning: 'Nothing has changed yet. This does not write daily-note sessions; use Sync week in Weekly Assessment when you are ready.',
+          warning: this.settings.removeFormAfterWeeklyImport
+            ? 'After confirmation, the exact imported Weekly Form will be removed from this note. This does not write daily-note sessions; use Sync week in Weekly Assessment when ready.'
+            : 'Nothing has changed yet. This does not write daily-note sessions; use Sync week in Weekly Assessment when you are ready.',
         });
         if (!confirmed) return;
         await this.logger.importWeekly({ databasePath: this.settings.databasePath, weekStartDate: form.startDate!, fileName: file.name, filePath: file.path, sourceText });
         await this.markImportedEhFormFileIfComplete(file);
-        new Notice(`Imported Weekly Form starting ${preview.weekStart}.`, 8_000);
+        const cleanup = await this.removeImportedFormAfterImport(file, 'weekly', sourceText);
+        new Notice(`Imported Weekly Form starting ${preview.weekStart}.${cleanup === 'removed' ? ' Source form removed.' : ''}`, 8_000);
       } else if (kind === 'budget') {
         const preview = await this.logger.inspectBudget({ databasePath: this.settings.databasePath, fileName: file.name, filePath: file.path, sourceText });
         const confirmed = await confirmWeeklyAction(this.app, {
@@ -345,11 +384,14 @@ export default class ExaminedHumanPlugin extends Plugin {
           explanation: preview.updatedExistingBudget ? 'This updates the stored Budget Form with the same start and end dates.' : 'This adds this dated Budget Form to the database.',
           confirmLabel: preview.updatedExistingBudget ? 'Update budget' : 'Import budget',
           dryRunOutput: `Source: ${file.path}\nPeriod: ${preview.periodStart} through ${preview.periodEnd}\nBudget targets: ${preview.targetCount}\nExpected movements: ${preview.expectedMovementCount}`,
-          warning: 'Nothing has changed yet. Expected movements are planning evidence only; they never create transactions or reminders.',
+          warning: this.settings.removeFormAfterBudgetImport
+            ? 'After confirmation, the exact imported Budget Form will be removed from this note. Expected movements remain planning evidence only.'
+            : 'Nothing has changed yet. Expected movements are planning evidence only; they never create transactions or reminders.',
         });
         if (!confirmed) return;
         await this.logger.importBudget({ databasePath: this.settings.databasePath, fileName: file.name, filePath: file.path, sourceText });
-        new Notice(`Imported Budget Form for ${preview.periodStart} through ${preview.periodEnd}.`, 8_000);
+        const cleanup = await this.removeImportedFormAfterImport(file, 'budget', sourceText);
+        new Notice(`Imported Budget Form for ${preview.periodStart} through ${preview.periodEnd}.${cleanup === 'removed' ? ' Source form removed.' : ''}`, 8_000);
       } else {
         const today = moment().format('YYYY-MM-DD');
         const noteDate = form.date!;
@@ -382,7 +424,7 @@ export default class ExaminedHumanPlugin extends Plugin {
           title: `${dailyAssessmentTitle(noteDate, today)} — ${noteDate}`,
           explanation: future
             ? 'Review the future form below. It cannot become a canonical Daily receipt until its date arrives.'
-            : 'Review the complete assessment below. Confirmation writes a durable canonical Daily receipt with a backup.',
+            : `Review the complete assessment below. Confirmation writes a durable canonical Daily receipt with a backup.${this.settings.removeFormAfterDailyImport ? ' The exact imported Daily Form will then be removed from this note.' : ''}`,
           confirmLabel: 'Import daily assessment',
           inspection,
           sessionColors: this.settings.sessionColors,
@@ -407,7 +449,8 @@ export default class ExaminedHumanPlugin extends Plugin {
         if (!confirmed) return;
         await this.logger.importHistoricalDaily(request);
         await this.markImportedEhFormFileIfComplete(file);
-        new Notice('Imported successfully.', 8_000);
+        const cleanup = await this.removeImportedFormAfterImport(file, 'daily', sourceText);
+        new Notice(`Imported successfully.${cleanup === 'removed' ? ' Source form removed.' : ''}`, 8_000);
       }
       await this.refreshViews();
     } catch (error) {

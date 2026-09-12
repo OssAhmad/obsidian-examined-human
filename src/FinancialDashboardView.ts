@@ -291,14 +291,22 @@ export class FinancialDashboardView extends DashboardViewBase<FinancialDashboard
       const request = { databasePath: this.plugin.settings.databasePath, fileName: candidate.fileName, filePath: candidate.filePath, sourceText: candidate.sourceText };
       const preview = await this.plugin.logger.inspectBudget(request);
       const confirmed = await confirmWeeklyAction(this.app, {
-        title: 'Import Budget Form', explanation: preview.updatedExistingBudget ? 'This updates the stored budget with the same start and end dates. The note remains untouched in your vault.' : 'This adds a dated Budget Form to the database.',
+        title: 'Import Budget Form',
+        explanation: preview.updatedExistingBudget
+          ? `This updates the stored budget with the same start and end dates.${this.plugin.settings.removeFormAfterBudgetImport ? ' After import, the exact Budget Form will be removed from its source note.' : ' The source note remains untouched.'}`
+          : `This adds a dated Budget Form to the database.${this.plugin.settings.removeFormAfterBudgetImport ? ' After import, the exact Budget Form will be removed from its source note.' : ''}`,
         confirmLabel: preview.updatedExistingBudget ? 'Update budget' : 'Import budget',
         dryRunOutput: `Source: ${candidate.filePath}\nPeriod: ${preview.periodStart} through ${preview.periodEnd}\nBudget targets: ${preview.targetCount}\nExpected movements: ${preview.expectedMovementCount}`,
-        warning: 'Nothing has changed yet. Expected movements are planning records only and never create transactions or reminders.',
+        warning: this.plugin.settings.removeFormAfterBudgetImport
+          ? 'After confirmation, the exact imported Budget Form will be removed from this note. Expected movements remain planning records only.'
+          : 'Nothing has changed yet. Expected movements are planning records only and never create transactions or reminders.',
       });
       if (!confirmed) return;
+      const file = this.app.vault.getAbstractFileByPath(candidate.filePath);
+      if (!(file instanceof TFile)) throw new Error(`Budget note was not found: ${candidate.filePath}`);
       const result = await this.plugin.logger.importBudget(request);
-      new Notice(`Imported Budget Form for ${result.periodStart} through ${result.periodEnd}. ${result.backupPath ? `Backup: ${result.backupPath}` : ''}`, 10_000);
+      const cleanup = await this.plugin.removeImportedFormAfterImport(file, 'budget', candidate.sourceText);
+      new Notice(`Imported Budget Form for ${result.periodStart} through ${result.periodEnd}.${cleanup === 'removed' ? ' Source form removed.' : ''} ${result.backupPath ? `Backup: ${result.backupPath}` : ''}`, 10_000);
       await this.plugin.refreshViews();
     } catch (error) { new Notice(`Budget Form was not imported: ${error instanceof Error ? error.message : String(error)}`, 12_000); }
   }

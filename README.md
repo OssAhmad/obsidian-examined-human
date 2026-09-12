@@ -174,6 +174,9 @@ Before regular use, review these settings:
 - **Default dashboard period:** controls the initial date range in analytical dashboards.
 - **Valuation:** choose the display label and reference asset class only if you want converted net-worth views.
 - **Calendar:** choose the initial hour, desktop day width, mobile day width, and session colors.
+- **Form cleanup after import:** the Daily, Weekly, and Budget switches are independent and disabled by default. When enabled, only the exact form block that was validated is removed after its database import succeeds; surrounding note text and other forms remain.
+
+On Obsidian 1.13 and later, Examined Human preferences are organized into searchable General, Nutrition, Financial, Styling, and Exercise pages. Older supported Obsidian versions render the same preferences as a single categorized page.
 
 ## How information moves from a note into the plugin
 
@@ -192,7 +195,7 @@ Dashboard buttons that say **Stage** do not finish an import. They add reviewabl
 
 A Daily Form can contain metrics, sessions, meals, transactions, valuation rates, exercise details, milestones, Stoicism notes, and Admin Events.
 
-Session rows use `interval | type (optional) | engagement | notes`. Leave the type field blank for ordinary sessions. If the form contains Exercise Details, exactly one session must use type `exercise`; all of that form's exercises and sets attach to that session.
+Session rows use either `interval | engagement | notes` for a typeless session or `interval | type | engagement | notes` when an explicit session type is needed. The four-field form may also leave the type field blank. Typeless sessions inherit their engagement type for calendar color. If the form contains Exercise Details, exactly one session must use type `exercise`; all of that form's exercises and sets attach to that session.
 
 - For **today**, opening or refreshing the Calendar automatically imports the eligible Daily Form's Sessions into the replaceable `planned_sessions` projection. You may also validate and finalize today's complete form.
 - For a **future date**, the assessment can be reviewed, but canonical Daily import is refused until that date arrives. Future Calendar sessions come only from an imported Weekly Form.

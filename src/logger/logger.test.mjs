@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createSchemaV1Database, SQL } from '../../test-support/database.mjs';
+import { querySessions } from '../examined-human-query.ts';
 import { inspectDailyNote, writeHistoricalDailyNote } from './daily-note.ts';
 import { queryMealComponentState, writeMealInspection } from './meal-import.ts';
 import { inspectMeals } from './meals.ts';
@@ -282,6 +283,81 @@ test('focused Admin Events safely maintain aliases, engagements, exercises, and 
   db.close();
 });
 
+test('Daily inspection resolves foods and engagements created by same-form Admin Events', () => {
+  const db = database();
+  const sourceText = dailyNote()
+    .replace('Eggs | 100', 'oily tuna | 100')
+    .replace(
+      '09:00-10:30 |  | Project Alpha | reading',
+      '09:00-10:30 |  | Project Alpha | reading\n11:10-12:03 | going home | just going to home',
+    )
+    .replace('ACCOUNT_ALIAS | Cash | Wallet', [
+      'FOOD_CREATE | Canned Tuna in more-than-usual Oil | Seafood | 225 | 16.9 | 0 | 17.5 | 1.5 | 0 | 20 | Package-derived values: 135 kcal, 10.5 g fat, 0 g carbs and 0.9 g salt per 60 g serving. Protein estimated from the package energy/macros because exact protein was not provided; product appears substantially oilier than generic drained canned tuna. Cholesterol is a generic estimate. | [oily tuna, oil-packed tuna]',
+      'ENGAGEMENT_CREATE | Home commute | maintenance | active |',
+      'ENGAGEMENT_ALIAS_ADD | Home commute | [commute, going home]',
+    ].join('\n'));
+  const input = {
+    noteDate: '2026-08-20', todayDate: '2026-08-21', fileName: '2026-08-20.md',
+    filePath: 'Journal/2026-08-20.md', sourceText, sourceChecksum: 'same-form-aliases',
+    pluginVersion: '0.9.5', nutritionThresholds: thresholds,
+  };
+
+  const inspectionDb = new SQL.Database(db.export());
+  const inspection = inspectDailyNote(inspectionDb, input);
+  assert.equal(inspection.ready, true, inspection.errors.join('\n'));
+  assert.equal(inspection.mealInspection.errors.length, 0);
+  assert.equal(inspection.preview.meals[0].food, 'Canned Tuna in more-than-usual Oil');
+  assert.deepEqual(
+    inspection.preview.sessions.find((session) => session.interval === '11:10-12:03'),
+    {
+      ordinal: 3,
+      interval: '11:10-12:03',
+      start_time: '11:10',
+      end_time: '12:03',
+      duration_minutes: 53,
+      session_type: '',
+      engagement: 'Home commute',
+      engagement_type: 'maintenance',
+      notes: 'just going to home',
+    },
+  );
+  inspectionDb.close();
+
+  assert.equal(db.exec("SELECT COUNT(*) FROM foods WHERE name = 'Canned Tuna in more-than-usual Oil'")[0].values[0][0], 0);
+  assert.equal(db.exec("SELECT COUNT(*) FROM engagements WHERE name = 'Home commute'")[0].values[0][0], 0);
+  db.close();
+});
+
+test('typeless three-field sessions import and render with their engagement type', () => {
+  const db = database();
+  const sourceText = dailyNote().replace(
+    '09:00-10:30 |  | Project Alpha | reading',
+    '11:10-12:03 | Project Alpha | just going to home',
+  );
+  const input = {
+    noteDate: '2026-08-20', todayDate: '2026-08-21', fileName: '2026-08-20.md',
+    filePath: 'Journal/2026-08-20.md', sourceText, sourceChecksum: 'typeless-session',
+    pluginVersion: '0.9.5', nutritionThresholds: thresholds,
+  };
+
+  const inspectionDb = new SQL.Database(db.export());
+  const inspection = inspectDailyNote(inspectionDb, input);
+  assert.equal(inspection.ready, true, inspection.errors.join('\n'));
+  const preview = inspection.preview.sessions.find((session) => session.interval === '11:10-12:03');
+  assert.equal(preview?.session_type, '');
+  assert.equal(preview?.engagement_type, 'course');
+  inspectionDb.close();
+
+  writeHistoricalDailyNote(db, input);
+  const imported = db.exec("SELECT session_type_id FROM sessions WHERE start_time = '11:10'")[0].values[0][0];
+  assert.equal(imported, null);
+  const event = querySessions(db, '2026-08-20', '2026-08-20', '2026-08-21').events
+    .find((candidate) => candidate.startMinutes === 11 * 60 + 10);
+  assert.equal(event?.sessionType, '');
+  assert.equal(event?.engagementType, 'course');
+  db.close();
+});
+
 test('Exercise Details require exactly one session typed exercise', () => {
   const db = database();
   const input = {
@@ -507,6 +583,47 @@ ${interval} | study | Project Alpha | planned work
       ['2026-08-22', 'planned'],
     ],
   );
+  db.close();
+});
+
+test('today planning accepts a typeless three-field session and exposes its engagement type', () => {
+  const db = database();
+  const note = {
+    noteDate: '2026-08-21',
+    fileName: '2026-08-21.md',
+    filePath: 'Journal/2026-08-21.md',
+    sourceText: `#### EH Daily Form
+date: 2026-08-21
+##### Sessions
+ENTRIES:
+11:10-12:03 | Project Alpha | just going to home
+#### END`,
+    sourceChecksum: 'typeless-planning',
+  };
+
+  const parsed = inspectPlannedNote(note.sourceText, note.noteDate);
+  assert.equal(parsed.parseStatus, 'ok');
+  assert.deepEqual(parsed.sessions[0], {
+    ordinal: 1,
+    intervalRaw: '11:10-12:03',
+    startTime: '11:10',
+    endTime: '12:03',
+    durationMinutes: 53,
+    timeIsEstimated: false,
+    sessionTypeRaw: '',
+    engagementRaw: 'Project Alpha',
+    notes: 'just going to home',
+    warnings: [],
+  });
+
+  syncPlanningDate(db, note.noteDate, note);
+  assert.deepEqual(
+    db.exec('SELECT session_type_raw, resolved_session_type_id, engagement_raw, resolved_engagement_id FROM planned_sessions')[0].values[0],
+    ['', null, 'Project Alpha', 1],
+  );
+  const event = querySessions(db, note.noteDate, note.noteDate, note.noteDate).events[0];
+  assert.equal(event.sessionType, '');
+  assert.equal(event.engagementType, 'course');
   db.close();
 });
 

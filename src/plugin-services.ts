@@ -1,6 +1,7 @@
 import type { App, TFile } from 'obsidian';
 import type { ExaminedHumanDatabase } from './examined-human-database.ts';
 import type { FormDiscoveryResult } from './form-discovery.ts';
+import type { EhFormKind } from './forms/form-document.ts';
 import type { LoggerService } from './logger/service.ts';
 import type { ExaminedHumanSettings } from './settings.ts';
 
@@ -22,6 +23,11 @@ export interface ExaminedHumanPluginServices {
   discoverFormsWithNotice(): Promise<void>;
   syncTodayPlanningFromDailyForm(): Promise<void>;
   markImportedEhFormFileIfComplete(file: TFile): Promise<boolean>;
+  removeImportedFormAfterImport(
+    file: TFile,
+    kind: EhFormKind,
+    importedSourceText: string,
+  ): Promise<'disabled' | 'removed' | 'retained'>;
 }
 
 export type DashboardServices = Pick<
@@ -38,7 +44,7 @@ export type CommandServices = DashboardServices & NoteStagingServices;
 
 export type FormWorkflowServices = DashboardServices & Pick<
   ExaminedHumanPluginServices,
-  'app' | 'discoverFormsWithNotice' | 'knownForms' | 'markImportedEhFormFileIfComplete'
+  'app' | 'discoverFormsWithNotice' | 'knownForms' | 'markImportedEhFormFileIfComplete' | 'removeImportedFormAfterImport'
 >;
 
 export type TimelineServices = DashboardServices & Pick<
@@ -48,5 +54,5 @@ export type TimelineServices = DashboardServices & Pick<
 
 export type FinancialDashboardServices = DashboardServices & Pick<
   ExaminedHumanPluginServices,
-  'knownForms'
+  'knownForms' | 'removeImportedFormAfterImport'
 >;

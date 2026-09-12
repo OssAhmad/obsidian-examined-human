@@ -29,6 +29,7 @@ export class DailyAssessmentView extends ItemView {
   private assessment: DailyAssessmentQueryResult | null = null;
   private inspection: DailyInspection | null = null;
   private mealInspection: MealInspection | null = null;
+  private standaloneMealInspection: MealInspection | null = null;
   private loggerOutput: string | null = null;
   private renderGeneration = 0;
   private fingerprintTimer: number | null = null;
@@ -109,6 +110,7 @@ export class DailyAssessmentView extends ItemView {
         : null;
       this.inspection = null;
       this.mealInspection = null;
+      this.standaloneMealInspection = null;
       if (this.selectedItem && this.selectedItem.status !== 'imported') {
         const noteFile = this.app.vault.getAbstractFileByPath(this.selectedItem.filePath);
         if (noteFile instanceof TFile) {
@@ -118,7 +120,7 @@ export class DailyAssessmentView extends ItemView {
             dailyCalorieLimitKcal: this.plugin.settings.dailyCalorieLimitKcal,
             minimumProteinG: this.plugin.settings.minimumProteinG,
           };
-          this.mealInspection = await this.plugin.logger.inspectMeals({
+          this.standaloneMealInspection = await this.plugin.logger.inspectMeals({
             databasePath: this.plugin.settings.databasePath,
             sourceText,
             nutritionThresholds: thresholds,
@@ -136,7 +138,12 @@ export class DailyAssessmentView extends ItemView {
               valuationReferenceUnit: this.plugin.settings.valuationReferenceUnit,
               sleepDayBoundaryHour: this.plugin.settings.sleepDayBoundaryHour,
             });
+            // The full Daily inspection stages Admin Events in its disposable
+            // database before resolving foods and engagements. Its Meals result
+            // is therefore authoritative for the Daily assessment preview.
+            this.mealInspection = this.inspection.mealInspection;
           } catch (error) {
+            this.mealInspection = this.standaloneMealInspection;
             this.loggerOutput = error instanceof Error ? error.message : String(error);
           }
         }
@@ -270,7 +277,7 @@ export class DailyAssessmentView extends ItemView {
     if (!item || item.status === 'imported') return;
     const references = unresolvedReferencesFromErrors([
       ...(this.inspection?.errors ?? []),
-      ...(this.mealInspection?.errors ?? []),
+      ...(this.inspection ? [] : (this.mealInspection?.errors ?? [])),
     ]);
     if (references.length === 0) return;
     const panel = container.createDiv({ cls: 'examined-human-unresolved-references' });
@@ -343,8 +350,11 @@ export class DailyAssessmentView extends ItemView {
       return;
     }
 
+    const requiresDailyImport = inspection.ready && this.standaloneMealInspection?.ready === false;
     state.addClass(inspection.ready ? 'is-ready' : 'is-blocked');
-    state.setText(component ? 'Ephemeral · replaceable' : inspection.ready ? 'Ready' : 'Needs attention');
+    state.setText(requiresDailyImport
+      ? 'Included in Daily import'
+      : component ? 'Ephemeral · replaceable' : inspection.ready ? 'Ready' : 'Needs attention');
     block.createDiv({
       cls: 'examined-human-daily-section-subtitle',
       text: 'Parsed and validated inside Obsidian on desktop and mobile. Snacks count toward daily calories but never directly as leisure.',
@@ -374,10 +384,16 @@ export class DailyAssessmentView extends ItemView {
     const actions = block.createDiv({ cls: 'examined-human-native-meals-actions' });
     const button = actions.createEl('button', {
       cls: 'mod-cta',
-      text: component ? 'Replace Meals' : 'Import Meals',
+      text: requiresDailyImport ? 'Import Daily first' : component ? 'Replace Meals' : 'Import Meals',
     });
-    button.disabled = !inspection.ready || this.plugin.logger.isRunning;
+    button.disabled = !inspection.ready || requiresDailyImport || this.plugin.logger.isRunning;
     button.addEventListener('click', () => { void this.handleNativeMealImport(); });
+    if (requiresDailyImport) {
+      actions.createSpan({
+        cls: 'examined-human-daily-validation-note',
+        text: 'These meals use a food or alias created by this form. The full Daily import commits the Admin Event before importing Meals.',
+      });
+    }
     if (component) {
       actions.createSpan({
         cls: 'examined-human-daily-validation-note',
@@ -548,11 +564,13 @@ export class DailyAssessmentView extends ItemView {
       this.actionButton?.setText('Importing…');
       const result = await this.plugin.logger.importHistoricalDaily(request);
       await this.plugin.markImportedEhFormFileIfComplete(noteFile);
+      const cleanup = await this.plugin.removeImportedFormAfterImport(noteFile, 'daily', sourceText);
       this.loggerOutput = [
         `Imported ${result.sessionCount} sessions, ${result.transactionCount} transactions, ${result.exerciseCount} exercises, and ${result.foodRowCount} food rows.`,
         `Milestones: ${result.milestoneCount}. Admin events: ${result.adminEventCount}.`,
+        cleanup === 'removed' ? 'Source Daily Form removed from the note.' : '',
         ...backupMutationOutput(result),
-      ].join('\n');
+      ].filter(Boolean).join('\n');
       await this.refresh();
       const imported = this.selectedItem?.status === 'imported';
       if (imported) new Notice('Imported successfully.', 8000);

@@ -4038,13 +4038,13 @@ function queryFinancialDashboard(db, startDate, endDate, valuationOptions = { la
   for (const row of ledger) {
     if (row.kind !== "normal" || row.amount === 0) continue;
     const key = `${row.date}\0${row.currency}\0${Math.abs(row.amount)}`;
-    const group = (_a = transferGroups.get(key)) != null ? _a : [];
-    group.push(row);
-    transferGroups.set(key, group);
+    const group2 = (_a = transferGroups.get(key)) != null ? _a : [];
+    group2.push(row);
+    transferGroups.set(key, group2);
   }
-  for (const group of transferGroups.values()) {
-    const negatives = group.filter((row) => row.amount < 0);
-    const positives = group.filter((row) => row.amount > 0);
+  for (const group2 of transferGroups.values()) {
+    const negatives = group2.filter((row) => row.amount < 0);
+    const positives = group2.filter((row) => row.amount > 0);
     if (negatives.length === 1 && positives.length === 1 && negatives[0].accountId !== positives[0].accountId) {
       negatives[0].isTransfer = true;
       positives[0].isTransfer = true;
@@ -4072,9 +4072,9 @@ function queryFinancialDashboard(db, startDate, endDate, valuationOptions = { la
     const grouped = /* @__PURE__ */ new Map();
     for (const record of records) {
       const key = keyFor(record);
-      const group = (_a2 = grouped.get(key)) != null ? _a2 : [];
-      group.push(record);
-      grouped.set(key, group);
+      const group2 = (_a2 = grouped.get(key)) != null ? _a2 : [];
+      group2.push(record);
+      grouped.set(key, group2);
     }
     return grouped;
   };
@@ -5546,6 +5546,21 @@ function splitPipeFields(line) {
   return line.split("|").map((part) => part.trim());
 }
 
+// src/forms/session-row.ts
+var SESSION_ROW_FORMAT = "interval | engagement | notes, or interval | type | engagement | notes";
+function parseSessionRowFields(line) {
+  const parts = splitDelimitedFields(line);
+  if (parts.length === 3) {
+    const [interval, engagement, notes] = parts;
+    return { interval, type: "", engagement, notes };
+  }
+  if (parts.length === 4) {
+    const [interval, type, engagement, notes] = parts;
+    return { interval, type, engagement, notes };
+  }
+  return null;
+}
+
 // src/logger/admin/command-registry.ts
 function command(...argumentCounts) {
   return { argumentCounts };
@@ -5600,10 +5615,10 @@ function adminCommandDefinition(name) {
   return Object.prototype.hasOwnProperty.call(ADMIN_COMMANDS, name) ? ADMIN_COMMANDS[name] : null;
 }
 function validateAdminCommandArguments(name, received) {
-  const definition = adminCommandDefinition(name);
-  if (!definition) return `Unknown admin command '${name}'. Supported commands: ${supportedAdminCommands().join(", ")}.`;
-  if (definition.argumentCounts.includes(received)) return null;
-  return `${name} expects ${definition.argumentCounts.join(" or ")} arguments; received ${received}.`;
+  const definition2 = adminCommandDefinition(name);
+  if (!definition2) return `Unknown admin command '${name}'. Supported commands: ${supportedAdminCommands().join(", ")}.`;
+  if (definition2.argumentCounts.includes(received)) return null;
+  return `${name} expects ${definition2.argumentCounts.join(" or ")} arguments; received ${received}.`;
 }
 
 // src/logger/admin/command-handlers.ts
@@ -6160,9 +6175,9 @@ function parseDaily(db, sourceText, noteDate, thresholds, errors) {
   const sections2 = sectionsFromForm(sourceText, noteDate);
   const metrics = metricMap(sections2.get("daily metrics"), errors);
   const sessions = entries(sections2.get("sessions")).map((line, index) => {
-    const parts = splitFields(line, 4);
-    if (parts.length !== 4) errors.push(`Invalid session row '${line}'; expected interval | type (optional) | engagement | notes.`);
-    const [interval = "", type = "", engagement = "", notes2 = ""] = parts;
+    const fields2 = parseSessionRowFields(line);
+    if (!fields2) errors.push(`Invalid session row '${line}'; expected ${SESSION_ROW_FORMAT}.`);
+    const { interval = "", type = "", engagement = "", notes: notes2 = "" } = fields2 != null ? fields2 : {};
     return {
       ordinal: index + 1,
       interval,
@@ -6844,9 +6859,6 @@ function entriesBlock(section) {
   const marker = findEntriesMarker(section);
   return marker == null ? "" : section.slice(marker.end).trim();
 }
-function splitFields2(line, expected) {
-  return splitDelimitedFields(line, expected);
-}
 function formatTime(minutes) {
   return `${String(Math.floor(minutes / 60)).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`;
 }
@@ -6872,12 +6884,17 @@ function inspectPlannedNote(text, expectedDate) {
   sessionLines.forEach((rawLine, sourceIndex) => {
     const line = rawLine.trim();
     if (!line || line.startsWith("<!--") || line.startsWith("-->") || line.startsWith(">") || line.startsWith("#")) return;
-    const parts = splitFields2(line, 4);
-    if (parts.length !== 4) {
-      extracted.issues.push(`Sessions entry #${sourceIndex + 1} has ${parts.length} fields; expected 4.`);
+    const fields2 = parseSessionRowFields(line);
+    if (!fields2) {
+      extracted.issues.push(`Sessions entry #${sourceIndex + 1} must use ${SESSION_ROW_FORMAT}.`);
       return;
     }
-    const [intervalRaw, sessionTypeRaw, engagementRaw, notes] = parts;
+    const {
+      interval: intervalRaw,
+      type: sessionTypeRaw,
+      engagement: engagementRaw,
+      notes
+    } = fields2;
     const warnings = [];
     const parsed = parsePlannedInterval(intervalRaw);
     let start;
@@ -7933,6 +7950,26 @@ function runDatabaseTransaction(db, operation, enforceForeignKeys = true) {
   }
 }
 
+// src/logger/form-removal.ts
+function withoutTrailingSeparator(text) {
+  return text.replace(/(\r?\n)[ \t]*(\r?\n)$/, "$1");
+}
+function removeImportedFormBlock(input) {
+  const matches = findAllEhForms(input.sourceText).filter((form) => form.kind === input.kind && form.text === input.expectedFormText);
+  if (matches.length === 0) {
+    throw new Error("The imported form changed or disappeared after validation, so its source block was left untouched.");
+  }
+  if (matches.length > 1) {
+    throw new Error("The note contains duplicate copies of the imported form, so no source block was removed.");
+  }
+  const match = matches[0];
+  const before = input.sourceText.slice(0, match.headingStart);
+  const after = input.sourceText.slice(match.endEnd);
+  if (!after) return withoutTrailingSeparator(before);
+  const afterWithoutSeparator = after.replace(/^(?:\r?\n)(?:[ \t]*(?:\r?\n))?/, "");
+  return before + afterWithoutSeparator;
+}
+
 // src/logger/service.ts
 function backupMutationOutput(metadata) {
   const lines = [metadata.backupPath ? `Backup: ${metadata.backupPath}` : "Backup: not created for this ephemeral-only write."];
@@ -8235,6 +8272,16 @@ var LoggerService = class {
   }
   stageValuationRates(preview) {
     return this.stageNotePreview(preview);
+  }
+  removeImportedForm(request) {
+    return this.enqueue(async () => {
+      const file = this.requireFile(request.filePath, "Imported form source note");
+      await this.app.vault.process(file, (sourceText) => removeImportedFormBlock({
+        kind: request.kind,
+        expectedFormText: request.expectedFormText,
+        sourceText
+      }));
+    });
   }
   stageNotePreview(preview) {
     return this.enqueue(async () => {
@@ -9132,12 +9179,12 @@ var import_obsidian7 = require("obsidian");
 function layoutOverlappingEvents(events) {
   const sorted = events.filter((event) => event.kind === "timed").slice().sort((a, b) => a.startMinutes - b.startMinutes || b.endMinutes - a.endMinutes || a.id.localeCompare(b.id));
   const result = [];
-  let group = [];
+  let group2 = [];
   let groupEnd = -1;
   const flush = () => {
-    if (group.length === 0) return;
+    if (group2.length === 0) return;
     const columnEnds = [];
-    const placed = group.map((event) => {
+    const placed = group2.map((event) => {
       let column = columnEnds.findIndex((end) => end <= event.startMinutes);
       if (column === -1) column = columnEnds.length;
       columnEnds[column] = event.endMinutes;
@@ -9145,13 +9192,13 @@ function layoutOverlappingEvents(events) {
     });
     for (const item of placed) item.columnCount = columnEnds.length;
     result.push(...placed);
-    group = [];
+    group2 = [];
   };
   for (const event of sorted) {
-    if (group.length > 0 && event.startMinutes >= groupEnd) flush();
-    group.push(event);
+    if (group2.length > 0 && event.startMinutes >= groupEnd) flush();
+    group2.push(event);
     groupEnd = Math.max(groupEnd, event.endMinutes);
-    if (group.length === 1) groupEnd = event.endMinutes;
+    if (group2.length === 1) groupEnd = event.endMinutes;
   }
   flush();
   return result;
@@ -9179,18 +9226,18 @@ function layoutVisualStack(events, pxPerMinute, options = {}) {
     });
   };
   const temporalGroups = [];
-  let group = [];
+  let group2 = [];
   let groupEnd = -1;
   for (const event of sorted) {
-    if (group.length > 0 && event.startMinutes >= groupEnd) {
-      temporalGroups.push(group);
-      group = [];
+    if (group2.length > 0 && event.startMinutes >= groupEnd) {
+      temporalGroups.push(group2);
+      group2 = [];
       groupEnd = -1;
     }
-    group.push(event);
+    group2.push(event);
     groupEnd = Math.max(groupEnd, event.endMinutes);
   }
-  if (group.length > 0) temporalGroups.push(group);
+  if (group2.length > 0) temporalGroups.push(group2);
   let singletonRun = [];
   let previousBoundaryEnd;
   const flushSingletonRun = (nextBoundaryStart) => {
@@ -9975,6 +10022,7 @@ var DailyAssessmentView = class extends import_obsidian8.ItemView {
     this.assessment = null;
     this.inspection = null;
     this.mealInspection = null;
+    this.standaloneMealInspection = null;
     this.loggerOutput = null;
     this.renderGeneration = 0;
     this.fingerprintTimer = null;
@@ -10043,6 +10091,7 @@ var DailyAssessmentView = class extends import_obsidian8.ItemView {
       ) : null;
       this.inspection = null;
       this.mealInspection = null;
+      this.standaloneMealInspection = null;
       if (this.selectedItem && this.selectedItem.status !== "imported") {
         const noteFile = this.app.vault.getAbstractFileByPath(this.selectedItem.filePath);
         if (noteFile instanceof import_obsidian8.TFile) {
@@ -10052,7 +10101,7 @@ var DailyAssessmentView = class extends import_obsidian8.ItemView {
             dailyCalorieLimitKcal: this.plugin.settings.dailyCalorieLimitKcal,
             minimumProteinG: this.plugin.settings.minimumProteinG
           };
-          this.mealInspection = await this.plugin.logger.inspectMeals({
+          this.standaloneMealInspection = await this.plugin.logger.inspectMeals({
             databasePath: this.plugin.settings.databasePath,
             sourceText,
             nutritionThresholds: thresholds
@@ -10070,7 +10119,9 @@ var DailyAssessmentView = class extends import_obsidian8.ItemView {
               valuationReferenceUnit: this.plugin.settings.valuationReferenceUnit,
               sleepDayBoundaryHour: this.plugin.settings.sleepDayBoundaryHour
             });
+            this.mealInspection = this.inspection.mealInspection;
           } catch (error) {
+            this.mealInspection = this.standaloneMealInspection;
             this.loggerOutput = error instanceof Error ? error.message : String(error);
           }
         }
@@ -10203,7 +10254,7 @@ var DailyAssessmentView = class extends import_obsidian8.ItemView {
     if (!item || item.status === "imported") return;
     const references = unresolvedReferencesFromErrors([
       ...(_b = (_a = this.inspection) == null ? void 0 : _a.errors) != null ? _b : [],
-      ...(_d = (_c = this.mealInspection) == null ? void 0 : _c.errors) != null ? _d : []
+      ...this.inspection ? [] : (_d = (_c = this.mealInspection) == null ? void 0 : _c.errors) != null ? _d : []
     ]);
     if (references.length === 0) return;
     const panel = container.createDiv({ cls: "examined-human-unresolved-references" });
@@ -10251,7 +10302,7 @@ var DailyAssessmentView = class extends import_obsidian8.ItemView {
     }
   }
   renderNativeMeals(container, item) {
-    var _a, _b;
+    var _a, _b, _c;
     const block = container.createDiv({ cls: "examined-human-native-meals" });
     const heading = block.createDiv({ cls: "examined-human-daily-section-heading" });
     heading.createEl("h4", { text: "Native Meals" });
@@ -10273,8 +10324,9 @@ var DailyAssessmentView = class extends import_obsidian8.ItemView {
       block.createDiv({ cls: "examined-human-daily-validation-note", text: "The selected Daily Note could not be read." });
       return;
     }
+    const requiresDailyImport = inspection.ready && ((_c = this.standaloneMealInspection) == null ? void 0 : _c.ready) === false;
     state.addClass(inspection.ready ? "is-ready" : "is-blocked");
-    state.setText(component ? "Ephemeral \xB7 replaceable" : inspection.ready ? "Ready" : "Needs attention");
+    state.setText(requiresDailyImport ? "Included in Daily import" : component ? "Ephemeral \xB7 replaceable" : inspection.ready ? "Ready" : "Needs attention");
     block.createDiv({
       cls: "examined-human-daily-section-subtitle",
       text: "Parsed and validated inside Obsidian on desktop and mobile. Snacks count toward daily calories but never directly as leisure."
@@ -10302,12 +10354,18 @@ var DailyAssessmentView = class extends import_obsidian8.ItemView {
     const actions = block.createDiv({ cls: "examined-human-native-meals-actions" });
     const button = actions.createEl("button", {
       cls: "mod-cta",
-      text: component ? "Replace Meals" : "Import Meals"
+      text: requiresDailyImport ? "Import Daily first" : component ? "Replace Meals" : "Import Meals"
     });
-    button.disabled = !inspection.ready || this.plugin.logger.isRunning;
+    button.disabled = !inspection.ready || requiresDailyImport || this.plugin.logger.isRunning;
     button.addEventListener("click", () => {
       void this.handleNativeMealImport();
     });
+    if (requiresDailyImport) {
+      actions.createSpan({
+        cls: "examined-human-daily-validation-note",
+        text: "These meals use a food or alias created by this form. The full Daily import commits the Admin Event before importing Meals."
+      });
+    }
     if (component) {
       actions.createSpan({
         cls: "examined-human-daily-validation-note",
@@ -10470,11 +10528,13 @@ var DailyAssessmentView = class extends import_obsidian8.ItemView {
       (_b = this.actionButton) == null ? void 0 : _b.setText("Importing\u2026");
       const result = await this.plugin.logger.importHistoricalDaily(request);
       await this.plugin.markImportedEhFormFileIfComplete(noteFile);
+      const cleanup = await this.plugin.removeImportedFormAfterImport(noteFile, "daily", sourceText);
       this.loggerOutput = [
         `Imported ${result.sessionCount} sessions, ${result.transactionCount} transactions, ${result.exerciseCount} exercises, and ${result.foodRowCount} food rows.`,
         `Milestones: ${result.milestoneCount}. Admin events: ${result.adminEventCount}.`,
+        cleanup === "removed" ? "Source Daily Form removed from the note." : "",
         ...backupMutationOutput(result)
-      ].join("\n");
+      ].filter(Boolean).join("\n");
       await this.refresh();
       const imported = ((_c = this.selectedItem) == null ? void 0 : _c.status) === "imported";
       if (imported) new import_obsidian8.Notice("Imported successfully.", 8e3);
@@ -12588,17 +12648,20 @@ var FinancialDashboardView = class extends DashboardViewBase {
       const preview = await this.plugin.logger.inspectBudget(request);
       const confirmed = await confirmWeeklyAction(this.app, {
         title: "Import Budget Form",
-        explanation: preview.updatedExistingBudget ? "This updates the stored budget with the same start and end dates. The note remains untouched in your vault." : "This adds a dated Budget Form to the database.",
+        explanation: preview.updatedExistingBudget ? `This updates the stored budget with the same start and end dates.${this.plugin.settings.removeFormAfterBudgetImport ? " After import, the exact Budget Form will be removed from its source note." : " The source note remains untouched."}` : `This adds a dated Budget Form to the database.${this.plugin.settings.removeFormAfterBudgetImport ? " After import, the exact Budget Form will be removed from its source note." : ""}`,
         confirmLabel: preview.updatedExistingBudget ? "Update budget" : "Import budget",
         dryRunOutput: `Source: ${candidate.filePath}
 Period: ${preview.periodStart} through ${preview.periodEnd}
 Budget targets: ${preview.targetCount}
 Expected movements: ${preview.expectedMovementCount}`,
-        warning: "Nothing has changed yet. Expected movements are planning records only and never create transactions or reminders."
+        warning: this.plugin.settings.removeFormAfterBudgetImport ? "After confirmation, the exact imported Budget Form will be removed from this note. Expected movements remain planning records only." : "Nothing has changed yet. Expected movements are planning records only and never create transactions or reminders."
       });
       if (!confirmed) return;
+      const file = this.app.vault.getAbstractFileByPath(candidate.filePath);
+      if (!(file instanceof import_obsidian16.TFile)) throw new Error(`Budget note was not found: ${candidate.filePath}`);
       const result = await this.plugin.logger.importBudget(request);
-      new import_obsidian16.Notice(`Imported Budget Form for ${result.periodStart} through ${result.periodEnd}. ${result.backupPath ? `Backup: ${result.backupPath}` : ""}`, 1e4);
+      const cleanup = await this.plugin.removeImportedFormAfterImport(file, "budget", candidate.sourceText);
+      new import_obsidian16.Notice(`Imported Budget Form for ${result.periodStart} through ${result.periodEnd}.${cleanup === "removed" ? " Source form removed." : ""} ${result.backupPath ? `Backup: ${result.backupPath}` : ""}`, 1e4);
       await this.plugin.refreshViews();
     } catch (error) {
       new import_obsidian16.Notice(`Budget Form was not imported: ${error instanceof Error ? error.message : String(error)}`, 12e3);
@@ -13931,15 +13994,20 @@ var WeeklyAssessmentView = class extends import_obsidian19.ItemView {
       explanation: "The weekly note passed validation. Importing records its direction, schedule, and commitments in EH.db.",
       confirmLabel: "Import week",
       dryRunOutput: output,
-      warning: "Confirm only after reviewing the native weekly parser output."
+      warning: this.plugin.settings.removeFormAfterWeeklyImport ? "After confirmation, the exact imported Weekly Form will be removed from this note. Confirm only after reviewing the parser output." : "Confirm only after reviewing the native weekly parser output."
     });
     if (!confirmed) return;
     (_a = this.actionButton) == null ? void 0 : _a.setText("Importing\u2026");
     const live = await this.plugin.logger.importWeekly(request);
     await this.plugin.markImportedEhFormFileIfComplete(file);
-    this.loggerOutput = [weeklyImportOutput(live), ...backupMutationOutput(live)].join("\n");
+    const cleanup = await this.plugin.removeImportedFormAfterImport(file, "weekly", request.sourceText);
+    this.loggerOutput = [
+      weeklyImportOutput(live),
+      cleanup === "removed" ? "Source Weekly Form removed from the note." : "",
+      ...backupMutationOutput(live)
+    ].filter(Boolean).join("\n");
     await this.plugin.refreshViews();
-    new import_obsidian19.Notice(`${item.weekLabel} imported successfully.`, 8e3);
+    new import_obsidian19.Notice(`${item.weekLabel} imported successfully.${cleanup === "removed" ? " Source form removed." : ""}`, 8e3);
   }
   async syncSelectedWeek(item) {
     var _a, _b, _c;
@@ -14061,24 +14129,414 @@ var DEFAULT_SETTINGS = {
   defaultDashboardDays: 14,
   valuationUnitLabel: "EHM",
   valuationReferenceUnit: "USD",
-  sessionColors: { ...DEFAULT_SESSION_COLORS }
+  sessionColors: { ...DEFAULT_SESSION_COLORS },
+  removeFormAfterDailyImport: false,
+  removeFormAfterWeeklyImport: false,
+  removeFormAfterBudgetImport: false
 };
+function definition(id, name, description, details = {}) {
+  return { id, name, description, desc: description, ...details };
+}
+function group(id, heading, description, items) {
+  return definition(id, heading, description, { type: "group", heading, items });
+}
+function page(id, name, description, items) {
+  return definition(id, name, description, { type: "page", items });
+}
+function wholeNumber(minimum, maximum) {
+  return (value) => {
+    if (!Number.isSafeInteger(value) || value < minimum || maximum != null && value > maximum) {
+      return maximum == null ? `Enter a whole number of at least ${minimum}.` : `Enter a whole number from ${minimum} through ${maximum}.`;
+    }
+  };
+}
+function nonNegativeNumber(value) {
+  if (!Number.isFinite(value) || value < 0) return "Enter zero or a positive number.";
+}
+function scalarString(value, fallback = "") {
+  return typeof value === "string" || typeof value === "number" || typeof value === "boolean" ? String(value) : fallback;
+}
+var COLOR_TYPES = [.../* @__PURE__ */ new Set([...SESSION_TYPES, ...ENGAGEMENT_TYPES])];
 var ExaminedHumanSettingTab = class extends import_obsidian20.PluginSettingTab {
   constructor(app, plugin) {
     super(app, plugin);
     this.plugin = plugin;
   }
+  /**
+   * Obsidian 1.13+ uses these definitions for rendering and global settings
+   * search. Older Obsidian versions fall back to display(), which renders this
+   * same definition tree so the two interfaces cannot drift apart.
+   */
+  getSettingDefinitions() {
+    const sleepHours = Object.fromEntries(Array.from({ length: 24 }, (_, hour) => [
+      String(hour),
+      `${String(hour).padStart(2, "0")}:00`
+    ]));
+    return [
+      page("general", "General", "Database, Journal, assessment, import, and maintenance preferences.", [
+        group("general-storage", "Storage and discovery", "Connect the plugin to its database and EH Form notes.", [
+          definition(
+            "database-path",
+            "Database path",
+            "Vault-relative path, for example EH.db or data/EH.db. Absolute paths are not supported.",
+            { render: (setting) => this.renderDatabasePath(setting) }
+          ),
+          definition(
+            "journal-folder",
+            "Journal folder",
+            "Vault-relative base folder containing Daily Notes and their subfolders. Leave blank to scan the vault root.",
+            {
+              control: {
+                type: "text",
+                key: "journalFolder",
+                placeholder: DEFAULT_JOURNAL_FOLDER,
+                validate: (value) => {
+                  try {
+                    normalizeJournalFolder(value);
+                  } catch (error) {
+                    return error instanceof Error ? error.message : String(error);
+                  }
+                }
+              }
+            }
+          ),
+          definition(
+            "form-discovery",
+            "Form discovery",
+            "Choose a fast vault-wide scan of explicitly marked forms or a broader scan inside the Journal folder.",
+            {
+              control: {
+                type: "dropdown",
+                key: "formDiscoveryMode",
+                defaultValue: "tagged-vault",
+                options: {
+                  "tagged-vault": "Only unimported EH Form notes",
+                  "journal-folder": "Every note in Journal folder"
+                }
+              }
+            }
+          ),
+          definition(
+            "backup-retention-limit",
+            "Backup retention limit",
+            "Maximum newest EH-created database backups to keep. Use 0 to keep every backup.",
+            {
+              control: {
+                type: "number",
+                key: "backupRetentionLimit",
+                min: 0,
+                step: 1,
+                placeholder: "0",
+                validate: wholeNumber(0)
+              }
+            }
+          )
+        ]),
+        group("general-assessment", "Assessment defaults", "Defaults shared by daily and domain dashboards.", [
+          definition(
+            "sleep-day-boundary",
+            "Sleep day boundary",
+            "Sleep from this hour on the previous date up to the same hour on the assessment date counts toward that day.",
+            { control: { type: "dropdown", key: "sleepDayBoundaryHour", options: sleepHours, defaultValue: "21" } }
+          ),
+          definition(
+            "default-dashboard-period",
+            "Default dashboard period",
+            "Inclusive days shown when analytical dashboards open. Each dashboard can still switch to all time.",
+            {
+              control: {
+                type: "number",
+                key: "defaultDashboardDays",
+                min: 1,
+                max: 3650,
+                step: 1,
+                validate: wholeNumber(1, 3650)
+              }
+            }
+          ),
+          definition(
+            "hidden-dashboard-warnings",
+            "Hidden dashboard warnings",
+            "Restore non-blocking warning types hidden with \u201CDon\u2019t show again.\u201D Import blockers and confirmations are never hidden.",
+            { render: (setting) => this.renderHiddenWarnings(setting) }
+          )
+        ]),
+        group("general-form-cleanup", "Form cleanup after import", "Optional source-note cleanup after a successful confirmed import.", [
+          definition(
+            "remove-daily-form-after-import",
+            "Remove Daily Form after import",
+            "After a successful Daily import, remove the exact validated Daily Form block from its source note. Note cleanup has no separate backup.",
+            { control: { type: "toggle", key: "removeFormAfterDailyImport" } }
+          ),
+          definition(
+            "remove-weekly-form-after-import",
+            "Remove Weekly Form after import",
+            "After a successful Weekly import, remove the exact validated Weekly Form block from its source note. Note cleanup has no separate backup.",
+            { control: { type: "toggle", key: "removeFormAfterWeeklyImport" } }
+          ),
+          definition(
+            "remove-budget-form-after-import",
+            "Remove Budget Form after import",
+            "After a successful Budget import, remove the exact validated Budget Form block from its source note. Note cleanup has no separate backup.",
+            { control: { type: "toggle", key: "removeFormAfterBudgetImport" } }
+          )
+        ]),
+        group("general-tools", "Tools and maintenance", "Open administrative tools and maintain the official database schema.", [
+          definition(
+            "command-center",
+            "Open Command Center",
+            "Audit canonical data and stage corrections into eligible EH Forms.",
+            { action: () => this.plugin.activateCommandCenterView() }
+          ),
+          definition(
+            "schema-upgrade",
+            "Upgrade database to current Schema v1",
+            "Preview and apply missing official Schema v1 foundations with a verified backup.",
+            { render: (setting) => this.renderSchemaUpgrade(setting) }
+          )
+        ])
+      ]),
+      page("nutrition", "Nutrition", "Configure automatic daily nutrition evaluation.", [
+        definition(
+          "meal-calorie-limit",
+          "Meal calorie limit",
+          "Calories above this limit make Breakfast, Lunch, or Dinner leisure. Snacks never count directly. Use 0 to disable.",
+          { control: { type: "number", key: "mealCalorieLimitKcal", min: 0, step: 1, validate: nonNegativeNumber } }
+        ),
+        definition(
+          "daily-calorie-limit",
+          "Daily calorie limit",
+          "The complete daily total includes snacks. Exceeding a positive limit participates in automatic dieted evaluation. Use 0 to disable.",
+          { control: { type: "number", key: "dailyCalorieLimitKcal", min: 0, step: 1, validate: nonNegativeNumber } }
+        ),
+        definition(
+          "minimum-daily-protein",
+          "Minimum daily protein",
+          "A positive gram target participates in automatic dieted evaluation. Use 0 to ignore protein.",
+          { control: { type: "number", key: "minimumProteinG", min: 0, step: 0.1, validate: nonNegativeNumber } }
+        ),
+        definition(
+          "open-nutrition-dashboard",
+          "Open Nutrition Dashboard",
+          "Review calorie, protein, diet, and leisure-meal history.",
+          { action: () => this.plugin.activateNutritionDashboardView() }
+        )
+      ]),
+      page("financial", "Financial", "Configure valuation display and open the financial dashboard.", [
+        definition(
+          "valuation-display-label",
+          "Valuation display label",
+          "Label displayed beside total valued assets and liabilities, such as EHM, USD, or Satoshi.",
+          { control: { type: "text", key: "valuationUnitLabel", placeholder: "EHM" } }
+        ),
+        definition(
+          "reference-asset-class",
+          "Reference asset class",
+          "Exact account unit automatically worth one valuation unit. Matching ignores case and extra spaces.",
+          { control: { type: "text", key: "valuationReferenceUnit", placeholder: "USD" } }
+        ),
+        definition(
+          "open-financial-dashboard",
+          "Open Financial Dashboard",
+          "Review accounts, transactions, budgets, valuations, and net flow.",
+          { action: () => this.plugin.activateFinancialDashboardView() }
+        )
+      ]),
+      page("styling", "Styling", "Configure calendar layout and session colors.", [
+        group("styling-calendar", "Calendar layout", "Choose the opening position and day-column widths.", [
+          definition(
+            "initial-calendar-hour",
+            "Initial hour",
+            "Vertical position used when the calendar opens or jumps to today.",
+            { control: { type: "slider", key: "initialScrollHour", min: 0, max: 23, step: 1 } }
+          ),
+          definition(
+            "desktop-day-width",
+            "Desktop day width",
+            "Width of each calendar day while scrolling horizontally on desktop.",
+            { control: { type: "slider", key: "dayColumnWidth", min: 120, max: 280, step: 10 } }
+          ),
+          definition(
+            "mobile-day-width",
+            "Mobile day width",
+            "Width of each calendar day while scrolling horizontally on mobile.",
+            { control: { type: "slider", key: "mobileDayColumnWidth", min: 120, max: 280, step: 10 } }
+          )
+        ]),
+        group(
+          "styling-colors",
+          "Calendar type colors",
+          "A session type controls color when present; otherwise the engagement type is used.",
+          COLOR_TYPES.map((type) => definition(
+            `color-${type}`,
+            `${type} color`,
+            `Calendar color for ${type} sessions or engagements.`,
+            { render: (setting) => this.renderSessionColor(setting, type) }
+          ))
+        )
+      ]),
+      page("exercise", "Exercise", "Exercise data is resolved from canonical exercise sessions and structured sets.", [
+        definition(
+          "exercise-session-recognition",
+          "Exercise session recognition",
+          "A Daily Form with Exercise Details must have exactly one session whose optional session type is exercise. All sets attach to that session."
+        ),
+        definition(
+          "open-exercise-dashboard",
+          "Open Exercise Dashboard",
+          "Review sessions, exercises, sets, volume, distance, and duration.",
+          { action: () => this.plugin.activateExerciseDashboardView() }
+        )
+      ])
+    ];
+  }
+  getControlValue(key) {
+    if (key === "sleepDayBoundaryHour") return String(this.plugin.settings.sleepDayBoundaryHour);
+    return this.plugin.settings[key];
+  }
+  async setControlValue(key, value) {
+    switch (key) {
+      case "databasePath":
+        this.plugin.settings.databasePath = String(value).trim();
+        break;
+      case "journalFolder":
+        this.plugin.settings.journalFolder = normalizeJournalFolder(String(value));
+        break;
+      case "formDiscoveryMode":
+        this.plugin.settings.formDiscoveryMode = value === "journal-folder" ? "journal-folder" : "tagged-vault";
+        break;
+      case "backupRetentionLimit":
+        this.plugin.settings.backupRetentionLimit = Number(value);
+        break;
+      case "sleepDayBoundaryHour":
+        this.plugin.settings.sleepDayBoundaryHour = Number(value);
+        break;
+      case "defaultDashboardDays":
+        this.plugin.settings.defaultDashboardDays = Number(value);
+        break;
+      case "mealCalorieLimitKcal":
+        this.plugin.settings.mealCalorieLimitKcal = Number(value);
+        break;
+      case "dailyCalorieLimitKcal":
+        this.plugin.settings.dailyCalorieLimitKcal = Number(value);
+        break;
+      case "minimumProteinG":
+        this.plugin.settings.minimumProteinG = Number(value);
+        break;
+      case "valuationUnitLabel":
+        this.plugin.settings.valuationUnitLabel = String(value).trim() || DEFAULT_SETTINGS.valuationUnitLabel;
+        break;
+      case "valuationReferenceUnit":
+        this.plugin.settings.valuationReferenceUnit = String(value).trim() || DEFAULT_SETTINGS.valuationReferenceUnit;
+        break;
+      case "initialScrollHour":
+        this.plugin.settings.initialScrollHour = Number(value);
+        break;
+      case "dayColumnWidth":
+        this.plugin.settings.dayColumnWidth = Number(value);
+        break;
+      case "mobileDayColumnWidth":
+        this.plugin.settings.mobileDayColumnWidth = Number(value);
+        break;
+      case "removeFormAfterDailyImport":
+        this.plugin.settings.removeFormAfterDailyImport = value === true;
+        break;
+      case "removeFormAfterWeeklyImport":
+        this.plugin.settings.removeFormAfterWeeklyImport = value === true;
+        break;
+      case "removeFormAfterBudgetImport":
+        this.plugin.settings.removeFormAfterBudgetImport = value === true;
+        break;
+      default:
+        throw new Error(`Unsupported declarative setting key: ${key}`);
+    }
+    await this.plugin.saveSettings();
+    if (["sleepDayBoundaryHour", "valuationUnitLabel", "valuationReferenceUnit", "dayColumnWidth", "mobileDayColumnWidth"].includes(key)) {
+      await this.plugin.refreshViews();
+    }
+  }
   display() {
-    const { containerEl } = this;
-    containerEl.empty();
-    new import_obsidian20.Setting(containerEl).setName("Database").setHeading();
-    containerEl.createEl("p", {
-      text: "Dashboard queries remain read-only. Official Data Schema v1 creation and confirmed imports use a separate guarded writer with backups and integrity checks.",
-      cls: "setting-item-description"
+    this.containerEl.empty();
+    for (const item of this.getSettingDefinitions()) this.renderLegacyDefinition(item);
+  }
+  renderLegacyDefinition(item) {
+    var _a;
+    if (item.type === "page" || item.type === "group") {
+      new import_obsidian20.Setting(this.containerEl).setName(item.name).setHeading();
+      if (item.description) this.containerEl.createEl("p", { text: item.description, cls: "setting-item-description" });
+      for (const child of (_a = item.items) != null ? _a : []) this.renderLegacyDefinition(child);
+      return;
+    }
+    const setting = new import_obsidian20.Setting(this.containerEl).setName(item.name).setDesc(item.description);
+    if (item.render) {
+      item.render(setting);
+      return;
+    }
+    if (item.action) {
+      setting.addButton((button) => button.setButtonText(item.name).onClick(() => {
+        var _a2;
+        void ((_a2 = item.action) == null ? void 0 : _a2.call(item));
+      }));
+      return;
+    }
+    if (item.control) this.renderLegacyControl(setting, item.control);
+  }
+  renderLegacyControl(setting, control) {
+    const current = this.getControlValue(control.key);
+    if (control.type === "toggle") {
+      setting.addToggle((toggle) => toggle.setValue(current === true).onChange(async (value) => {
+        await this.setControlValue(control.key, value);
+      }));
+      return;
+    }
+    if (control.type === "slider") {
+      setting.addSlider((slider) => slider.setLimits(control.min, control.max, control.step).setDynamicTooltip().setValue(Number(current)).onChange(async (value) => {
+        await this.setControlValue(control.key, value);
+      }));
+      return;
+    }
+    if (control.type === "dropdown") {
+      setting.addDropdown((dropdown) => {
+        var _a;
+        for (const [value, label] of Object.entries(control.options)) dropdown.addOption(value, label);
+        dropdown.setValue(scalarString(current, (_a = control.defaultValue) != null ? _a : ""));
+        dropdown.onChange(async (value) => {
+          await this.setControlValue(control.key, value);
+        });
+      });
+      return;
+    }
+    if (control.type === "color") {
+      setting.addColorPicker((picker) => picker.setValue(String(current)).onChange(async (value) => {
+        await this.setControlValue(control.key, value);
+      }));
+      return;
+    }
+    setting.addText((text) => {
+      if (control.type === "number") {
+        text.inputEl.type = "number";
+        if (control.min != null) text.inputEl.min = String(control.min);
+        if (control.max != null) text.inputEl.max = String(control.max);
+        if (control.step != null) text.inputEl.step = String(control.step);
+      }
+      if (control.placeholder) text.setPlaceholder(control.placeholder);
+      text.setValue(scalarString(current));
+      text.onChange(async (rawValue) => {
+        var _a;
+        const value = control.type === "number" ? Number(rawValue) : rawValue;
+        const error = (_a = control.validate) == null ? void 0 : _a.call(control, value);
+        if (error) return;
+        try {
+          await this.setControlValue(control.key, value);
+        } catch (caught) {
+          new import_obsidian20.Notice(caught instanceof Error ? caught.message : String(caught), 8e3);
+        }
+      });
     });
-    new import_obsidian20.Setting(containerEl).setName("Database path").setDesc("Path relative to the vault root, for example EH.db or data/EH.db. Absolute paths are not supported.").addText((text) => text.setPlaceholder("EH.db").setValue(this.plugin.settings.databasePath).onChange(async (value) => {
-      this.plugin.settings.databasePath = value.trim();
-      await this.plugin.saveSettings();
+  }
+  renderDatabasePath(setting) {
+    setting.addText((text) => text.setPlaceholder("EH.db").setValue(this.plugin.settings.databasePath).onChange(async (value) => {
+      await this.setControlValue("databasePath", value);
     })).addButton((button) => button.setButtonText("Test connection").onClick(async () => {
       button.setDisabled(true);
       try {
@@ -14102,28 +14560,35 @@ var ExaminedHumanSettingTab = class extends import_obsidian20.PluginSettingTab {
         button.setDisabled(false);
       }
     }));
-    new import_obsidian20.Setting(containerEl).setName("Valuation").setHeading();
-    containerEl.createEl("p", {
-      text: "Valuation Rates are user-entered dated observations. The Finance Dashboard carries each known rate forward until a newer one is imported; it never fetches market data.",
-      cls: "setting-item-description"
+  }
+  renderHiddenWarnings(setting) {
+    const count = this.plugin.settings.dismissedWarningKeys.length;
+    setting.setDesc(`${count} warning type${count === 1 ? "" : "s"} currently hidden. Import blockers and safety confirmations cannot be hidden.`);
+    setting.addButton((button) => button.setButtonText("Show all warnings").setDisabled(count === 0).onClick(async () => {
+      this.plugin.settings.dismissedWarningKeys = [];
+      await this.plugin.saveSettings();
+      await this.plugin.refreshViews();
+      this.updateDeclarativeOrLegacy();
+    }));
+  }
+  renderSessionColor(setting, type) {
+    setting.addColorPicker((picker) => {
+      var _a;
+      return picker.setValue((_a = this.plugin.settings.sessionColors[type]) != null ? _a : DEFAULT_SESSION_COLORS[type]).onChange(async (value) => {
+        this.plugin.settings.sessionColors[type] = value;
+        await this.plugin.saveSettings();
+        await this.plugin.refreshViews();
+      });
     });
-    new import_obsidian20.Setting(containerEl).setName("Valuation display label").setDesc("Label displayed beside total valued assets and liabilities. It can be EHM, USD, Satoshi, or any other text.").addText((text) => text.setPlaceholder("EHM").setValue(this.plugin.settings.valuationUnitLabel).onChange(async (value) => {
-      this.plugin.settings.valuationUnitLabel = value.trim() || DEFAULT_SETTINGS.valuationUnitLabel;
-      await this.plugin.saveSettings();
-      await this.plugin.refreshViews();
-    }));
-    new import_obsidian20.Setting(containerEl).setName("Reference asset class").setDesc("Exact account unit that is automatically worth 1 valuation unit. Default: USD. Matching ignores case and extra spaces.").addText((text) => text.setPlaceholder("USD").setValue(this.plugin.settings.valuationReferenceUnit).onChange(async (value) => {
-      this.plugin.settings.valuationReferenceUnit = value.trim() || DEFAULT_SETTINGS.valuationReferenceUnit;
-      await this.plugin.saveSettings();
-      await this.plugin.refreshViews();
-    }));
-    new import_obsidian20.Setting(containerEl).setName("Upgrade database to current Schema v1").setDesc("Adds any missing Food Dictionary, Finance, Valuation, mutable-budget, and optional-session-type foundations. It preserves existing rows and creates a verified backup.").addButton((button) => button.setButtonText("Preview upgrade").onClick(async () => {
+  }
+  renderSchemaUpgrade(setting) {
+    setting.addButton((button) => button.setButtonText("Preview upgrade").onClick(async () => {
       button.setDisabled(true);
       try {
         const preview = await this.plugin.logger.inspectSchemaV1Upgrade(this.plugin.settings.databasePath);
         const confirmed = await confirmWeeklyAction(this.app, {
           title: "Upgrade to official Data Schema v1",
-          explanation: "This guarded upgrade adds any missing official Schema v1 foundations, including optional canonical session types. Existing session type values and linked exercise details are preserved.",
+          explanation: "This guarded upgrade adds any missing official Schema v1 foundations. Existing data is preserved.",
           confirmLabel: "Upgrade database",
           dryRunOutput: `Current SQLite schema marker: v${preview.currentSchemaVersion}
 Target official schema marker: v${preview.targetSchemaVersion}
@@ -14132,167 +14597,25 @@ Food Dictionary needed: ${preview.needsFoodDictionary ? "yes" : "already present
 Finance foundation needed: ${preview.needsFinanceFoundation ? "yes" : "already present"}
 Mutable dated budgets needed: ${preview.needsMutableBudgets ? "yes" : "already present"}
 Valuation history needed: ${preview.needsValuationHistory ? "yes" : "already present"}
-Optional canonical session types needed: ${preview.needsOptionalSessionTypes ? "yes" : "already present"}
-New tables when needed: foods, food_aliases, budget_plans, budget_targets, expected_financial_movements, valuation_rate_sets, valuation_rates
-New daily_meals links when needed: food_id, amount_g, nutrient snapshots`,
-          warning: "A backup, transaction, integrity checks, and post-write verification will run before the upgraded database becomes the source of truth."
+Optional canonical session types needed: ${preview.needsOptionalSessionTypes ? "yes" : "already present"}`,
+          warning: "A backup, transaction, integrity checks, and post-write verification run before the upgraded database becomes the source of truth."
         });
         if (!confirmed) return;
         const result = await this.plugin.logger.upgradeToOfficialSchemaV1(this.plugin.settings.databasePath);
         new import_obsidian20.Notice(`Upgraded ${result.databasePath} to official Data Schema v1. ${result.backupPath ? `Backup: ${result.backupPath}` : ""}`, 12e3);
         await this.plugin.refreshViews();
-        this.display();
+        this.updateDeclarativeOrLegacy();
       } catch (error) {
         new import_obsidian20.Notice(`Database upgrade was not performed: ${error instanceof Error ? error.message : String(error)}`, 12e3);
       } finally {
         button.setDisabled(false);
       }
     }));
-    new import_obsidian20.Setting(containerEl).setName("Backup retention limit").setDesc("Maximum number of newest EH-created database backups to keep. Use 0 to keep every backup. Cleanup runs only after a successful verified database write and never removes unrelated files.").addText((text) => {
-      text.inputEl.type = "number";
-      text.inputEl.min = "0";
-      text.inputEl.step = "1";
-      text.setPlaceholder("0");
-      text.setValue(String(this.plugin.settings.backupRetentionLimit));
-      text.onChange(async (value) => {
-        const parsed = Number(value);
-        if (!Number.isSafeInteger(parsed) || parsed < 0) return;
-        this.plugin.settings.backupRetentionLimit = parsed;
-        await this.plugin.saveSettings();
-      });
-    });
-    new import_obsidian20.Setting(containerEl).setName("Journal notes").setHeading();
-    containerEl.createEl("p", {
-      text: "Examined Human recursively scans the selected vault folder for Daily Notes. The currently supported canonical filename format is YYYY-MM-DD.md.",
-      cls: "setting-item-description"
-    });
-    new import_obsidian20.Setting(containerEl).setName("Journal folder").setDesc("Vault-relative base folder containing Daily Notes, including any year or daily subfolders. Leave blank to scan the entire vault.").addText((text) => text.setPlaceholder(DEFAULT_JOURNAL_FOLDER).setValue(this.plugin.settings.journalFolder).onChange(async (value) => {
-      try {
-        this.plugin.settings.journalFolder = normalizeJournalFolder(value);
-        await this.plugin.saveSettings();
-      } catch (error) {
-        new import_obsidian20.Notice(error instanceof Error ? error.message : String(error), 8e3);
-      }
-    }));
-    new import_obsidian20.Setting(containerEl).setName("Form discovery").setDesc("Default: scan only Markdown notes whose YAML frontmatter contains EH form: true or unimported (case-insensitive). Imported and false markers are skipped. Journal folder mode also scans unmarked notes in that folder and can take noticeably longer in a large vault.").addDropdown((dropdown) => dropdown.addOption("tagged-vault", "Only unimported EH Form notes").addOption("journal-folder", "Every note in Journal folder").setValue(this.plugin.settings.formDiscoveryMode).onChange(async (value) => {
-      this.plugin.settings.formDiscoveryMode = value === "journal-folder" ? "journal-folder" : "tagged-vault";
-      await this.plugin.saveSettings();
-    }));
-    new import_obsidian20.Setting(containerEl).setName("Daily assessment").setHeading();
-    containerEl.createEl("p", {
-      text: "Calculated daily values use your sessions and structured food records. The sleep boundary controls which 24-hour window belongs to an assessment date.",
-      cls: "setting-item-description"
-    });
-    new import_obsidian20.Setting(containerEl).setName("Sleep day boundary").setDesc("Sleep from this hour on the previous date up to the same hour on the assessment date counts toward that day. Default: 21:00.").addDropdown((dropdown) => {
-      for (let hour = 0; hour < 24; hour += 1) {
-        const label = `${String(hour).padStart(2, "0")}:00`;
-        dropdown.addOption(String(hour), label);
-      }
-      dropdown.setValue(String(this.plugin.settings.sleepDayBoundaryHour));
-      dropdown.onChange(async (value) => {
-        const hour = Number(value);
-        if (!Number.isSafeInteger(hour) || hour < 0 || hour > 23) return;
-        this.plugin.settings.sleepDayBoundaryHour = hour;
-        await this.plugin.saveSettings();
-        await this.plugin.refreshViews();
-      });
-    });
-    new import_obsidian20.Setting(containerEl).setName("Nutrition evaluation").setHeading();
-    containerEl.createEl("p", {
-      text: "These limits are used by the native Meals inspector. Zero disables that automatic rule. When both daily calories and minimum protein are zero, the EH Form dieted value is trusted.",
-      cls: "setting-item-description"
-    });
-    new import_obsidian20.Setting(containerEl).setName("Meal calorie limit").setDesc("Calories above this limit make Breakfast, Lunch, or Dinner leisure. Snacks never count directly. Set to 0 to use only is_leisure from the note.").addText((text) => {
-      text.inputEl.type = "number";
-      text.inputEl.min = "0";
-      text.inputEl.step = "1";
-      text.setValue(String(this.plugin.settings.mealCalorieLimitKcal));
-      text.onChange(async (value) => {
-        const parsed = Number(value);
-        if (!Number.isFinite(parsed) || parsed < 0) return;
-        this.plugin.settings.mealCalorieLimitKcal = parsed;
-        await this.plugin.saveSettings();
-      });
-    });
-    new import_obsidian20.Setting(containerEl).setName("Daily calorie limit").setDesc("The complete daily total includes snacks. Exceeding a positive limit makes the day count at least two leisure meals and participates in automatic dieted evaluation. Set to 0 to disable.").addText((text) => {
-      text.inputEl.type = "number";
-      text.inputEl.min = "0";
-      text.inputEl.step = "1";
-      text.setValue(String(this.plugin.settings.dailyCalorieLimitKcal));
-      text.onChange(async (value) => {
-        const parsed = Number(value);
-        if (!Number.isFinite(parsed) || parsed < 0) return;
-        this.plugin.settings.dailyCalorieLimitKcal = parsed;
-        await this.plugin.saveSettings();
-      });
-    });
-    new import_obsidian20.Setting(containerEl).setName("Minimum daily protein").setDesc("A positive gram target participates in automatic dieted evaluation. Set to 0 to ignore protein and trust the remaining enabled rules or the EH Form value.").addText((text) => {
-      text.inputEl.type = "number";
-      text.inputEl.min = "0";
-      text.inputEl.step = "0.1";
-      text.setValue(String(this.plugin.settings.minimumProteinG));
-      text.onChange(async (value) => {
-        const parsed = Number(value);
-        if (!Number.isFinite(parsed) || parsed < 0) return;
-        this.plugin.settings.minimumProteinG = parsed;
-        await this.plugin.saveSettings();
-      });
-    });
-    new import_obsidian20.Setting(containerEl).setName("Native logger").setHeading();
-    containerEl.createEl("p", {
-      text: "Daily validation and import, current/future projections, weekly-plan import, and weekly Daily Note writing run inside Obsidian on desktop and mobile. Python is not required.",
-      cls: "setting-item-description"
-    });
-    new import_obsidian20.Setting(containerEl).setName("Command Center").setDesc("Audit the Food Library and stage corrections into unimported Daily Notes. Contextual validation fixes use the current unimported note automatically; Command Center changes let you choose a current or future note.").addButton((button) => button.setButtonText("Open Command Center").onClick(() => {
-      void this.plugin.activateCommandCenterView();
-    }));
-    new import_obsidian20.Setting(containerEl).setName("Default dashboard period").setDesc("Number of inclusive days used by Finance, Nutrition, Exercise, and other analytical dashboards when they open. Use All time inside a dashboard for the complete history.").addText((text) => {
-      text.inputEl.type = "number";
-      text.inputEl.min = "1";
-      text.inputEl.step = "1";
-      text.setValue(String(this.plugin.settings.defaultDashboardDays));
-      text.onChange(async (value) => {
-        const parsed = Number(value);
-        if (!Number.isSafeInteger(parsed) || parsed < 1) return;
-        this.plugin.settings.defaultDashboardDays = parsed;
-        await this.plugin.saveSettings();
-      });
-    });
-    new import_obsidian20.Setting(containerEl).setName("Hidden dashboard warnings").setDesc(`${this.plugin.settings.dismissedWarningKeys.length} warning type${this.plugin.settings.dismissedWarningKeys.length === 1 ? "" : "s"} hidden with \u201CDon't show again\u201D. Import blockers and safety confirmations cannot be hidden.`).addButton((button) => button.setButtonText("Show all warnings").setDisabled(this.plugin.settings.dismissedWarningKeys.length === 0).onClick(async () => {
-      this.plugin.settings.dismissedWarningKeys = [];
-      await this.plugin.saveSettings();
-      await this.plugin.refreshViews();
-      this.display();
-    }));
-    new import_obsidian20.Setting(containerEl).setName("Initial hour").setDesc("Vertical position used when the calendar opens or jumps to today.").addSlider((slider) => slider.setLimits(0, 23, 1).setDynamicTooltip().setValue(this.plugin.settings.initialScrollHour).onChange(async (value) => {
-      this.plugin.settings.initialScrollHour = value;
-      await this.plugin.saveSettings();
-    }));
-    new import_obsidian20.Setting(containerEl).setName("Desktop day width").setDesc("Width of each calendar day while scrolling horizontally on desktop.").addSlider((slider) => slider.setLimits(120, 280, 10).setDynamicTooltip().setValue(this.plugin.settings.dayColumnWidth).onChange(async (value) => {
-      this.plugin.settings.dayColumnWidth = value;
-      await this.plugin.saveSettings();
-      await this.plugin.refreshViews();
-    }));
-    new import_obsidian20.Setting(containerEl).setName("Mobile day width").setDesc("Width of each calendar day while scrolling horizontally on mobile.").addSlider((slider) => slider.setLimits(120, 280, 10).setDynamicTooltip().setValue(this.plugin.settings.mobileDayColumnWidth).onChange(async (value) => {
-      this.plugin.settings.mobileDayColumnWidth = value;
-      await this.plugin.saveSettings();
-      await this.plugin.refreshViews();
-    }));
-    new import_obsidian20.Setting(containerEl).setName("Calendar type colors").setHeading();
-    containerEl.createEl("p", {
-      text: "An optional session type controls the color when present. Otherwise the engagement type controls it. Unknown values render in gray.",
-      cls: "setting-item-description"
-    });
-    for (const type of [.../* @__PURE__ */ new Set([...SESSION_TYPES, ...ENGAGEMENT_TYPES])]) {
-      new import_obsidian20.Setting(containerEl).setName(type).addColorPicker((picker) => {
-        var _a;
-        return picker.setValue((_a = this.plugin.settings.sessionColors[type]) != null ? _a : DEFAULT_SESSION_COLORS[type]).onChange(async (value) => {
-          this.plugin.settings.sessionColors[type] = value;
-          await this.plugin.saveSettings();
-          await this.plugin.refreshViews();
-        });
-      });
-    }
+  }
+  updateDeclarativeOrLegacy() {
+    const update = this.update;
+    if (typeof update === "function") update.call(this);
+    else this.display();
   }
 };
 
@@ -14530,7 +14853,10 @@ var ExaminedHumanPlugin = class extends import_obsidian22.Plugin {
       ),
       valuationUnitLabel: storedText(stored == null ? void 0 : stored.valuationUnitLabel, DEFAULT_SETTINGS.valuationUnitLabel),
       valuationReferenceUnit: storedText(stored == null ? void 0 : stored.valuationReferenceUnit, DEFAULT_SETTINGS.valuationReferenceUnit),
-      dismissedWarningKeys: sanitizeDismissedWarningKeys(stored == null ? void 0 : stored.dismissedWarningKeys)
+      dismissedWarningKeys: sanitizeDismissedWarningKeys(stored == null ? void 0 : stored.dismissedWarningKeys),
+      removeFormAfterDailyImport: (stored == null ? void 0 : stored.removeFormAfterDailyImport) === true,
+      removeFormAfterWeeklyImport: (stored == null ? void 0 : stored.removeFormAfterWeeklyImport) === true,
+      removeFormAfterBudgetImport: (stored == null ? void 0 : stored.removeFormAfterBudgetImport) === true
     };
     if (hadLegacyPythonSetting) await this.saveData(this.settings);
   }
@@ -14638,6 +14964,28 @@ var ExaminedHumanPlugin = class extends import_obsidian22.Plugin {
       return false;
     }
   }
+  async removeImportedFormAfterImport(file, kind, importedSourceText) {
+    const enabled = kind === "daily" ? this.settings.removeFormAfterDailyImport : kind === "weekly" ? this.settings.removeFormAfterWeeklyImport : this.settings.removeFormAfterBudgetImport;
+    if (!enabled) return "disabled";
+    try {
+      const expectedFormText = requireEhForm(importedSourceText, kind).text;
+      await this.logger.removeImportedForm({
+        fileName: file.name,
+        filePath: file.path,
+        kind,
+        expectedFormText
+      });
+      delete this.settings.formDiscoveryCache.entries[file.path];
+      await this.saveSettings();
+      return "removed";
+    } catch (error) {
+      new import_obsidian22.Notice(
+        `The form was imported successfully, but its source block was retained: ${error instanceof Error ? error.message : String(error)}`,
+        12e3
+      );
+      return "retained";
+    }
+  }
   async activeForm(kind) {
     const file = this.app.workspace.getActiveFile();
     if (!(file instanceof import_obsidian22.TFile)) throw new Error("Open a Markdown note that contains the form you want to import.");
@@ -14667,12 +15015,13 @@ Week: ${preview.weekStart}
 Commitments: ${preview.commitmentCount}
 Planned sessions: ${preview.sessionCount}
 Planned time: ${preview.plannedMinutes} minutes`,
-          warning: "Nothing has changed yet. This does not write daily-note sessions; use Sync week in Weekly Assessment when you are ready."
+          warning: this.settings.removeFormAfterWeeklyImport ? "After confirmation, the exact imported Weekly Form will be removed from this note. This does not write daily-note sessions; use Sync week in Weekly Assessment when ready." : "Nothing has changed yet. This does not write daily-note sessions; use Sync week in Weekly Assessment when you are ready."
         });
         if (!confirmed) return;
         await this.logger.importWeekly({ databasePath: this.settings.databasePath, weekStartDate: form.startDate, fileName: file.name, filePath: file.path, sourceText });
         await this.markImportedEhFormFileIfComplete(file);
-        new import_obsidian22.Notice(`Imported Weekly Form starting ${preview.weekStart}.`, 8e3);
+        const cleanup = await this.removeImportedFormAfterImport(file, "weekly", sourceText);
+        new import_obsidian22.Notice(`Imported Weekly Form starting ${preview.weekStart}.${cleanup === "removed" ? " Source form removed." : ""}`, 8e3);
       } else if (kind === "budget") {
         const preview = await this.logger.inspectBudget({ databasePath: this.settings.databasePath, fileName: file.name, filePath: file.path, sourceText });
         const confirmed = await confirmWeeklyAction(this.app, {
@@ -14683,11 +15032,12 @@ Planned time: ${preview.plannedMinutes} minutes`,
 Period: ${preview.periodStart} through ${preview.periodEnd}
 Budget targets: ${preview.targetCount}
 Expected movements: ${preview.expectedMovementCount}`,
-          warning: "Nothing has changed yet. Expected movements are planning evidence only; they never create transactions or reminders."
+          warning: this.settings.removeFormAfterBudgetImport ? "After confirmation, the exact imported Budget Form will be removed from this note. Expected movements remain planning evidence only." : "Nothing has changed yet. Expected movements are planning evidence only; they never create transactions or reminders."
         });
         if (!confirmed) return;
         await this.logger.importBudget({ databasePath: this.settings.databasePath, fileName: file.name, filePath: file.path, sourceText });
-        new import_obsidian22.Notice(`Imported Budget Form for ${preview.periodStart} through ${preview.periodEnd}.`, 8e3);
+        const cleanup = await this.removeImportedFormAfterImport(file, "budget", sourceText);
+        new import_obsidian22.Notice(`Imported Budget Form for ${preview.periodStart} through ${preview.periodEnd}.${cleanup === "removed" ? " Source form removed." : ""}`, 8e3);
       } else {
         const today = (0, import_obsidian22.moment)().format("YYYY-MM-DD");
         const noteDate = form.date;
@@ -14721,7 +15071,7 @@ Expected movements: ${preview.expectedMovementCount}`,
         const future = noteDate > today;
         const confirmed = await confirmDailyImport(this.app, {
           title: `${dailyAssessmentTitle(noteDate, today)} \u2014 ${noteDate}`,
-          explanation: future ? "Review the future form below. It cannot become a canonical Daily receipt until its date arrives." : "Review the complete assessment below. Confirmation writes a durable canonical Daily receipt with a backup.",
+          explanation: future ? "Review the future form below. It cannot become a canonical Daily receipt until its date arrives." : `Review the complete assessment below. Confirmation writes a durable canonical Daily receipt with a backup.${this.settings.removeFormAfterDailyImport ? " The exact imported Daily Form will then be removed from this note." : ""}`,
           confirmLabel: "Import daily assessment",
           inspection,
           sessionColors: this.settings.sessionColors,
@@ -14744,7 +15094,8 @@ Expected movements: ${preview.expectedMovementCount}`,
         if (!confirmed) return;
         await this.logger.importHistoricalDaily(request);
         await this.markImportedEhFormFileIfComplete(file);
-        new import_obsidian22.Notice("Imported successfully.", 8e3);
+        const cleanup = await this.removeImportedFormAfterImport(file, "daily", sourceText);
+        new import_obsidian22.Notice(`Imported successfully.${cleanup === "removed" ? " Source form removed." : ""}`, 8e3);
       }
       await this.refreshViews();
     } catch (error) {

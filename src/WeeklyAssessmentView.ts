@@ -531,15 +531,22 @@ export class WeeklyAssessmentView extends ItemView {
       explanation: 'The weekly note passed validation. Importing records its direction, schedule, and commitments in EH.db.',
       confirmLabel: 'Import week',
       dryRunOutput: output,
-      warning: 'Confirm only after reviewing the native weekly parser output.',
+      warning: this.plugin.settings.removeFormAfterWeeklyImport
+        ? 'After confirmation, the exact imported Weekly Form will be removed from this note. Confirm only after reviewing the parser output.'
+        : 'Confirm only after reviewing the native weekly parser output.',
     });
     if (!confirmed) return;
     this.actionButton?.setText('Importing…');
     const live = await this.plugin.logger.importWeekly(request);
     await this.plugin.markImportedEhFormFileIfComplete(file);
-    this.loggerOutput = [weeklyImportOutput(live), ...backupMutationOutput(live)].join('\n');
+    const cleanup = await this.plugin.removeImportedFormAfterImport(file, 'weekly', request.sourceText);
+    this.loggerOutput = [
+      weeklyImportOutput(live),
+      cleanup === 'removed' ? 'Source Weekly Form removed from the note.' : '',
+      ...backupMutationOutput(live),
+    ].filter(Boolean).join('\n');
     await this.plugin.refreshViews();
-    new Notice(`${item.weekLabel} imported successfully.`, 8000);
+    new Notice(`${item.weekLabel} imported successfully.${cleanup === 'removed' ? ' Source form removed.' : ''}`, 8000);
   }
 
   private async syncSelectedWeek(item: WeeklyNoteListItem): Promise<void> {

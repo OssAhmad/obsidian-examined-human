@@ -4,6 +4,7 @@ import { normalizeValuationUnit } from '../domain/valuation.ts';
 import { parseDatabaseTime } from '../events.ts';
 import { entryLines, formSections, requireEhForm } from '../forms/form-document.ts';
 import { splitDelimitedFields } from '../forms/fields.ts';
+import { parseSessionRowFields, SESSION_ROW_FORMAT } from '../forms/session-row.ts';
 import { applyAdminEvents, type AdminEvent } from './admin/command-handlers.ts';
 import { inspectMeals, type MealInspection, type NutritionThresholds } from './meals.ts';
 import { mealComponentMatchesInspection, queryMealComponentState, writeMealInspection } from './meal-import.ts';
@@ -417,9 +418,9 @@ function parseDaily(db: Database, sourceText: string, noteDate: string, threshol
   const sections = sectionsFromForm(sourceText, noteDate);
   const metrics = metricMap(sections.get('daily metrics'), errors);
   const sessions: ParsedSession[] = entries(sections.get('sessions')).map((line, index) => {
-    const parts = splitFields(line, 4);
-    if (parts.length !== 4) errors.push(`Invalid session row '${line}'; expected interval | type (optional) | engagement | notes.`);
-    const [interval = '', type = '', engagement = '', notes = ''] = parts;
+    const fields = parseSessionRowFields(line);
+    if (!fields) errors.push(`Invalid session row '${line}'; expected ${SESSION_ROW_FORMAT}.`);
+    const { interval = '', type = '', engagement = '', notes = '' } = fields ?? {};
     return {
       ordinal: index + 1, interval, type, engagement, notes,
       parsedInterval: null, sessionType: null, resolvedEngagement: null, engagementType: '',

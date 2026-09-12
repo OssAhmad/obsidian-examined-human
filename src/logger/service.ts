@@ -73,6 +73,8 @@ import {
   type ValuationRateStagePreview,
 } from './valuation-rate-stage.ts';
 import { runDatabaseTransaction, verifyDatabaseIntegrity } from './persistence/sqlite-transaction.ts';
+import { removeImportedFormBlock } from './form-removal.ts';
+import type { EhFormKind } from '../forms/form-document.ts';
 
 export interface BackupMutationMetadata {
   backupPath: string | null;
@@ -201,6 +203,13 @@ export interface AdminEventStageRequest {
 
 export type FinanceEntryStageRequest = FinanceEntryStageInput;
 export type ValuationRateStageRequest = ValuationRateStageInput;
+
+export interface ImportedFormRemovalRequest {
+  fileName: string;
+  filePath: string;
+  kind: EhFormKind;
+  expectedFormText: string;
+}
 
 function backupTimestamp(): string {
   return new Date().toISOString().replace(/[-:.TZ]/g, '');
@@ -531,6 +540,17 @@ export class LoggerService {
 
   stageValuationRates(preview: ValuationRateStagePreview): Promise<ValuationRateStagePreview> {
     return this.stageNotePreview(preview);
+  }
+
+  removeImportedForm(request: ImportedFormRemovalRequest): Promise<void> {
+    return this.enqueue(async () => {
+      const file = this.requireFile(request.filePath, 'Imported form source note');
+      await this.app.vault.process(file, (sourceText) => removeImportedFormBlock({
+        kind: request.kind,
+        expectedFormText: request.expectedFormText,
+        sourceText,
+      }));
+    });
   }
 
   private stageNotePreview<T extends { filePath: string; fileName: string; sourceChecksum: string; updatedText: string }>(

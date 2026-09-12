@@ -1,6 +1,6 @@
 import type { Database } from 'sql.js';
 import { findEhForm, findEntriesMarker, formSections as parseFormSections } from '../forms/form-document.ts';
-import { splitDelimitedFields } from '../forms/fields.ts';
+import { parseSessionRowFields, SESSION_ROW_FORMAT } from '../forms/session-row.ts';
 import {
   assertSchemaV1,
   queryRows,
@@ -92,10 +92,6 @@ function entriesBlock(section: string): string {
   return marker == null ? '' : section.slice(marker.end).trim();
 }
 
-function splitFields(line: string, expected: number): string[] {
-  return splitDelimitedFields(line, expected);
-}
-
 function formatTime(minutes: number): string {
   return `${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}`;
 }
@@ -122,12 +118,17 @@ export function inspectPlannedNote(text: string, expectedDate?: string): Planned
   sessionLines.forEach((rawLine, sourceIndex) => {
     const line = rawLine.trim();
     if (!line || line.startsWith('<!--') || line.startsWith('-->') || line.startsWith('>') || line.startsWith('#')) return;
-    const parts = splitFields(line, 4);
-    if (parts.length !== 4) {
-      extracted.issues.push(`Sessions entry #${sourceIndex + 1} has ${parts.length} fields; expected 4.`);
+    const fields = parseSessionRowFields(line);
+    if (!fields) {
+      extracted.issues.push(`Sessions entry #${sourceIndex + 1} must use ${SESSION_ROW_FORMAT}.`);
       return;
     }
-    const [intervalRaw, sessionTypeRaw, engagementRaw, notes] = parts;
+    const {
+      interval: intervalRaw,
+      type: sessionTypeRaw,
+      engagement: engagementRaw,
+      notes,
+    } = fields;
     const warnings: string[] = [];
     const parsed = parsePlannedInterval(intervalRaw);
     let start: number;

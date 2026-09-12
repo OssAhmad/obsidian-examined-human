@@ -2,6 +2,21 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added separate opt-in cleanup settings for Daily, Weekly, and Budget Forms after a successful confirmed import
+- Added Obsidian 1.13+ declarative settings definitions so every preference participates in global settings search, while preserving the legacy settings renderer for older supported Obsidian versions
+
+### Changed
+
+- Reorganized Settings into General, Nutrition, Financial, Styling, and Exercise pages, with one shared definition tree for modern and legacy rendering
+
+### Fixed
+
+- Made post-import form cleanup target the exact validated block through Obsidian's atomic note-edit API across active-file, Daily Assessment, Weekly Assessment, and Financial Dashboard imports; changed or ambiguous source forms are retained instead of risking removal of the wrong text
+- Made Daily Assessment use the full staged Daily inspection for food and engagement aliases created by Admin Events in the same form, without treating those preview-only changes as database writes
+- Accepted natural three-field typeless session rows in both canonical Daily import and today's calendar projection, with calendar color inherited from the resolved engagement type
+
 ## [0.9.5] - 2026-09-11
 
 ### Added
