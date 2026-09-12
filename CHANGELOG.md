@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.9.6] - 2026-09-12
+
 ### Added
 
 - Added separate opt-in cleanup settings for Daily, Weekly, and Budget Forms after a successful confirmed import

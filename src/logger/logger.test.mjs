@@ -166,7 +166,7 @@ test('today can be finalized with calculated nutrition, activity, and a configur
   const input = {
     noteDate: '2026-08-20', todayDate: '2026-08-20', fileName: '2026-08-20.md',
     filePath: 'Journal/2026-08-20.md', sourceText, sourceChecksum: 'today-import',
-    pluginVersion: '0.9.5', nutritionThresholds: thresholds, sleepDayBoundaryHour: 18,
+    pluginVersion: '0.9.6', nutritionThresholds: thresholds, sleepDayBoundaryHour: 18,
   };
   const inspection = inspectDailyNote(db, input);
   assert.equal(inspection.ready, true, inspection.errors.join('\n'));
@@ -299,7 +299,7 @@ test('Daily inspection resolves foods and engagements created by same-form Admin
   const input = {
     noteDate: '2026-08-20', todayDate: '2026-08-21', fileName: '2026-08-20.md',
     filePath: 'Journal/2026-08-20.md', sourceText, sourceChecksum: 'same-form-aliases',
-    pluginVersion: '0.9.5', nutritionThresholds: thresholds,
+    pluginVersion: '0.9.6', nutritionThresholds: thresholds,
   };
 
   const inspectionDb = new SQL.Database(db.export());
@@ -337,7 +337,7 @@ test('typeless three-field sessions import and render with their engagement type
   const input = {
     noteDate: '2026-08-20', todayDate: '2026-08-21', fileName: '2026-08-20.md',
     filePath: 'Journal/2026-08-20.md', sourceText, sourceChecksum: 'typeless-session',
-    pluginVersion: '0.9.5', nutritionThresholds: thresholds,
+    pluginVersion: '0.9.6', nutritionThresholds: thresholds,
   };
 
   const inspectionDb = new SQL.Database(db.export());

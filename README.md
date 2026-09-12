@@ -8,7 +8,7 @@ The connecting idea is an **engagement**: anything you meaningfully engage with,
 
 Examined Human runs on desktop and mobile. Your notes and database remain in your vault. It does not require an account, server, Python installation, or cloud service.
 
-> Current release: **0.9.5**
+> Current release: **0.9.6**
 > Requires Obsidian **1.8.7 or newer**
 
 ## What you can do with it
