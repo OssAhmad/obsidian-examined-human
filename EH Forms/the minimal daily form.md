@@ -14,23 +14,18 @@ energy:
 stress:
 
 weight_kg:
-sleep_hours:
-
-calories:
-protein_g:
-
 fasted:
 dieted:
-studied:
-worked:
-exercised:
+notes:
 
 ##### Sessions
 
 FORMAT:
-`interval | type (optional) | engagement | notes`
+`interval | engagement | notes`
+or
+`interval | type | engagement | notes`
 
-SESSION TYPES:
+BUILT-IN SESSION TYPES:
 `authorship, chore, exercise, leisure, maintenance, meditation, reading, research, social, study, thinking, work, writing`
 
 ENTRIES:

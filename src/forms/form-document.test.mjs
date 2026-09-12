@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import {
   entryLines,
@@ -58,4 +59,31 @@ test('preserves CRLF detection and locates a complete-line ENTRIES marker', () =
 test('reports missing headings and unmatched form endings separately', () => {
   assert.equal(findEhForm('plain note', 'daily'), null);
   assert.throws(() => requireEhForm('#### EH Daily Form\ndate: 2026-09-10', 'daily'), /no matching #### END/);
+});
+
+test('repository EH Form templates retain the current public grammar', async () => {
+  const templates = [
+    ['daily', 'the daily form with explanations.md'],
+    ['daily', 'the minimal daily form.md'],
+    ['weekly', 'the weekly form with explanations.md'],
+    ['weekly', 'the minimal weekly form.md'],
+    ['budget', 'the budget form with explanantions.md'],
+    ['budget', 'the minimal budget form.md'],
+  ];
+
+  for (const [kind, fileName] of templates) {
+    const text = await readFile(new URL(`../../EH Forms/${fileName}`, import.meta.url), 'utf8');
+    const form = requireEhForm(text, kind);
+    assert.equal(form.text.trimEnd().endsWith('#### END'), true, fileName);
+    assert.match(text, /EH form:\s*<% "unimported" %>/, fileName);
+  }
+
+  for (const fileName of ['the daily form with explanations.md', 'the minimal daily form.md']) {
+    const text = await readFile(new URL(`../../EH Forms/${fileName}`, import.meta.url), 'utf8');
+    assert.match(text, /interval \| engagement \| notes/, fileName);
+    assert.match(text, /interval \| type \| engagement \| notes/, fileName);
+    for (const calculated of ['sleep_hours', 'calories', 'protein_g', 'studied', 'worked', 'exercised']) {
+      assert.doesNotMatch(text, new RegExp(`^${calculated}:`, 'm'), `${fileName}: ${calculated}`);
+    }
+  }
 });

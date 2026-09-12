@@ -19,7 +19,7 @@ npm install
 - `src/examined-human-database.ts` owns read-only database access and sql.js lifetime.
 - `src/read-models/` owns feature query contracts, shared SQL/schema helpers, and the extracted command, inspection, weekly, nutrition, and exercise implementations.
 - `src/examined-human-query.ts` remains the compatibility export surface and houses the still-coupled calendar, daily, engagement, and finance implementations.
-- `src/forms/` contains shared bounded-form, section, `ENTRIES`, labeled-field, and row primitives.
+- `src/forms/` contains shared bounded-form, section, `ENTRIES`, labeled-field, and row primitives, including the shared three-/four-field Daily session grammar.
 - `src/logger/` contains pure parsing/import logic and the isolated guarded writer.
 - `src/logger/persistence/` owns reusable transaction and integrity verification infrastructure.
 - `src/native-logger/` contains deprecated compatibility reexports; new code must not import from it.
@@ -51,7 +51,7 @@ Do not add direct SQLite writes to a view or to the reader. Do not place raw SQL
 
 Database paths must remain vault-relative. Never read or replace main-database bytes while a nonempty SQLite WAL contains uncheckpointed frames. The database source boundary is rebuilt by visible Refresh actions, database/WAL fingerprint changes, and the unconditional periodic reload described in the architecture document.
 
-Canonical sessions win for dates represented by imported notes. Otherwise an active Daily Form projection supplies the date when available; today's projection is refreshed automatically when the Calendar opens or refreshes. An imported Weekly Form is the direct current/future calendar fallback when no Daily projection exists. Historical Daily Forms are immutable receipts. Weekly plans and budgets are replaceable by their period identity.
+Canonical sessions win for dates represented by imported notes. Today's eligible Daily Form projection is refreshed automatically when the Calendar opens or refreshes; its intervals take precedence over conflicts while non-overlapping sessions from the imported Weekly Form remain visible. Future dates read only from the latest imported Weekly Form, and past dates remain canonical. Historical Daily Forms are immutable receipts. Weekly plans and budgets are replaceable by their period identity.
 
 Keep session titles engagement-first, duration formatted as `hh:mm`, `chor` distinct from `chore`, and optional exercise/milestone tables backward-compatible.
 
@@ -92,11 +92,22 @@ Keep discovery, parsing, validation, and persistence separate:
 5. the guarded writer repeats conflict checks and applies the approved mutation;
 6. post-write integrity and replacement checks verify the result.
 
-Admin Events are applied to the in-memory transaction before dependent session, meal, exercise, transaction, milestone, or valuation references are validated. This lets one historical Daily Form introduce canonical records and use them in the same confirmed import.
+Admin Events are applied to the disposable in-memory inspection database before dependent session, meal, exercise, transaction, milestone, or valuation references are validated. This lets one Daily Form introduce canonical records or aliases and use them in the same preview and confirmed import. `DailyAssessmentView` must render the Meals result embedded in this full inspection rather than treating a separate Meals-only inspection as authoritative. If standalone Meals validation fails while the staged full Daily inspection succeeds, the separate Meals action remains disabled because a Meals-only write cannot persist the Admin Event that owns the new food reference.
 
-Canonical session rows use `interval | type (optional) | engagement | notes`. Ordinary rows store a null `session_type_id`; a form with Exercise Details must resolve exactly one `exercise`-typed owner session. Session and engagement type removal commands set `is_active = 0` so existing foreign-key references remain valid, and their add counterparts create or reactivate codes.
+Daily session rows use one shared parser in `src/forms/session-row.ts` and accept exactly two shapes:
+
+- typeless: `interval | engagement | notes`;
+- explicitly typed: `interval | type | engagement | notes`.
+
+The legacy four-field row with an empty type remains valid. Ordinary rows store a null `session_type_id`, retain the engagement's required type, and use that engagement type for calendar color. Current-day planning projection uses the same row parser, preventing preview/import/calendar grammar drift. A form with Exercise Details must resolve exactly one `exercise`-typed owner session. Session and engagement type removal commands set `is_active = 0` so existing foreign-key references remain valid, and their add counterparts create or reactivate codes.
+
+Weekly planning-grid cells deliberately retain the separate semicolon grammar `optional type ; engagement ; optional notes`. The first position must exist even when blank. Imported Weekly rows drive future Calendar dates directly; the optional Sync week workflow materializes current/future rows only into empty Daily Sessions sections.
+
+Daily metrics separate observation from inference. `mood`, `energy`, `stress`, `weight_kg`, `fasted`, optional `dieted`, and free-text `notes` may come from the form. Full Daily inspection always calculates `calories` and `protein_g` from structured foods, `studied`/`worked`/`exercised` from session and engagement signals, and `sleep_hours` from the configured whole-hour assessment boundary. A manual legacy value for a calculated field is accepted for compatibility but replaced by the inferred value and warned when different. Sleep evidence may be identified by session type `sleep`, engagement type `sleep`, or canonical engagement name `sleep`; overnight sleep must be split across dates because session intervals cannot cross midnight.
 
 The forms in `EH Forms/` are part of the user-facing grammar. Update explained and minimal variants together when a field, command, or format changes.
+
+The explained templates describe lifecycle and interpretation rules. Minimal templates intentionally contain only the required structure, accepted formats, type lists, and empty entry areas. Do not reintroduce calculated Daily metric inputs into the minimal form merely to mirror database columns.
 
 ## Build and verification
 
@@ -181,6 +192,9 @@ Use synthetic notes and in-memory databases. Tests should cover both accepted in
 
 - form bounds, YAML discovery status, date handling, and Journal-folder safety;
 - canonical-name and alias resolution;
+- same-form Admin Event resolution in full Daily preview without persistent inspection writes;
+- both accepted Daily session row shapes and engagement-type fallback in canonical and planned calendar events;
+- inferred nutrition, activity, and configured-boundary sleep metrics;
 - unknown or ambiguous references;
 - historical immutability and current/future replacement;
 - Admin Events and Command Center staging;

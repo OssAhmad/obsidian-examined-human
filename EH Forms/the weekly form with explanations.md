@@ -5,7 +5,7 @@ EH form: <% "unimported" %>
 # Examined Human Weekly Note
 
 > [!info] Using this template
-> Create the note through Templater so `EH form` becomes `unimported`. The Weekly Assessment dashboard discovers the completed Weekly Form, validates it, imports or reimports it, and can sync its current/future planned sessions into empty Daily Form Sessions sections. Reimporting the same start date replaces that stored week; revisions are not retained.
+> Create the note through Templater so `EH form` becomes `unimported`. Weekly Assessment validates and imports the plan; reimporting the same start date replaces that stored week. Imported Weekly sessions supply the Calendar's future view. Today combines the Weekly plan with today's Daily Form or canonical sessions: Daily intervals win conflicts, while non-overlapping Weekly intervals remain visible. **Sync week** is optional and writes current/future rows only into empty Daily Form Sessions sections. If source cleanup is enabled in Settings, a successful import removes only this bounded form block and preserves the rest of the note.
 
 #### EH Weekly Form
 start date: <% moment().day(6 + (moment().day() >= 6 ? 7 : 0)).format('YYYY-MM-DD') %>
@@ -24,7 +24,7 @@ Commitment rows use `hours | engagement | commitment`. Hours may be decimal. Use
 
 Total:
 
-Each non-empty planning-grid cell uses `optional type ; engagement ; optional notes`. Leave the first field blank for an ordinary session, for example `; MIT Differential Equations ; Chapter 4`. A supplied type must be active. Use an existing engagement name or alias. Identical adjacent cells are combined into one longer planned session. Keep all seven day rows and keep the same number of cells in every row.
+Each non-empty planning-grid cell uses `optional type ; engagement ; optional notes`. Unlike a Daily session row, the Weekly grid always keeps the first semicolon-delimited type position: leave it blank for an ordinary session, for example `; MIT Differential Equations ; Chapter 4`. A typeless cell inherits its engagement type in the Calendar. A supplied type must be active; built-in and custom Admin Event types are both valid. Use an existing engagement name or alias. Identical adjacent cells are combined into one longer planned session. Keep all seven day rows and the same number of cells in every row.
 
 Example typed cell: `study ; MIT Differential Equations ; Chapter 4`
 

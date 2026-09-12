@@ -24,6 +24,8 @@ The usual rhythm is:
 
 Daily history acts like a receipt: after a Daily Form for today or a past date has been finalized, it cannot be silently rewritten. Future Daily Forms can be reviewed but cannot be imported. Weekly plans and budgets can be updated by importing the same period again.
 
+If you are new, the shortest useful path is: create and test an empty database, copy the explained Daily Form into your journal workflow, seed one engagement through its Admin Events section, and import that form. You can add foods, accounts, exercises, Weekly plans, and budgets only when you need them.
+
 ## Installation
 
 ### Install from Community plugins
@@ -125,6 +127,8 @@ Keep these structural elements unchanged:
 
 A note may contain one form of each kind. The form's internal dates determine what it represents; the filename alone does not.
 
+The current Daily templates intentionally omit `sleep_hours`, `calories`, `protein_g`, `studied`, `worked`, and `exercised`. Those values are calculated during assessment and import, displayed in the report, and stored in the database without requiring duplicate manual entries.
+
 ### 6. Import the minimum personal vocabulary
 
 An empty database knows the allowed general types, but it does not know the names from your life. Before logging sessions, create at least one engagement. Add the other kinds of records only when you intend to use their sections:
@@ -146,6 +150,8 @@ FOOD_CREATE | Oats | grain | 389 | 16.9 | 66.3 | 6.9 | 0.01 | 10.6 | 0 | plain o
 If you only want to begin tracking time, the engagement row is enough. Do not invent nutrition figures for real foods; use values you trust.
 
 Open the seed note, run **Examined Human: Import Daily Form from Active File**, review the validation preview, and confirm the import. Creation rows are staged evidence until this import succeeds.
+
+The full Daily validator stages Admin Events in a disposable copy before resolving the rest of the form. This means the same form may create an engagement, food, account, exercise, type, or alias and then use it in its sessions, meals, transactions, or exercise details. The real database is still changed only after confirmation.
 
 You can later use the **Command Center** to prepare new records and aliases through forms instead of typing commands manually.
 
@@ -193,16 +199,18 @@ Dashboard buttons that say **Stage** do not finish an import. They add reviewabl
 
 ### Daily Forms
 
-A Daily Form can contain metrics, sessions, meals, transactions, valuation rates, exercise details, milestones, Stoicism notes, and Admin Events.
+A Daily Form can contain observed metrics, a general daily note, sessions, meals, transactions, valuation rates, exercise details, milestones, Stoicism notes, and Admin Events.
 
 Session rows use either `interval | engagement | notes` for a typeless session or `interval | type | engagement | notes` when an explicit session type is needed. The four-field form may also leave the type field blank. Typeless sessions inherit their engagement type for calendar color. If the form contains Exercise Details, exactly one session must use type `exercise`; all of that form's exercises and sets attach to that session.
 
-- For **today**, opening or refreshing the Calendar automatically imports the eligible Daily Form's Sessions into the replaceable `planned_sessions` projection. You may also validate and finalize today's complete form.
+- For **today**, opening or refreshing the Calendar projects the eligible Daily Form's Sessions for display without finalizing the day. You may also validate and finalize today's complete form.
 - For a **future date**, the assessment can be reviewed, but canonical Daily import is refused until that date arrives. Future Calendar sessions come only from an imported Weekly Form.
 - For a **past date**, importing creates the canonical historical record after validation and confirmation.
 - Once a Daily Form is finalized, changed facts are rejected rather than silently replacing the receipt.
 
-Calories and protein are calculated from every structured food row, including snacks, and are displayed to two decimal places. The plugin also derives `studied`, `worked`, and `exercised` from session/engagement types: `study` or `course` counts as study, `work` counts as work, and `exercise` or `fitness` plus structured exercise rows count as exercise. Sleep is calculated from matching sleep sessions during a configurable 24-hour assessment window, defaulting to 21:00 on the previous date through 21:00 on the assessed date; a session type, engagement type, or canonical engagement name of `sleep` qualifies.
+Calories and protein are calculated from every structured food row, including snacks, and are displayed to two decimal places. The plugin also derives `studied`, `worked`, and `exercised` from session/engagement types: `study` or `course` counts as study, `work` counts as work, and `exercise` or `fitness` plus structured exercise rows count as exercise. Sleep is calculated from matching sleep sessions during a configurable 24-hour assessment window, defaulting to 21:00 on the previous date through 21:00 on the assessed date; a session type, engagement type, or canonical engagement name of `sleep` qualifies. Split an overnight sleep into one session ending at `23:59` and another beginning at `00:00` on the next date.
+
+If a same-form Admin Event creates a food or food alias used by Meals, use the full Daily import. The separate Meals-only action cannot persist the new food definition by itself and will instead tell you to import the Daily Form first.
 
 Use **Examined Human: Import Daily Form from Active File** while the note is open, or work from **Daily Assessment**.
 
@@ -232,12 +240,13 @@ The Financial Dashboard uses the same pattern for opening balances and reconcili
 
 ## What to do with forms after importing
 
-After an import succeeds, you have two valid choices:
+After an import succeeds, you have three valid choices:
 
 - **Keep the note.** This is recommended when you want a permanent, human-readable record of what happened, what you planned, and what was submitted to the plugin.
-- **Delete the note.** Imported historical information remains in the database, so the source form is not required for ordinary dashboard display.
+- **Remove only the imported form automatically.** Enable the separate Daily, Weekly, or Budget cleanup switch in Settings. After a confirmed database import, Examined Human removes the exact validated form block while preserving surrounding journal text and other forms.
+- **Delete or edit the source manually.** Imported information remains in the database, so the form is not required for ordinary dashboard display.
 
-Delete only after confirming that the import succeeded and the information appears correctly. Do not delete today's Daily Form if you still rely on it as today's calendar source. Deleting any unimported note also discards staged changes that have not yet been applied.
+Remove source material only after confirming that the import succeeded and the information appears correctly. Deleting an unimported form also discards staged changes that have not yet been applied. If automatic cleanup notices that the form changed after validation or cannot identify one exact block, it safely leaves the note untouched; the completed database import is not falsely reported as failed.
 
 ## Dashboard guide
 
@@ -301,7 +310,7 @@ Use it to answer: **What canonical names does my system know, and what correctio
 2. Add planned sessions if useful; opening or refreshing the Calendar synchronizes today's session plan automatically.
 3. During or after the day, fill in what actually happened.
 4. Validate the complete form and import it either today or later. Future-dated Daily Forms remain review-only.
-5. Keep the note as your readable journal record, or delete it after verifying the import.
+5. Keep the form as part of the readable journal, remove it manually, or enable the matching post-import cleanup switch.
 6. At the start of a week, create and import a Weekly Form.
 7. During the week, update and reimport the plan when necessary.
 8. At review time, compare Weekly Assessment with the canonical Daily Forms.
@@ -333,6 +342,12 @@ If you chose Journal-folder discovery, also verify the configured Journal folder
 ### Import reports an unknown name
 
 Sessions and plans need a known engagement; transactions also need a known account; meals need a known food; structured exercise rows need a known exercise. Correct a misspelling, use an existing alias, or stage the missing canonical record through Daily Assessment or Command Center, then revalidate.
+
+A full Daily Form may create the missing record or alias under Admin Events and use it elsewhere in that same form. If the Daily report accepts it but the separate Meals panel says **Import Daily first**, use the main Daily import so the canonical food and meal are committed together.
+
+### A typeless session is rejected or missing from the Calendar
+
+Use three fields for an ordinary session: `interval | engagement | notes`. Use four fields only when you need an explicit session type: `interval | type | engagement | notes`. Typeless sessions inherit the engagement type for calendar color. The older blank-type form, `interval | | engagement | notes`, is also accepted. Weekly planning-grid cells use semicolons and still reserve their first position for an optional type: `; engagement ; notes`.
 
 ### A future Daily Form will not import
 

@@ -5,44 +5,42 @@ EH form: <% "unimported" %>
 # Examined Human Daily Form
 
 > [!info] Using this template
-> Create the note through Templater so `EH form` becomes `unimported`. The date must be an ISO date (`YYYY-MM-DD`); the default below expects the note title to be that date. Keep the `#### EH Daily Form`, section headings, `ENTRIES:` markers, and final `#### END` unchanged. The Daily Assessment dashboard can discover, validate, and import the completed form. A finalized historical Daily Form is immutable.
+> Create the note through Templater so `EH form` becomes `unimported`. The date must be an ISO date (`YYYY-MM-DD`); the default below expects the note title to be that date. Keep the `#### EH Daily Form`, section headings, `ENTRIES:` markers, and final `#### END` unchanged. Daily Assessment can review today or a past day and import it after confirmation. A future form can be reviewed but not imported until its date arrives. If source cleanup is enabled in Settings, a successful import removes only this bounded form block and preserves the rest of the note.
 
 #### EH Daily Form
 date: <% tp.file.title %>
 
 ##### Daily Metrics
 
-Most metrics may be left blank if they were not measured. `calories` is required when the daily calorie limit is enabled in Settings, and `protein_g` is required when the minimum-protein setting is enabled. Use `1` for yes and `0` for no in the five flag fields.
+Enter only observations you actually measured. Mood, energy, and stress accept values from `-2` through `2`; weight cannot be negative. Use `1` for yes and `0` for no. `dieted` is an optional fallback when both automatic nutrition rules are disabled.
+
+Examined Human calculates and stores `sleep_hours`, `calories`, `protein_g`, `studied`, `worked`, and `exercised`; they do not need fields in the form. Calories and protein come from the food rows below. Study, work, and exercise come from session and engagement evidence. Sleep comes from matching sleep sessions inside the whole-hour window configured in Settings, including the previous day's portion of an overnight sleep split into two sessions. A session qualifies as sleep when its explicit type, its engagement type, or its canonical engagement name is `sleep`.
 
 mood:
 energy:
 stress:
 
 weight_kg:
-sleep_hours:
-
-calories:
-protein_g:
-
 fasted:
 dieted:
-studied:
-worked:
-exercised:
+notes:
 
 ##### Sessions
 
 FORMAT:
-`interval | type (optional) | engagement | notes`
+
+- Typeless: `interval | engagement | notes`
+- Explicit type: `interval | type | engagement | notes`
 
 EXAMPLES (do not copy these below `ENTRIES:` unless they are real):
-`09:00-10:30 |  | Jannach German for Reading | studied Kapitel 4`
-`14:00-15:30 |  | Mensonaut Paper | wrote related zettels`
+`09:00-10:30 | Jannach German for Reading | studied Kapitel 4`
+`14:00-15:30 | work | Mensonaut Paper | wrote related zettels`
+`18:00-19:30 | exercise | Body | lifting session that owns the Exercise Details below`
 
-SESSION TYPES:
+BUILT-IN SESSION TYPES:
 `authorship, chore, exercise, leisure, maintenance, meditation, reading, research, social, study, thinking, work, writing`
 
-Use an existing canonical engagement name or one of its aliases. The type field is normally blank; when supplied, it must use an active session type. Overlapping sessions are allowed but reported as a warning.
+Use an existing canonical engagement name or one of its aliases. Omit the type column for an ordinary session; its engagement type supplies the calendar color. Use the four-field form only when the session needs a more specific active type, especially `exercise` when the form contains Exercise Details. The list above is the built-in starting vocabulary; active custom types added through Admin Events are valid too. The older four-field form with a blank type (`interval | | engagement | notes`) remains valid. Overlapping sessions are allowed but reported as a warning. Sessions cannot cross midnight; split them between the two dates.
 
 ENTRIES:
 
@@ -56,7 +54,7 @@ EXAMPLES (do not copy these below `ENTRIES:` unless they are real):
 `Eggs | 150`
 `Rice | 200 g`
 
-Use an existing Food Library name or alias. Examined Human derives calories, protein, carbohydrates, fat, salt, fiber, and cholesterol from the food's per-100-g record.
+Use an existing Food Library name or alias. Examined Human derives calories, protein, carbohydrates, fat, salt, fiber, and cholesterol from the food's per-100-g record. A full Daily import may create a food or alias in Admin Events and use it in Meals in the same form. A separate Meals-only import cannot commit that new definition, so use the full Daily import in that case.
 
 LEISURE RULES:
 
@@ -111,7 +109,7 @@ EXAMPLES (illustrative only; use your own observations):
 `BTC | 64000`
 `APARTMENT | 2300000`
 
-Each row means that one unit of the listed currency or asset equals the stated amount of the reference asset class configured in Examined Human settings. Unit matching is case-insensitive. A partial rate set is valid: omitted units keep using their most recent earlier rate. Rates apply from this Daily Form's date forward and never backward. A finalized date can contain only one rate set, so leave this section empty on most days. The Command Dashboard can stage rows into this existing section; it will not create the section for you.
+Each row means that one unit of the listed currency or asset equals the stated amount of the reference asset class configured in Examined Human settings. Unit matching is case-insensitive. A partial rate set is valid: omitted units keep using their most recent earlier rate. Rates apply from this Daily Form's date forward and never backward. A finalized date can contain only one rate set, so leave this section empty on most days. The Command Center can stage rows into this existing section; it will not create the section for you.
 
 ENTRIES:
 
@@ -157,7 +155,7 @@ notes:
 
 ##### Admin Events
 
-The Command Dashboard is the easiest way to create these rows. Use the formats below for review, manual entry, or bulk staging. Canonical names and aliases are case-insensitive. Fields are pipe-separated; keep empty optional fields between their pipes. Alias lists use `[alias one, alias two]`.
+The Command Center is the easiest way to create these rows. Use the formats below for review, manual entry, or bulk staging. Canonical names and aliases are case-insensitive. Fields are pipe-separated; keep empty optional fields between their pipes. Alias lists use `[alias one, alias two]`. During full Daily validation these commands are staged in a disposable database first, so a newly created food, engagement, account, exercise, type, or alias can be used elsewhere in this same form. Nothing reaches the real database until you confirm a successful import.
 
 ENGAGEMENT COMMANDS:
 
@@ -177,7 +175,7 @@ ENGAGEMENT COMMANDS:
 - `ENGAGEMENT_ALIAS_REMOVE | engagement | alias`
 - `ENGAGEMENT_ALIAS_MOVE | alias | destination_engagement`
 
-Engagement types: `article, authorship, book, career, certification, course, exam, fitness, leisure, maintenance, practice, relationship, speech, startup`.
+Built-in engagement types: `article, authorship, book, career, certification, course, exam, fitness, leisure, maintenance, practice, relationship, speech, startup`. Active custom types added with `ENGAGEMENT_TYPE_ADD` are valid too.
 
 Engagement statuses: `planned, pending, active, paused, completed, abandoned`.
 

@@ -5,7 +5,7 @@ EH form: <% "unimported" %>
 # Examined Human Budget Form
 
 > [!info] Using this template
-> A budget may span a week, month, season, year, or any other period of at least four calendar days. Dates use `YYYY-MM-DD`. Budget periods cannot overlap. Reimporting the exact same start and end dates replaces that stored budget; revisions are not retained.
+> A budget may span a week, month, season, year, or any other period of at least four calendar days. Dates use `YYYY-MM-DD`. Budget periods cannot overlap. Reimporting the exact same start and end dates replaces that stored budget; revisions are not retained. Expected movements remain plans and never create transactions. If source cleanup is enabled in Settings, a successful import removes only this bounded form block and preserves the rest of the note.
 
 #### EH Budget Form
 period start:
