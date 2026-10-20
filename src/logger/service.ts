@@ -130,6 +130,12 @@ export interface BudgetWriteResult extends BudgetImportResult, BackupMutationMet
 
 export interface DailyRequest extends Omit<DailyNoteInput, 'sourceChecksum' | 'pluginVersion'> {
   databasePath: string;
+  /** Database snapshot reviewed in the confirmation dialog. */
+  expectedDatabaseChecksum?: string;
+}
+
+export interface DailyPreview extends DailyInspection {
+  databaseChecksum: string;
 }
 
 export interface DailyWriteResult extends DailyImportResult, BackupMutationMetadata {
@@ -345,18 +351,35 @@ export class LoggerService {
     );
   }
 
-  async inspectDaily(request: DailyRequest): Promise<DailyInspection> {
+  async inspectDaily(request: DailyRequest): Promise<DailyPreview> {
     const input = await this.dailyInput(request);
-    return this.inspectDatabase(request.databasePath, (db) => inspectDailyNote(db, input));
+    return this.inspectDatabase(request.databasePath, (db, databaseChecksum) => ({
+      ...inspectDailyNote(db, input), databaseChecksum,
+    }));
   }
 
   importHistoricalDaily(request: DailyRequest): Promise<DailyWriteResult> {
     return this.enqueue(async () => {
+      if (request.replaceExisting && !request.expectedDatabaseChecksum) {
+        throw new Error('Preview and confirm the complete day replacement before reimporting.');
+      }
+      const source = this.requireFile(request.filePath, 'Daily Note');
+      if (await this.app.vault.read(source) !== request.sourceText) {
+        throw new Error('The Daily Form changed after preview. Review it again before importing; no data was written.');
+      }
       const input = await this.dailyInput(request);
       const mutation = await this.mutateDatabase(
         request.databasePath,
         'daily-import',
         (db) => writeHistoricalDailyNote(db, input),
+        'durable',
+        true,
+        request.expectedDatabaseChecksum,
+        async () => {
+          if (await this.app.vault.read(source) !== request.sourceText) {
+            throw new Error('The Daily Form changed during import. Review it again; no data was written.');
+          }
+        },
       );
       return {
         ...mutation.value,
@@ -601,17 +624,18 @@ export class LoggerService {
 
   private async inspectDatabase<T>(
     databasePathSetting: string,
-    operation: (db: Database) => T,
+    operation: (db: Database, databaseChecksum: string) => T,
   ): Promise<T> {
     const databasePath = normalizeVaultDatabasePath(databasePathSetting);
     const file = this.requireFile(databasePath, 'Examined Human database');
     await this.assertNoUncheckpointedWal(databasePath);
     const bytes = new Uint8Array(await this.app.vault.readBinary(file));
+    const databaseChecksum = await sha256Bytes(bytes);
     const SQL = await getSqlJs();
     const db = new SQL.Database(bytes);
     try {
       db.run('PRAGMA foreign_keys = ON');
-      return operation(db);
+      return operation(db, databaseChecksum);
     } finally {
       db.close();
     }
@@ -623,12 +647,17 @@ export class LoggerService {
     operation: (db: Database) => T,
     durability: DatabaseMutationDurability | ((value: T) => DatabaseMutationDurability) = 'durable',
     enforceForeignKeysDuringMutation = true,
+    expectedDatabaseChecksum?: string,
+    beforePersist?: () => Promise<void>,
   ): Promise<{ value: T; backupPath: string | null; databasePath: string; backupsPruned: number; backupRetentionWarning: string | null }> {
     const databasePath = normalizeVaultDatabasePath(databasePathSetting);
     const databaseFile = this.requireFile(databasePath, 'Examined Human database');
     await this.assertNoUncheckpointedWal(databasePath);
     const originalBytes = new Uint8Array(await this.app.vault.readBinary(databaseFile));
     const originalChecksum = await sha256Bytes(originalBytes);
+    if (expectedDatabaseChecksum && originalChecksum !== expectedDatabaseChecksum) {
+      throw new Error('The database changed after preview. Review and confirm the day again; no data was written.');
+    }
     const SQL = await getSqlJs();
     const db = new SQL.Database(originalBytes);
     try {
@@ -643,6 +672,13 @@ export class LoggerService {
       const backupPath = shouldCreateDatabaseBackup(resolvedDurability)
         ? await this.createBackup(databasePath, originalBytes, backupLabel)
         : null;
+      if (beforePersist) await beforePersist();
+      // Backup storage can yield to external writers. Recheck immediately before
+      // replacement as well as before backup creation.
+      await this.assertNoUncheckpointedWal(databasePath);
+      if (await sha256Bytes(new Uint8Array(await this.app.vault.readBinary(databaseFile))) !== originalChecksum) {
+        throw new Error('EH.db changed before replacement. Refresh and retry; no data was written.');
+      }
       await this.app.vault.modifyBinary(databaseFile, arrayBufferFrom(stagedBytes));
       try {
         await this.verifyWrittenDatabase(databaseFile, stagedBytes);

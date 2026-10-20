@@ -2,6 +2,8 @@ import { ItemView, moment, normalizePath, Notice, TFile, WorkspaceLeaf } from 'o
 import type { FormWorkflowServices } from './plugin-services.ts';
 import { buildDailyNoteList, type DailyNoteListItem } from './daily-note-index.ts';
 import { confirmMealImport } from './MealImportConfirmationModal.ts';
+import { confirmDailyImport } from './DailyImportConfirmationModal.ts';
+import { renderDailyReplacementWarning } from './DailyReplacementWarning.ts';
 import type { DailyAssessmentQueryResult } from './read-models/daily.ts';
 import type { DailyInspection } from './logger/daily-note.ts';
 import type { MealInspection } from './logger/meals.ts';
@@ -133,6 +135,7 @@ export class DailyAssessmentView extends ItemView {
               fileName: this.selectedItem.fileName,
               filePath: this.selectedItem.filePath,
               sourceText,
+              replaceExisting: true,
               nutritionThresholds: thresholds,
               valuationLabel: this.plugin.settings.valuationUnitLabel,
               valuationReferenceUnit: this.plugin.settings.valuationReferenceUnit,
@@ -170,7 +173,7 @@ export class DailyAssessmentView extends ItemView {
     const main = body.createEl('main', { cls: 'examined-human-daily-main' });
     this.renderValidation(main);
     if (this.inspection?.errors.length) return;
-    const report = this.inspection && this.selectedItem.status !== 'imported'
+    const report = this.inspection
       ? reportFromInspection(this.inspection)
       : reportFromAssessment(this.selectedItem.date, this.assessment);
     if (this.inspection) report.warnings = [];
@@ -197,8 +200,10 @@ export class DailyAssessmentView extends ItemView {
       this.actionButton.setText('Import');
       this.actionButton.disabled = true;
     } else if (this.selectedItem.status === 'imported') {
-      this.actionButton.setText('Already imported');
-      this.actionButton.disabled = true;
+      this.actionButton.setText('Reimport…');
+      this.actionButton.removeClass('mod-cta');
+      this.actionButton.addClass('mod-warning');
+      this.actionButton.addEventListener('click', () => { void this.handleImport(); });
     } else {
       if (this.selectedItem.temporalState === 'future') {
         this.actionButton.setText('Future assessment');
@@ -255,8 +260,10 @@ export class DailyAssessmentView extends ItemView {
     if (item.status === 'imported') {
       badge.addClass('is-ready');
       badge.setText('Imported');
-      section.createDiv({ text: 'This date is finalized. Import controls are disabled.', cls: 'examined-human-daily-validation-note' });
-    } else if (this.inspection) {
+      renderDailyReplacementWarning(section, this.inspection?.replacement ?? { date: item.date, records: {} });
+      section.createDiv({ text: 'Edit or restore the complete EH Daily Form in its source note, then choose Reimport to preview and confirm replacement. The source form is required even if automatic cleanup previously removed it.', cls: 'examined-human-daily-validation-note' });
+    }
+    if (this.inspection) {
       badge.addClass(this.inspection.ready ? 'is-ready' : 'is-blocked');
       badge.setText(this.inspection.ready ? 'Ready for confirmation' : 'Needs attention');
       this.renderCompleteness(section, this.inspection);
@@ -337,7 +344,9 @@ export class DailyAssessmentView extends ItemView {
       state.setText('Finalized');
       block.createDiv({
         cls: 'examined-human-daily-validation-note',
-        text: 'Historical Meals are immutable once finalized by a component or full Daily Note import.',
+        text: item.status === 'imported'
+          ? 'Meals-only edits are disabled. Reimport the complete Daily Form to replace this day, including its Meals.'
+          : 'Historical Meals are finalized. Complete the first Daily import with matching Meals before using full-day reimport.',
       });
       return;
     }
@@ -525,7 +534,7 @@ export class DailyAssessmentView extends ItemView {
 
   private async handleImport(): Promise<void> {
     const item = this.selectedItem;
-    if (!item || item.status === 'imported') return;
+    if (!item) return;
     if (item.temporalState === 'future') {
       new Notice('Future Daily Forms cannot be imported. Wait until that date.', 10_000);
       return;
@@ -539,6 +548,7 @@ export class DailyAssessmentView extends ItemView {
       const sourceText = await this.app.vault.read(noteFile);
       const request = {
         databasePath: this.plugin.settings.databasePath,
+        replaceExisting: true,
         noteDate: item.date,
         todayDate: moment().format('YYYY-MM-DD'),
         fileName: item.fileName,
@@ -561,19 +571,29 @@ export class DailyAssessmentView extends ItemView {
         new Notice('Failed. Look at the errors in the assessment.', 10000);
         return;
       }
+      const confirmed = await confirmDailyImport(this.app, {
+        title: `${inspection.replacement ? 'Reimport' : 'Import'} daily assessment — ${item.date}`,
+        explanation: `Review the complete assessment. Confirmation writes the day with a database backup.${this.plugin.settings.removeFormAfterDailyImport ? ' The exact imported Daily Form will then be removed from the note.' : ''}`,
+        confirmLabel: 'Import daily assessment',
+        inspection,
+        sessionColors: this.plugin.settings.sessionColors,
+        initialScrollHour: this.plugin.settings.initialScrollHour,
+        valuationLabel: this.plugin.settings.valuationUnitLabel,
+      });
+      if (!confirmed) return;
       this.actionButton?.setText('Importing…');
-      const result = await this.plugin.logger.importHistoricalDaily(request);
+      const result = await this.plugin.logger.importHistoricalDaily({ ...request, expectedDatabaseChecksum: inspection.databaseChecksum });
       await this.plugin.markImportedEhFormFileIfComplete(noteFile);
       const cleanup = await this.plugin.removeImportedFormAfterImport(noteFile, 'daily', sourceText);
       this.loggerOutput = [
-        `Imported ${result.sessionCount} sessions, ${result.transactionCount} transactions, ${result.exerciseCount} exercises, and ${result.foodRowCount} food rows.`,
+        `${result.replaced ? 'Replaced the day with' : 'Imported'} ${result.sessionCount} sessions, ${result.transactionCount} transactions, ${result.exerciseCount} exercises, and ${result.foodRowCount} food rows.`,
         `Milestones: ${result.milestoneCount}. Admin events: ${result.adminEventCount}.`,
         cleanup === 'removed' ? 'Source Daily Form removed from the note.' : '',
         ...backupMutationOutput(result),
       ].filter(Boolean).join('\n');
-      await this.refresh();
+      await this.plugin.refreshViews();
       const imported = this.selectedItem?.status === 'imported';
-      if (imported) new Notice('Imported successfully.', 8000);
+      if (imported) new Notice(result.replaced ? 'Day replaced successfully.' : 'Imported successfully.', 8000);
       else new Notice('Failed. Look at the errors in the assessment.', 10000);
     } catch (error) {
       this.loggerOutput = error instanceof Error ? error.message : String(error);
@@ -582,7 +602,7 @@ export class DailyAssessmentView extends ItemView {
     } finally {
       if (activeButton?.isConnected) {
         activeButton.disabled = false;
-        activeButton.setText('Import');
+        activeButton.setText(item.status === 'imported' ? 'Reimport…' : 'Import');
       }
     }
   }

@@ -2,10 +2,11 @@ import type { Database, SqlValue } from 'sql.js';
 import { inferDailyActivity, inferSleepHours, type DailySessionSignal } from '../daily-inference.ts';
 import { normalizeValuationUnit } from '../domain/valuation.ts';
 import { parseDatabaseTime } from '../events.ts';
-import { entryLines, formSections, requireEhForm } from '../forms/form-document.ts';
+import { entryLines, findEntriesMarker, formSections, requireEhForm } from '../forms/form-document.ts';
 import { splitDelimitedFields } from '../forms/fields.ts';
 import { parseSessionRowFields, SESSION_ROW_FORMAT } from '../forms/session-row.ts';
 import { applyAdminEvents, type AdminEvent } from './admin/command-handlers.ts';
+import { deleteDailyRecords, previewDailyReplacement, type DailyReplacementPreview } from './daily-replacement.ts';
 import { inspectMeals, type MealInspection, type NutritionThresholds } from './meals.ts';
 import { mealComponentMatchesInspection, queryMealComponentState, writeMealInspection } from './meal-import.ts';
 import {
@@ -39,6 +40,8 @@ export interface DailyNoteInput {
   valuationLabel?: string;
   valuationReferenceUnit?: string;
   sleepDayBoundaryHour?: number;
+  /** Explicitly authorize replacing all dated records when a receipt exists. */
+  replaceExisting?: boolean;
 }
 
 export interface DashboardCompleteness {
@@ -97,6 +100,7 @@ export interface DailyInspection {
   filename: string;
   file_path: string;
   imported: boolean;
+  replacement: DailyReplacementPreview | null;
   ready: boolean;
   errors: string[];
   warnings: string[];
@@ -125,6 +129,7 @@ export interface DailyInspection {
 
 export interface DailyImportResult {
   noteDate: string;
+  replaced: boolean;
   sessionCount: number;
   transactionCount: number;
   exerciseCount: number;
@@ -671,7 +676,8 @@ function inspectionFor(
     filename: input.fileName,
     file_path: input.filePath,
     imported,
-    ready: errors.length === 0 && !imported,
+    replacement: null,
+    ready: errors.length === 0,
     errors,
     warnings,
     completeness: {
@@ -720,7 +726,9 @@ function inspectionFor(
         )[0];
         const currency = normalizeValuationUnit(String(account?.currency ?? '')) || 'Unspecified';
         const amount = transaction.amount;
-        const rate = historicalValuationRate(
+        const rate = currency === normalizeValuationUnit(input.valuationReferenceUnit ?? 'USD')
+          ? 1
+          : parsed.valuationRates.find((candidate) => candidate.unitKey === currency)?.value ?? historicalValuationRate(
           db,
           currency,
           input.noteDate,
@@ -756,8 +764,13 @@ function prepareDaily(db: Database, input: DailyNoteInput): PreparedDailyNote {
   requireIsoDate(input.todayDate, 'Today date');
   const errors: string[] = [];
   const warnings: string[] = [];
+  const imported = queryRows(db, 'SELECT 1 AS found FROM imported_notes WHERE note_date = ? LIMIT 1', [input.noteDate]).length > 0;
+  const replacement = imported && input.replaceExisting
+    ? previewDailyReplacement(db, input.noteDate)
+    : null;
   let parsed: ParsedDailyNote;
   try {
+    if (replacement) validateReplacementForm(input.sourceText, input.noteDate);
     parsed = parseDaily(db, input.sourceText, input.noteDate, input.nutritionThresholds, errors);
   } catch (error) {
     let mealInspection: MealInspection;
@@ -772,8 +785,17 @@ function prepareDaily(db: Database, input: DailyNoteInput): PreparedDailyNote {
     };
     errors.push(error instanceof Error ? error.message : String(error));
   }
-  const imported = queryRows(db, 'SELECT 1 AS found FROM imported_notes WHERE note_date = ? LIMIT 1', [input.noteDate]).length > 0;
-  if (imported) errors.push(`${input.noteDate} is already represented by a canonical imported note.`);
+  if (imported && !input.replaceExisting) errors.push(`${input.noteDate} is already represented by a canonical imported note.`);
+  if (replacement && parsed.adminEvents.length > 0) {
+    errors.push('Reimport requires an empty Admin Events section. Those commands change shared catalogs and cannot be undone or replayed as daily records. Remove the previously executed commands; shared foods, accounts, exercises, engagements, and aliases remain available.');
+  }
+  if (replacement && errors.length === 0) {
+    try {
+      deleteDailyRecords(db, input.noteDate);
+    } catch (error) {
+      errors.push(error instanceof Error ? error.message : String(error));
+    }
+  }
   if (errors.length === 0) applyAdminEvents(db, parsed.adminEvents, input.noteDate, errors);
   if (errors.length === 0) {
     parsed.mealInspection = inspectMeals(db, dailyFormBody(input.sourceText, input.noteDate), input.nutritionThresholds);
@@ -789,11 +811,38 @@ function prepareDaily(db: Database, input: DailyNoteInput): PreparedDailyNote {
     }
   }
   if (errors.length === 0) applyInferredMetrics(db, parsed, input, warnings);
-  return { parsed, inspection: inspectionFor(db, input, parsed, imported, errors, warnings) };
+  return { parsed, inspection: { ...inspectionFor(db, input, parsed, imported, errors, warnings), replacement } };
+}
+
+function validateReplacementForm(sourceText: string, date: string): void {
+  if ([...sourceText.matchAll(/^####[ \t]+EH[ \t]+Daily[ \t]+Form[ \t]*$/gmi)].length !== 1) {
+    throw new Error('Reimport requires exactly one complete EH Daily Form in the source note.');
+  }
+  const body = dailyFormBody(sourceText, date);
+  const seen = new Set<string>();
+  const known = new Set(['daily metrics', 'sessions', 'meals', 'transactions', 'exercise details', 'milestones', 'stoicism', 'admin events', 'valuation rates']);
+  const rowSections = new Set(['sessions', 'transactions', 'exercise details', 'milestones', 'admin events', 'valuation rates']);
+  for (const match of body.matchAll(/^#####(?!#)[ \t]+(.+?)[ \t]*$/gm)) {
+    const name = match[1].trim().toLowerCase();
+    if (!known.has(name)) throw new Error(`Reimport has an unrecognized section '${match[1]}'. Correct its heading so entries are not silently discarded.`);
+    if (seen.has(name)) throw new Error(`Reimport has duplicate '${match[1]}' sections. Keep exactly one section to avoid losing entries.`);
+    seen.add(name);
+  }
+  for (const [name, section] of formSections(body)) {
+    if (rowSections.has(name) && !findEntriesMarker(section.content)) {
+      throw new Error(`Reimport section '${section.name}' requires an ENTRIES: marker, even when it is empty.`);
+    }
+  }
 }
 
 export function inspectDailyNote(db: Database, input: DailyNoteInput): DailyInspection {
-  return prepareDaily(db, input).inspection;
+  db.run('SAVEPOINT daily_inspection');
+  try {
+    return prepareDaily(db, input).inspection;
+  } finally {
+    db.run('ROLLBACK TO daily_inspection');
+    db.run('RELEASE daily_inspection');
+  }
 }
 
 function insertComponent(
@@ -815,6 +864,19 @@ function insertComponent(
 }
 
 export function writeHistoricalDailyNote(db: Database, input: DailyNoteInput): DailyImportResult {
+  db.run('SAVEPOINT daily_import');
+  try {
+    const result = writeDailyNote(db, input);
+    db.run('RELEASE daily_import');
+    return result;
+  } catch (error) {
+    db.run('ROLLBACK TO daily_import');
+    db.run('RELEASE daily_import');
+    throw error;
+  }
+}
+
+function writeDailyNote(db: Database, input: DailyNoteInput): DailyImportResult {
   if (input.noteDate > input.todayDate) throw new Error('Future Daily Forms cannot be imported. Wait until that date before creating a canonical Daily receipt.');
   const prepared = prepareDaily(db, input);
   if (!prepared.inspection.ready) throw new Error(prepared.inspection.errors.join('\n\n'));
@@ -955,6 +1017,7 @@ export function writeHistoricalDailyNote(db: Database, input: DailyNoteInput): D
 
   return {
     noteDate: input.noteDate,
+    replaced: prepared.inspection.replacement != null,
     sessionCount: parsed.sessions.length,
     transactionCount: parsed.transactions.length,
     exerciseCount: parsed.exercises.length,

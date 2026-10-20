@@ -48,15 +48,20 @@ export async function buildDailyNoteList(
     if (existing) throw new Error(`Two EH Daily Forms declare ${item.date}: ${existing.filePath} and ${item.filePath}.`);
     byDate.set(item.date, item);
   }
-  const imported = index.importedNotes.slice(0, 50).map((note) => ({
-    date: note.date,
-    fileName: note.fileName,
-    filePath: note.filePath,
-    status: 'imported' as const,
-    temporalState: 'imported' as const,
-    importedAt: note.importedAt,
-    sourceState: sourceByDate.get(note.date) ?? null,
-  }));
+  const imported = index.importedNotes.slice(0, 50).map((note) => {
+    const candidates = discoveredForms.filter((form) => form.kind === 'daily' && form.date === note.date);
+    if (candidates.length > 1) throw new Error(`Two EH Daily Forms declare ${note.date}: ${candidates.map((form) => form.filePath).join(' and ')}.`);
+    const source = candidates[0] ?? note;
+    return {
+      date: note.date,
+      fileName: source.fileName,
+      filePath: source.filePath,
+      status: 'imported' as const,
+      temporalState: 'imported' as const,
+      importedAt: note.importedAt,
+      sourceState: sourceByDate.get(note.date) ?? null,
+    };
+  });
   return [...byDate.values(), ...imported]
     .sort((left, right) => right.date.localeCompare(left.date));
 }

@@ -397,6 +397,7 @@ export default class ExaminedHumanPlugin extends Plugin {
         const noteDate = form.date!;
         const request = {
           databasePath: this.settings.databasePath, noteDate, todayDate: today, fileName: file.name, filePath: file.path, sourceText,
+          replaceExisting: true,
           nutritionThresholds: {
             mealCalorieLimitKcal: this.settings.mealCalorieLimitKcal,
             dailyCalorieLimitKcal: this.settings.dailyCalorieLimitKcal,
@@ -421,7 +422,7 @@ export default class ExaminedHumanPlugin extends Plugin {
         };
         const future = noteDate > today;
         const confirmed = await confirmDailyImport(this.app, {
-          title: `${dailyAssessmentTitle(noteDate, today)} — ${noteDate}`,
+          title: inspection.replacement ? `Reimport daily assessment — ${noteDate}` : `${dailyAssessmentTitle(noteDate, today)} — ${noteDate}`,
           explanation: future
             ? 'Review the future form below. It cannot become a canonical Daily receipt until its date arrives.'
             : `Review the complete assessment below. Confirmation writes a durable canonical Daily receipt with a backup.${this.settings.removeFormAfterDailyImport ? ' The exact imported Daily Form will then be removed from this note.' : ''}`,
@@ -447,10 +448,10 @@ export default class ExaminedHumanPlugin extends Plugin {
           },
         });
         if (!confirmed) return;
-        await this.logger.importHistoricalDaily(request);
+        const result = await this.logger.importHistoricalDaily({ ...request, expectedDatabaseChecksum: inspection.databaseChecksum });
         await this.markImportedEhFormFileIfComplete(file);
         const cleanup = await this.removeImportedFormAfterImport(file, 'daily', sourceText);
-        new Notice(`Imported successfully.${cleanup === 'removed' ? ' Source form removed.' : ''}`, 8_000);
+        new Notice(`${result.replaced ? 'Day replaced successfully.' : 'Imported successfully.'}${cleanup === 'removed' ? ' Source form removed.' : ''}`, 8_000);
       }
       await this.refreshViews();
     } catch (error) {

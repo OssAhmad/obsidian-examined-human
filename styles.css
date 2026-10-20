@@ -1428,6 +1428,30 @@
   border-left-color: var(--color-red);
 }
 
+.examined-human-daily-replacement-warning {
+  margin: 12px 0;
+  padding: 12px;
+  border: 2px solid var(--color-red);
+  border-radius: var(--radius-s);
+  color: var(--text-error);
+}
+
+.examined-human-daily-replacement-warning p {
+  margin: 8px 0;
+}
+
+.examined-human-daily-replacement-counts {
+  font-size: var(--font-smallest);
+}
+
+.examined-human-daily-replacement-acknowledgement {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 12px 0;
+  color: var(--text-error);
+}
+
 .examined-human-daily-validation-callout ul {
   margin-top: 7px;
   margin-bottom: 0;

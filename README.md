@@ -22,7 +22,7 @@ The usual rhythm is:
 5. Review the result in the calendar and dashboards.
 6. Improve your canonical lists of engagements, foods, exercises, accounts, and aliases as your life changes.
 
-Daily history acts like a receipt: after a Daily Form for today or a past date has been finalized, it cannot be silently rewritten. Future Daily Forms can be reviewed but cannot be imported. Weekly plans and budgets can be updated by importing the same period again.
+Daily history acts like a receipt: changing a note does not silently change its imported data. You can explicitly reimport a complete Daily Form for today or a past date after reviewing a red replacement warning and confirming deletion of the old day. Future Daily Forms can be reviewed but cannot be imported. Weekly plans and budgets can be updated by importing the same period again.
 
 If you are new, the shortest useful path is: create and test an empty database, copy the explained Daily Form into your journal workflow, seed one engagement through its Admin Events section, and import that form. You can add foods, accounts, exercises, Weekly plans, and budgets only when you need them.
 
@@ -206,13 +206,27 @@ Session rows use either `interval | engagement | notes` for a typeless session o
 - For **today**, opening or refreshing the Calendar projects the eligible Daily Form's Sessions for display without finalizing the day. You may also validate and finalize today's complete form.
 - For a **future date**, the assessment can be reviewed, but canonical Daily import is refused until that date arrives. Future Calendar sessions come only from an imported Weekly Form.
 - For a **past date**, importing creates the canonical historical record after validation and confirmation.
-- Once a Daily Form is finalized, changed facts are rejected rather than silently replacing the receipt.
+- Once a Daily Form is finalized, further edits require an explicit full-day reimport with a replacement warning and acknowledgement.
 
 Calories and protein are calculated from every structured food row, including snacks, and are displayed to two decimal places. The plugin also derives `studied`, `worked`, and `exercised` from session/engagement types: `study` or `course` counts as study, `work` counts as work, and `exercise` or `fitness` plus structured exercise rows count as exercise. Sleep is calculated from matching sleep sessions during a configurable 24-hour assessment window, defaulting to 21:00 on the previous date through 21:00 on the assessed date; a session type, engagement type, or canonical engagement name of `sleep` qualifies. Split an overnight sleep into one session ending at `23:59` and another beginning at `00:00` on the next date.
 
 If a same-form Admin Event creates a food or food alias used by Meals, use the full Daily import. The separate Meals-only action cannot persist the new food definition by itself and will instead tell you to import the Daily Form first.
 
 Use **Examined Human: Import Daily Form from Active File** while the note is open, or work from **Daily Assessment**.
+
+### Correcting an imported day
+
+Edit the **complete EH Daily Form** for the date, then run **Import Daily Form from Active File** again or select the imported date in **Daily Assessment** and choose **Reimport…**. Both routes show the same red warning, the counts of old rows to remove, and the new assessment. Check the acknowledgement and choose **Delete and reimport [date]** only when the complete form is ready.
+
+> **Reimport deletes all old daily records for the selected date and fills them anew from the new form. This is a complete replacement, not a merge. Anything missing from the form will be removed, including records added through another tool. A database backup is created first.**
+
+Replacement covers daily metrics, sessions and their exercise sets, transactions, meals and nutrition assessments, Stoicism entries, the day's milestones and measurements, valuation rates, and daily import/projection records. Old row IDs are discarded. Blank optional sections remove the corresponding old entries; the normal required form sections and validation rules still apply. Other dates are left alone.
+
+Shared foods, engagements, accounts, exercises, aliases, and Weekly/Budget plans are retained. **The Admin Events section must be empty during reimport.** Remove previously executed commands before trying again: deleting those commands from the note does not undo their earlier shared changes. Apply new catalog changes through a separate, not-yet-imported Daily Form. If a milestone belonging to this day has measurements from another or unknown date, or another cross-date link is inconsistent, replacement is blocked until those links are resolved. Changing or removing a dated valuation rate can change financial displays for later dates that carry that rate forward.
+
+The plugin validates the replacement in memory, creates a backup, and performs deletion and reinsertion together. Validation, stale-preview, WAL, or backup failures leave the old records intact. If the note or database changes after preview, review it again before confirming. Repeating a successful reimport replaces the day again rather than accumulating duplicate sessions, transactions, meals, or other entries.
+
+If automatic cleanup removed the source form, restore it from your note history or write a complete replacement form before reimporting. Imported days remain available in Daily Assessment even when the note is marked `EH form: imported`; the active-file command also works without changing that marker. If the note has moved, mark its replacement `unimported` and use **Discover forms**, or use the active-file command directly.
 
 ### Weekly Forms
 
@@ -260,7 +274,7 @@ Use it to answer: **When did I spend time, and what did I spend it on?**
 
 ### Daily Assessment
 
-Daily Assessment lists discovered forms and imported days, newest first. It previews and validates Daily Forms, imports past dates or today, refuses future dates, and displays the same report used by the active-file import command. That report includes manual and inferred metrics, the session calendar, foods with nutrient totals, transactions with unit totals and valued net flow, exercise sets, and notes. Hard validation errors hide the report and expose the available resolution actions first.
+Daily Assessment lists discovered forms and imported days, newest first. It previews and validates Daily Forms, imports past dates or today, offers explicit full-day reimport for imported dates, refuses future dates, and displays the same report used by the active-file import command. That report includes manual and inferred metrics, the session calendar, foods with nutrient totals, transactions with unit totals and valued net flow, exercise sets, and notes. Hard validation errors hide the report and expose the available resolution actions first.
 
 When a form refers to an unknown engagement, food, exercise, or account, Daily Assessment can help stage the missing canonical record or alias into that unimported note. Revalidate after staging.
 
