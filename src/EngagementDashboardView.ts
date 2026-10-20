@@ -1,4 +1,5 @@
-import { ItemView, moment, normalizePath, WorkspaceLeaf } from 'obsidian';
+import { ReadingView } from './refresh/reading-view.ts';
+import { moment, WorkspaceLeaf } from 'obsidian';
 import { renderDismissibleWarning } from './dismissible-warning.ts';
 import { engagementMatchesSearch } from './engagement-search.ts';
 import type { DashboardServices } from './plugin-services.ts';
@@ -11,7 +12,6 @@ import { DASHBOARD_WARNING_KEYS } from './warning-preferences.ts';
 
 export const EXAMINED_HUMAN_ENGAGEMENT_DASHBOARD_VIEW_TYPE = 'examined-human-engagement-dashboard';
 
-const FINGERPRINT_INTERVAL_MS = 10_000;
 const MAX_ACTIVITY_BUCKETS = 16;
 
 type RangeKey = 'days' | 'all';
@@ -105,7 +105,7 @@ function buildActivityBuckets(
   return { buckets: visible, subtitle };
 }
 
-export class EngagementDashboardView extends ItemView {
+export class EngagementDashboardView extends ReadingView {
   private result: EngagementDashboardQueryResult | null = null;
   private selectedEngagementId: number | null = null;
   private selectedRange: RangeKey = 'days';
@@ -114,11 +114,9 @@ export class EngagementDashboardView extends ItemView {
   private typeFilter = 'all';
   private renderGeneration = 0;
   private filterSelectionTimer: number | null = null;
-  private fingerprintTimer: number | null = null;
-  private lastFingerprint: string | null = null;
 
   constructor(leaf: WorkspaceLeaf, private plugin: DashboardServices) {
-    super(leaf);
+    super(leaf, plugin);
   }
 
   getViewType(): string {
@@ -133,33 +131,21 @@ export class EngagementDashboardView extends ItemView {
     return 'target';
   }
 
+  protected scrollContext(): string { return `${this.selectedEngagementId}:${this.selectedRange}`; }
+
   async onOpen(): Promise<void> {
+    this.startReadingUpdates();
     this.contentEl.addClass('examined-human-engagement-view');
     await this.refresh();
-    this.registerEvent(this.app.vault.on('modify', (file) => {
-      try {
-        const databaseChanged = normalizePath(file.path)
-          === this.plugin.database.normalizeVaultPath(this.plugin.settings.databasePath);
-        if (databaseChanged && !this.plugin.logger.isRunning) void this.refresh();
-      } catch {
-        // Invalid database paths are explained by the visible query error.
-      }
-    }));
-    try {
-      this.lastFingerprint = await this.plugin.database.fingerprint(this.plugin.settings.databasePath);
-    } catch {
-      this.lastFingerprint = null;
-    }
-    this.fingerprintTimer = window.setInterval(() => { void this.checkDatabaseFingerprint(); }, FINGERPRINT_INTERVAL_MS);
   }
 
   async onClose(): Promise<void> {
-    if (this.fingerprintTimer != null) window.clearInterval(this.fingerprintTimer);
+    this.stopReadingUpdates();
     if (this.filterSelectionTimer != null) window.clearTimeout(this.filterSelectionTimer);
     this.contentEl.empty();
   }
 
-  async refresh(): Promise<void> {
+  protected async refreshContent(): Promise<void> {
     const generation = ++this.renderGeneration;
     this.contentEl.empty();
     this.contentEl.addClass('examined-human-engagement-view');
@@ -600,14 +586,5 @@ export class EngagementDashboardView extends ItemView {
     });
   }
 
-  private async checkDatabaseFingerprint(): Promise<void> {
-    if (this.plugin.logger.isRunning) return;
-    try {
-      const next = await this.plugin.database.fingerprint(this.plugin.settings.databasePath);
-      if (this.lastFingerprint !== null && next !== this.lastFingerprint) await this.refresh();
-      this.lastFingerprint = next;
-    } catch {
-      // A transient replacement or invalid path can recover on the next poll.
-    }
-  }
+
 }

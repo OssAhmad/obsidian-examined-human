@@ -252,6 +252,12 @@ The Command Center manages your canonical foods, engagements, exercises, account
 
 The Financial Dashboard uses the same pattern for opening balances and reconciliations: it stages a normal, clearly marked transaction in a Daily Form. The Daily Form import is the step that applies it.
 
+## Refreshing without losing your place
+
+Examined Human checks for database changes in the background. These checks leave the page you are reading in place. If the database or the note being assessed changes, the tab shows **Updated data available** (or **Source note updated**) with a **Refresh** button. You can finish reading before loading the changes. Unchanged checks stay invisible.
+
+Choosing **Refresh** reloads the database and all open EH tabs while preserving their scroll positions, including assessment timelines and sidebars. The Calendar also keeps its exact horizontal position. Your own confirmed import actions still refresh the open tabs when they finish. A source notice concerning a WAL checkpoint means you must first close or checkpoint the external database writer before refreshing.
+
 ## What to do with forms after importing
 
 After an import succeeds, you have three valid choices:

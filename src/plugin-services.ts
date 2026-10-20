@@ -4,6 +4,7 @@ import type { FormDiscoveryResult } from './form-discovery.ts';
 import type { EhFormKind } from './forms/form-document.ts';
 import type { LoggerService } from './logger/service.ts';
 import type { ExaminedHumanSettings } from './settings.ts';
+import type { ReadingServices } from './refresh/reading-view.ts';
 
 /**
  * Stable service boundary supplied to views and staging workflows.
@@ -12,7 +13,7 @@ import type { ExaminedHumanSettings } from './settings.ts';
  * lets consumers depend only on application capabilities rather than plugin
  * lifecycle and registration details.
  */
-export interface ExaminedHumanPluginServices {
+export interface ExaminedHumanPluginServices extends ReadingServices {
   readonly app: App;
   settings: ExaminedHumanSettings;
   readonly database: ExaminedHumanDatabase;
@@ -32,7 +33,7 @@ export interface ExaminedHumanPluginServices {
 
 export type DashboardServices = Pick<
   ExaminedHumanPluginServices,
-  'database' | 'logger' | 'refreshViews' | 'saveSettings' | 'settings'
+  'database' | 'logger' | 'refreshViews' | 'saveSettings' | 'settings' | 'watchSourceUpdates'
 >;
 
 export type NoteStagingServices = Pick<
@@ -50,6 +51,7 @@ export type FormWorkflowServices = DashboardServices & Pick<
 export type TimelineServices = DashboardServices & Pick<
   ExaminedHumanPluginServices,
   'syncTodayPlanningFromDailyForm'
+  | 'knownForms'
 >;
 
 export type FinancialDashboardServices = DashboardServices & Pick<

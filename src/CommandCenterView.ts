@@ -1,4 +1,5 @@
-import { ItemView, Modal, moment, Notice, Setting, TFile, WorkspaceLeaf } from 'obsidian';
+import { ReadingView } from './refresh/reading-view.ts';
+import { Modal, moment, Notice, Setting, TFile, WorkspaceLeaf } from 'obsidian';
 import { openEntityEditor, openFoodEditor } from './CommandForms.ts';
 import { chooseUnimportedDailyNote, stageAdminCommands } from './command-staging.ts';
 import { confirmWeeklyAction } from './WeeklyActionConfirmationModal.ts';
@@ -32,7 +33,7 @@ function nutritionAt(food: FoodLibraryRecord, grams: number): Array<[string, str
   ];
 }
 
-export class CommandCenterView extends ItemView {
+export class CommandCenterView extends ReadingView {
   private foods: FoodLibraryRecord[] = [];
   private catalog: CommandCatalog | null = null;
   private finance: FinancialDashboardQueryResult | null = null;
@@ -43,7 +44,7 @@ export class CommandCenterView extends ItemView {
   private activeTab: CommandCenterTab = 'foods';
 
   constructor(leaf: WorkspaceLeaf, private plugin: CommandServices) {
-    super(leaf);
+    super(leaf, plugin);
   }
 
   getViewType(): string { return EXAMINED_HUMAN_COMMAND_CENTER_VIEW_TYPE; }
@@ -51,13 +52,17 @@ export class CommandCenterView extends ItemView {
   getIcon(): string { return 'wrench'; }
 
   async onOpen(): Promise<void> {
+    this.startReadingUpdates();
     this.contentEl.addClass('examined-human-command-center');
     await this.refresh();
   }
 
-  async onClose(): Promise<void> { this.contentEl.empty(); }
+  async onClose(): Promise<void> {
+    this.stopReadingUpdates();
+    this.contentEl.empty();
+  }
 
-  async refresh(): Promise<void> {
+  protected async refreshContent(): Promise<void> {
     this.contentEl.empty();
     this.contentEl.addClass('examined-human-command-center');
     this.contentEl.createDiv({ cls: 'examined-human-loading', text: 'Loading Command Center…' });
@@ -100,7 +105,7 @@ export class CommandCenterView extends ItemView {
     const actions = toolbar.createDiv({ cls: 'examined-human-toolbar-actions' });
     this.renderPrimaryAction(actions);
     actions.createEl('button', { cls: 'examined-human-toolbar-button', text: 'Refresh' })
-      .addEventListener('click', () => { void this.plugin.refreshViews(); void this.refresh(); });
+      .addEventListener('click', () => { void this.plugin.refreshViews(); });
 
     const tabs = this.contentEl.createDiv({ cls: 'examined-human-command-tabs' });
     const tabDefinitions: Array<[CommandCenterTab, string, number | null]> = [

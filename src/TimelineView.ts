@@ -1,4 +1,5 @@
-import { ItemView, moment, normalizePath, Notice, Platform, WorkspaceLeaf } from 'obsidian';
+import { ReadingView } from './refresh/reading-view.ts';
+import { moment, Notice, Platform, WorkspaceLeaf } from 'obsidian';
 import { renderDismissibleWarning } from './dismissible-warning.ts';
 import type { TimelineServices } from './plugin-services.ts';
 import type { CalendarDayState, CalendarEvent } from './events.ts';
@@ -16,18 +17,18 @@ const GUTTER_WIDTH = 68;
 const HEADER_HEIGHT = 58;
 const BASE_PX_PER_MINUTE = 1.15;
 const ZOOM_LEVELS = [0.7, 0.85, 1, 1.25, 1.5, 2];
-const FINGERPRINT_INTERVAL_MS = 10_000;
 
 interface ViewportState {
   centerDate: string;
   scrollMinute: number;
+  dayFraction?: number;
 }
 
 interface RenderOptions {
   viewport?: ViewportState;
 }
 
-export class TimelineView extends ItemView {
+export class TimelineView extends ReadingView {
   private rangeStart = moment().startOf('day').subtract(INITIAL_DAYS_EACH_SIDE, 'days');
   private rangeEnd = moment().startOf('day').add(INITIAL_DAYS_EACH_SIDE, 'days');
   private zoomIndex = 2;
@@ -38,12 +39,10 @@ export class TimelineView extends ItemView {
   private shifting = false;
   private scrollTimer: number | null = null;
   private resizeTimer: number | null = null;
-  private fingerprintTimer: number | null = null;
-  private lastFingerprint: string | null = null;
   private warningNoticeShown = false;
 
   constructor(leaf: WorkspaceLeaf, private plugin: TimelineServices) {
-    super(leaf);
+    super(leaf, plugin);
   }
 
   getViewType(): string {
@@ -58,7 +57,14 @@ export class TimelineView extends ItemView {
     return 'calendar-clock';
   }
 
+  protected sourceNotePath(): string | null {
+    return this.plugin.knownForms().find((form) => form.kind === 'daily' && form.date === moment().format('YYYY-MM-DD'))?.filePath ?? null;
+  }
+
+  protected scrollContext(): string { return `${this.getViewType()}:${this.rangeStart.format('YYYY-MM-DD')}`; }
+
   async onOpen(): Promise<void> {
+    this.startReadingUpdates();
     this.contentEl.addClass('examined-human-view');
     await this.plugin.syncTodayPlanningFromDailyForm();
     await this.renderCalendar({
@@ -67,23 +73,6 @@ export class TimelineView extends ItemView {
         scrollMinute: this.plugin.settings.initialScrollHour * 60,
       },
     });
-
-    this.registerEvent(this.app.vault.on('modify', (file) => {
-      const configuredPath = this.plugin.settings.databasePath;
-      try {
-        if (normalizePath(file.path) === this.plugin.database.normalizeVaultPath(configuredPath)
-          && !this.plugin.logger.isRunning) void this.refresh();
-      } catch {
-        // The visible query error explains an invalid path; unrelated vault changes should remain safe.
-      }
-    }));
-
-    try {
-      this.lastFingerprint = await this.plugin.database.fingerprint(this.plugin.settings.databasePath);
-    } catch {
-      this.lastFingerprint = null;
-    }
-    this.fingerprintTimer = window.setInterval(() => { void this.checkDatabaseFingerprint(); }, FINGERPRINT_INTERVAL_MS);
 
     const viewWindow = this.contentEl.ownerDocument.defaultView;
     if (viewWindow) {
@@ -96,13 +85,13 @@ export class TimelineView extends ItemView {
   }
 
   async onClose(): Promise<void> {
+    this.stopReadingUpdates();
     if (this.scrollTimer != null) window.clearTimeout(this.scrollTimer);
     if (this.resizeTimer != null) window.clearTimeout(this.resizeTimer);
-    if (this.fingerprintTimer != null) window.clearInterval(this.fingerprintTimer);
     this.contentEl.empty();
   }
 
-  async refresh(): Promise<void> {
+  protected async refreshContent(): Promise<void> {
     await this.plugin.syncTodayPlanningFromDailyForm();
     await this.renderCalendar({ viewport: this.captureViewport() });
   }
@@ -160,10 +149,10 @@ export class TimelineView extends ItemView {
     }
 
     window.requestAnimationFrame(() => {
-      if (!this.scrollEl) return;
+      if (generation !== this.renderGeneration || !this.scrollEl) return;
       const centerDate = viewport?.centerDate ?? moment().format('YYYY-MM-DD');
       const centerIndex = moment(centerDate, 'YYYY-MM-DD', true).diff(this.rangeStart, 'days');
-      const desiredLeft = GUTTER_WIDTH + centerIndex * this.dayWidth - (this.scrollEl.clientWidth - this.dayWidth) / 2;
+      const desiredLeft = GUTTER_WIDTH + (centerIndex + (viewport?.dayFraction ?? 0.5)) * this.dayWidth - this.scrollEl.clientWidth / 2;
       this.scrollEl.scrollLeft = Math.max(0, desiredLeft);
       this.scrollEl.scrollTop = Math.max(0, (viewport?.scrollMinute ?? this.plugin.settings.initialScrollHour * 60) * this.pxPerMinute);
       this.shifting = false;
@@ -318,12 +307,13 @@ export class TimelineView extends ItemView {
   }
 
   private captureViewport(): ViewportState | undefined {
-    if (!this.scrollEl) return undefined;
+    if (!this.scrollEl?.isConnected) return undefined;
     const centerPixel = this.scrollEl.scrollLeft + this.scrollEl.clientWidth / 2 - GUTTER_WIDTH;
     const dayIndex = Math.max(0, Math.floor(centerPixel / this.dayWidth));
     return {
       centerDate: this.rangeStart.clone().add(dayIndex, 'days').format('YYYY-MM-DD'),
       scrollMinute: this.scrollEl.scrollTop / this.pxPerMinute,
+      dayFraction: centerPixel / this.dayWidth - dayIndex,
     };
   }
 
@@ -368,13 +358,5 @@ export class TimelineView extends ItemView {
     await this.renderCalendar({ viewport });
   }
 
-  private async checkDatabaseFingerprint(): Promise<void> {
-    try {
-      const fingerprint = await this.plugin.database.fingerprint(this.plugin.settings.databasePath);
-      if (this.lastFingerprint != null && fingerprint !== this.lastFingerprint) await this.refresh();
-      this.lastFingerprint = fingerprint;
-    } catch {
-      // The visible error state or the next successful poll will explain/recover.
-    }
-  }
+
 }

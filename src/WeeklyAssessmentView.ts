@@ -1,4 +1,5 @@
-import { ItemView, moment, normalizePath, Notice, TFile, WorkspaceLeaf } from 'obsidian';
+import { ReadingView } from './refresh/reading-view.ts';
+import { moment, Notice, TFile, WorkspaceLeaf } from 'obsidian';
 import type { FormWorkflowServices } from './plugin-services.ts';
 import { buildDailyNoteList } from './daily-note-index.ts';
 import { pathIsInJournalFolder } from './journal-folder.ts';
@@ -15,9 +16,8 @@ import type { PlanningSyncResult } from './logger/planning.ts';
 import { backupMutationOutput } from './logger/service.ts';
 
 export const EXAMINED_HUMAN_WEEKLY_ASSESSMENT_VIEW_TYPE = 'examined-human-weekly-assessment';
-
-const FINGERPRINT_INTERVAL_MS = 10_000;
 const WEEKLY_NOTE_PATTERN = /^\d{4}-W\d{1,2}\.md$/i;
+
 
 function formatDuration(totalMinutes: number): string {
   const minutes = Math.max(0, Math.round(totalMinutes));
@@ -70,7 +70,7 @@ function planningOutput(result: PlanningSyncResult): string {
   ].join('\n');
 }
 
-export class WeeklyAssessmentView extends ItemView {
+export class WeeklyAssessmentView extends ReadingView {
   private selectedWeekStart: string | null = null;
   private items: WeeklyNoteListItem[] = [];
   private selectedItem: WeeklyNoteListItem | null = null;
@@ -78,12 +78,10 @@ export class WeeklyAssessmentView extends ItemView {
   private financeBriefing: FinancialDashboardQueryResult | null = null;
   private loggerOutput: string | null = null;
   private renderGeneration = 0;
-  private fingerprintTimer: number | null = null;
-  private lastFingerprint: string | null = null;
   private actionButton: HTMLButtonElement | null = null;
 
   constructor(leaf: WorkspaceLeaf, private plugin: FormWorkflowServices) {
-    super(leaf);
+    super(leaf, plugin);
   }
 
   getViewType(): string {
@@ -98,43 +96,32 @@ export class WeeklyAssessmentView extends ItemView {
     return 'chart-column';
   }
 
+  protected scrollContext(): string { return this.selectedWeekStart ?? ''; }
+  protected sourceNotePath(): string | null { return this.selectedItem?.filePath ?? null; }
+
   async onOpen(): Promise<void> {
+    this.startReadingUpdates();
     this.contentEl.addClass('examined-human-weekly-view');
     await this.refresh();
-    this.registerEvent(this.app.vault.on('modify', (file) => {
-      try {
-        const databaseChanged = normalizePath(file.path)
-          === this.plugin.database.normalizeVaultPath(this.plugin.settings.databasePath);
-        const selectedNoteChanged = file.path === this.selectedItem?.filePath;
-        if ((databaseChanged || selectedNoteChanged) && !this.plugin.logger.isRunning) void this.refresh();
-      } catch {
-        // Invalid database paths are explained by the visible query error.
-      }
-    }));
     this.registerEvent(this.app.vault.on('create', (file) => {
-      if (WEEKLY_NOTE_PATTERN.test(file.name)) void this.refresh();
+      if (WEEKLY_NOTE_PATTERN.test(file.name)) this.markDataUpdated('Weekly notes updated');
     }));
     this.registerEvent(this.app.vault.on('delete', (file) => {
-      if (WEEKLY_NOTE_PATTERN.test(file.name)) void this.refresh();
+      if (WEEKLY_NOTE_PATTERN.test(file.name)) this.markDataUpdated('Weekly notes updated');
     }));
     this.registerEvent(this.app.vault.on('rename', (file, oldPath) => {
-      const oldName = oldPath.split('/').pop() ?? '';
-      if (WEEKLY_NOTE_PATTERN.test(file.name) || WEEKLY_NOTE_PATTERN.test(oldName)) void this.refresh();
+      if (WEEKLY_NOTE_PATTERN.test(file.name) || WEEKLY_NOTE_PATTERN.test(oldPath.split('/').pop() ?? '')) {
+        this.markDataUpdated('Weekly notes updated');
+      }
     }));
-    try {
-      this.lastFingerprint = await this.plugin.database.fingerprint(this.plugin.settings.databasePath);
-    } catch {
-      this.lastFingerprint = null;
-    }
-    this.fingerprintTimer = window.setInterval(() => { void this.checkDatabaseFingerprint(); }, FINGERPRINT_INTERVAL_MS);
   }
 
   async onClose(): Promise<void> {
-    if (this.fingerprintTimer != null) window.clearInterval(this.fingerprintTimer);
+    this.stopReadingUpdates();
     this.contentEl.empty();
   }
 
-  async refresh(): Promise<void> {
+  protected async refreshContent(): Promise<void> {
     const generation = ++this.renderGeneration;
     this.contentEl.empty();
     this.contentEl.addClass('examined-human-weekly-view');
@@ -654,14 +641,5 @@ export class WeeklyAssessmentView extends ItemView {
     panel.createEl('code', { text: this.plugin.settings.databasePath || '(no path configured)' });
   }
 
-  private async checkDatabaseFingerprint(): Promise<void> {
-    try {
-      const fingerprint = await this.plugin.database.fingerprint(this.plugin.settings.databasePath);
-      if (this.lastFingerprint != null && fingerprint !== this.lastFingerprint
-        && !this.plugin.logger.isRunning) await this.refresh();
-      this.lastFingerprint = fingerprint;
-    } catch {
-      // The visible error state or next successful poll will explain/recover.
-    }
-  }
+
 }

@@ -1,7 +1,7 @@
-import { ItemView, moment, normalizePath, WorkspaceLeaf } from 'obsidian';
+import { ReadingView } from './refresh/reading-view.ts';
+import { moment, WorkspaceLeaf } from 'obsidian';
 import type { DashboardServices } from './plugin-services.ts';
 
-const FINGERPRINT_INTERVAL_MS = 10_000;
 
 export type DashboardRangeKey = 'days' | 'all';
 
@@ -224,7 +224,7 @@ export function renderDashboardTrend(container: HTMLElement, records: DashboardT
   }
 }
 
-export abstract class DashboardViewBase<T, TServices extends DashboardServices = DashboardServices> extends ItemView {
+export abstract class DashboardViewBase<T, TServices extends DashboardServices = DashboardServices> extends ReadingView {
   protected result: T | null = null;
   protected selectedRange: DashboardRangeKey = 'days';
   protected startDate: string | null = null;
@@ -236,43 +236,29 @@ export abstract class DashboardViewBase<T, TServices extends DashboardServices =
    */
   protected endDateOverride: string | null = null;
   private renderGeneration = 0;
-  private fingerprintTimer: number | null = null;
-  private lastFingerprint: string | null = null;
 
   constructor(leaf: WorkspaceLeaf, protected plugin: TServices) {
-    super(leaf);
+    super(leaf, plugin);
   }
 
   protected abstract dashboardTitle(): string;
   protected abstract loadDashboard(startDate: string | null, endDate: string): Promise<T>;
   protected abstract renderDashboard(result: T): void;
 
+  protected scrollContext(): string { return `${this.selectedRange}:${this.endDateOverride}`; }
+
   async onOpen(): Promise<void> {
+    this.startReadingUpdates();
     this.contentEl.addClass('examined-human-domain-view');
     await this.refresh();
-    this.registerEvent(this.app.vault.on('modify', (file) => {
-      try {
-        const databaseChanged = normalizePath(file.path)
-          === this.plugin.database.normalizeVaultPath(this.plugin.settings.databasePath);
-        if (databaseChanged && !this.plugin.logger.isRunning) void this.refresh();
-      } catch {
-        // The dashboard renders invalid path and database errors in its own view.
-      }
-    }));
-    try {
-      this.lastFingerprint = await this.plugin.database.fingerprint(this.plugin.settings.databasePath);
-    } catch {
-      this.lastFingerprint = null;
-    }
-    this.fingerprintTimer = window.setInterval(() => { void this.checkDatabaseFingerprint(); }, FINGERPRINT_INTERVAL_MS);
   }
 
   async onClose(): Promise<void> {
-    if (this.fingerprintTimer != null) window.clearInterval(this.fingerprintTimer);
+    this.stopReadingUpdates();
     this.contentEl.empty();
   }
 
-  async refresh(): Promise<void> {
+  protected async refreshContent(): Promise<void> {
     const generation = ++this.renderGeneration;
     this.endDate = this.endDateOverride ?? moment().format('YYYY-MM-DD');
     this.startDate = dashboardRangeStart(this.selectedRange, this.endDate, this.plugin.settings.defaultDashboardDays);
@@ -348,17 +334,5 @@ export abstract class DashboardViewBase<T, TServices extends DashboardServices =
     return `${formatDashboardDate(this.startDate)} – ${formatDashboardDate(this.endDate)}`;
   }
 
-  private async checkDatabaseFingerprint(): Promise<void> {
-    try {
-      const fingerprint = await this.plugin.database.fingerprint(this.plugin.settings.databasePath);
-      if (this.lastFingerprint !== null && fingerprint !== this.lastFingerprint && !this.plugin.logger.isRunning) {
-        this.lastFingerprint = fingerprint;
-        await this.refresh();
-      } else {
-        this.lastFingerprint = fingerprint;
-      }
-    } catch {
-      // A transient replacement or unavailable path can recover on the next poll.
-    }
-  }
+
 }

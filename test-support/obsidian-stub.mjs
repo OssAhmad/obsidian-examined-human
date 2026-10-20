@@ -23,11 +23,26 @@ export class Plugin {
   constructor(app) { this.app = app; }
 }
 export class ItemView extends Plugin {
-  constructor(leaf) { super(leaf.app); this.contentEl = new TestElement(); }
+  constructor(leaf) { super(leaf.app); this.containerEl = new TestElement(); this.contentEl = this.containerEl.createDiv(); }
 }
 export class WorkspaceLeaf {}
 export class PluginSettingTab {}
 export class Setting {}
 export const Platform = { isDesktopApp: true };
-export function moment(value) { return { format: () => value ?? '2026-08-22' }; }
+export function moment(value) {
+  const date = new Date(`${value ?? '2026-08-22'}T00:00:00Z`);
+  const result = {
+    format: () => date.toISOString().slice(0, 10),
+    clone: () => moment(result.format()),
+    startOf: () => result,
+    add: (amount) => { date.setUTCDate(date.getUTCDate() + amount); return result; },
+    subtract: (amount) => result.add(-amount),
+    diff: (other) => Math.round((date - new Date(`${other.format()}T00:00:00Z`)) / 86400000),
+    isSameOrBefore: (other) => result.diff(other) <= 0,
+    isValid: () => Number.isFinite(date.getTime()),
+    year: () => date.getUTCFullYear(),
+    month: () => date.getUTCMonth(),
+  };
+  return result;
+}
 export function setIcon() {}

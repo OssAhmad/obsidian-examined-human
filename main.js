@@ -2196,7 +2196,7 @@ __export(main_exports, {
   default: () => ExaminedHumanPlugin
 });
 module.exports = __toCommonJS(main_exports);
-var import_obsidian22 = require("obsidian");
+var import_obsidian23 = require("obsidian");
 
 // src/database-path.ts
 function normalizeVaultDatabasePath(value) {
@@ -4565,6 +4565,12 @@ var ExaminedHumanDatabase = class {
     const walFingerprint = walStats ? `${walStats.size}:${walStats.mtime}` : "none";
     return `${stats.size}:${stats.mtime}:wal:${walFingerprint}`;
   }
+  async contentSignature(databasePath) {
+    const bytes = await this.readBytes(databasePath);
+    const digest = await crypto.subtle.digest("SHA-256", bytes.slice().buffer);
+    const checksum = Array.from(new Uint8Array(digest), (value) => value.toString(16).padStart(2, "0")).join("");
+    return `${this.normalizeVaultPath(databasePath)}:${checksum}`;
+  }
   async readBytes(databasePath) {
     const normalizedPath = this.normalizeVaultPath(databasePath);
     const walStats = await this.app.vault.adapter.stat(`${normalizedPath}-wal`);
@@ -4584,8 +4590,132 @@ var ExaminedHumanDatabase = class {
   }
 };
 
+// src/refresh/reading-view.ts
+var import_obsidian = require("obsidian");
+
+// src/refresh/scroll-state.ts
+function keyedElements(root) {
+  const counts = /* @__PURE__ */ new Map();
+  return [root, ...Array.from(root.querySelectorAll("*"))].map((element) => {
+    var _a, _b;
+    const name = element === root ? "root" : (_a = element.dataset.ehScrollKey) != null ? _a : `${element.tagName}:${element.className}`;
+    const ordinal = (_b = counts.get(name)) != null ? _b : 0;
+    counts.set(name, ordinal + 1);
+    return [`${name}:${ordinal}`, element];
+  });
+}
+function captureScrollState(root) {
+  return keyedElements(root).filter(([, element]) => typeof element.scrollTop === "number" && (element === root || element.scrollTop !== 0 || element.scrollLeft !== 0 || element.scrollHeight > element.clientHeight || element.scrollWidth > element.clientWidth)).map(([key, element]) => ({ key, top: element.scrollTop, left: element.scrollLeft }));
+}
+function restoreScrollState(root, positions) {
+  const elements = new Map(keyedElements(root));
+  for (const position of positions) {
+    const element = elements.get(position.key);
+    if (!element) continue;
+    element.scrollTop = position.top;
+    element.scrollLeft = position.left;
+  }
+}
+
+// src/refresh/reading-view.ts
+var ReadingView = class extends import_obsidian.ItemView {
+  constructor(leaf, readingServices) {
+    super(leaf);
+    this.readingServices = readingServices;
+    this.releaseUpdates = null;
+    this.pendingMessage = null;
+    this.updateVersion = 0;
+    this.renderedContext = null;
+    this.refreshing = null;
+    this.activeContext = "";
+    this.refreshAgain = false;
+    this.noticeEl = null;
+    this.scrollVersion = 0;
+    this.readingClosed = false;
+  }
+  scrollContext() {
+    return this.getViewType();
+  }
+  sourceNotePath() {
+    return null;
+  }
+  startReadingUpdates() {
+    var _a;
+    this.readingClosed = false;
+    (_a = this.releaseUpdates) != null ? _a : this.releaseUpdates = this.readingServices.watchSourceUpdates(
+      (message) => this.markDataUpdated(message),
+      () => this.sourceNotePath()
+    );
+  }
+  stopReadingUpdates() {
+    var _a, _b;
+    this.readingClosed = true;
+    (_a = this.releaseUpdates) == null ? void 0 : _a.call(this);
+    this.releaseUpdates = null;
+    this.scrollVersion++;
+    (_b = this.noticeEl) == null ? void 0 : _b.remove();
+    this.noticeEl = null;
+  }
+  markDataUpdated(message = "Updated data available") {
+    this.pendingMessage = message;
+    this.updateVersion++;
+    this.renderUpdateNotice();
+  }
+  refresh() {
+    if (this.refreshing) {
+      this.refreshAgain || (this.refreshAgain = this.scrollContext() !== this.activeContext);
+      return this.refreshing;
+    }
+    const run = async () => {
+      do {
+        this.refreshAgain = false;
+        this.activeContext = this.scrollContext();
+        const scrollVersion = ++this.scrollVersion;
+        const version = this.updateVersion;
+        const positions = this.renderedContext === this.activeContext ? captureScrollState(this.contentEl) : [];
+        await this.refreshContent();
+        if (this.readingClosed) return;
+        this.renderedContext = this.scrollContext();
+        const renderedContext = this.renderedContext;
+        restoreScrollState(this.contentEl, positions);
+        window.requestAnimationFrame(() => {
+          if (scrollVersion === this.scrollVersion && this.scrollContext() === renderedContext) {
+            restoreScrollState(this.contentEl, positions);
+          }
+        });
+        if (version === this.updateVersion) this.pendingMessage = null;
+        this.renderUpdateNotice();
+      } while (this.refreshAgain && !this.readingClosed);
+    };
+    this.refreshing = run().finally(() => {
+      this.refreshing = null;
+    });
+    return this.refreshing;
+  }
+  renderUpdateNotice() {
+    var _a;
+    this.containerEl.addClass("examined-human-reading-host");
+    if ((_a = this.noticeEl) == null ? void 0 : _a.isConnected) this.noticeEl.remove();
+    this.noticeEl = null;
+    if (!this.pendingMessage) return;
+    const notice = this.containerEl.createDiv({
+      cls: "examined-human-update-notice",
+      attr: { role: "status", "aria-live": "polite" }
+    });
+    notice.createSpan({ text: `${this.pendingMessage}. Your current display is unchanged. ` });
+    const button = notice.createEl("button", { text: "Refresh" });
+    button.addEventListener("click", () => {
+      button.disabled = true;
+      void this.readingServices.refreshViews().finally(() => {
+        button.disabled = false;
+      });
+    });
+    this.noticeEl = notice;
+  }
+};
+
 // src/DailyAssessmentView.ts
-var import_obsidian9 = require("obsidian");
+var import_obsidian10 = require("obsidian");
 
 // src/daily-note-index.ts
 async function buildDailyNoteList(_app, index, todayDate, discoveredForms = []) {
@@ -4630,13 +4760,13 @@ async function buildDailyNoteList(_app, index, todayDate, discoveredForms = []) 
 }
 
 // src/MealImportConfirmationModal.ts
-var import_obsidian = require("obsidian");
+var import_obsidian2 = require("obsidian");
 function confirmMealImport(app, options) {
   return new Promise((resolve) => {
     new MealImportConfirmationModal(app, options, resolve).open();
   });
 }
-var MealImportConfirmationModal = class extends import_obsidian.Modal {
+var MealImportConfirmationModal = class extends import_obsidian2.Modal {
   constructor(app, options, resolveChoice) {
     super(app);
     this.options = options;
@@ -4698,10 +4828,10 @@ var MealImportConfirmationModal = class extends import_obsidian.Modal {
 };
 
 // src/DailyImportConfirmationModal.ts
-var import_obsidian4 = require("obsidian");
+var import_obsidian5 = require("obsidian");
 
 // src/DailyAssessmentReport.ts
-var import_obsidian3 = require("obsidian");
+var import_obsidian4 = require("obsidian");
 
 // src/overlap.ts
 function layoutOverlappingEvents(events) {
@@ -4899,8 +5029,8 @@ function visualEnd(positions, event) {
 }
 
 // src/SessionDetailsModal.ts
-var import_obsidian2 = require("obsidian");
-var SessionDetailsModal = class extends import_obsidian2.Modal {
+var import_obsidian3 = require("obsidian");
+var SessionDetailsModal = class extends import_obsidian3.Modal {
   constructor(app, event) {
     super(app);
     this.event = event;
@@ -5352,7 +5482,7 @@ function renderBlockers(container, report, options) {
   renderMessages(section, "Validation errors", report.errors, "is-error");
   const copy = section.createEl("button", { text: "Copy errors", cls: "examined-human-toolbar-button" });
   copy.addEventListener("click", () => {
-    void navigator.clipboard.writeText(report.errors.join("\n\n")).then(() => new import_obsidian3.Notice("Copied validation errors."));
+    void navigator.clipboard.writeText(report.errors.join("\n\n")).then(() => new import_obsidian4.Notice("Copied validation errors."));
   });
 }
 function renderMetrics(container, metrics) {
@@ -5647,7 +5777,7 @@ function confirmDailyImport(app, options) {
     new DailyImportConfirmationModal(app, options, resolve).open();
   });
 }
-var DailyImportConfirmationModal = class extends import_obsidian4.Modal {
+var DailyImportConfirmationModal = class extends import_obsidian5.Modal {
   constructor(app, options, resolveChoice) {
     super(app);
     this.options = options;
@@ -5718,7 +5848,7 @@ var DailyImportConfirmationModal = class extends import_obsidian4.Modal {
 };
 
 // src/logger/service.ts
-var import_obsidian5 = require("obsidian");
+var import_obsidian6 = require("obsidian");
 
 // migrations/000_create_schema_v1.sql
 var create_schema_v1_default = "-- Empty official Examined Human Data Schema v1.\n-- This file contains structure and canonical taxonomy seeds only; it contains no user data.\n\nPRAGMA foreign_keys = OFF;\nBEGIN IMMEDIATE;\n\nCREATE TABLE schema_migrations (\n    version INTEGER PRIMARY KEY,\n    name TEXT NOT NULL,\n    applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP\n);\n\nCREATE TABLE session_types (\n    id INTEGER PRIMARY KEY,\n    code TEXT NOT NULL COLLATE NOCASE UNIQUE,\n    label TEXT NOT NULL,\n    description TEXT,\n    is_active INTEGER NOT NULL DEFAULT 1 CHECK (is_active IN (0, 1)),\n    sort_order INTEGER NOT NULL DEFAULT 0,\n    CHECK (code <> '' AND code = lower(trim(code)))\n);\n\nCREATE TABLE engagement_types (\n    id INTEGER PRIMARY KEY,\n    code TEXT NOT NULL COLLATE NOCASE UNIQUE,\n    label TEXT NOT NULL,\n    description TEXT,\n    is_active INTEGER NOT NULL DEFAULT 1 CHECK (is_active IN (0, 1)),\n    sort_order INTEGER NOT NULL DEFAULT 0,\n    CHECK (code <> '' AND code = lower(trim(code)))\n);\n\nCREATE TABLE engagement_statuses (\n    id INTEGER PRIMARY KEY,\n    code TEXT NOT NULL COLLATE NOCASE UNIQUE,\n    label TEXT NOT NULL,\n    description TEXT,\n    is_active INTEGER NOT NULL DEFAULT 1 CHECK (is_active IN (0, 1)),\n    sort_order INTEGER NOT NULL DEFAULT 0,\n    CHECK (code <> '' AND code = lower(trim(code)))\n);\n\nCREATE TABLE engagements (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    name TEXT NOT NULL,\n    type_id INTEGER NOT NULL REFERENCES engagement_types(id),\n    status_id INTEGER REFERENCES engagement_statuses(id),\n    start_date DATE,\n    target_date DATE,\n    completion_date DATE,\n    notes TEXT\n);\n\nCREATE TABLE sessions (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    engagement_id INTEGER NOT NULL REFERENCES engagements(id),\n    date DATE NOT NULL,\n    start_time TEXT,\n    end_time TEXT,\n    duration_minutes INTEGER,\n    session_type_id INTEGER REFERENCES session_types(id),\n    notes TEXT\n);\n\nCREATE TABLE note_sources (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    note_date TEXT NOT NULL UNIQUE,\n    file_name TEXT NOT NULL,\n    file_path TEXT NOT NULL UNIQUE,\n    content_checksum TEXT NOT NULL,\n    lifecycle_state TEXT NOT NULL,\n    parse_status TEXT NOT NULL,\n    last_error TEXT,\n    first_seen_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,\n    last_scanned_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,\n    last_import_attempt_at TEXT,\n    finalized_at TEXT\n);\n\nCREATE TABLE planned_sessions (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    source_note_id INTEGER NOT NULL REFERENCES note_sources(id) ON DELETE CASCADE,\n    source_ordinal INTEGER NOT NULL,\n    date TEXT NOT NULL,\n    interval_raw TEXT,\n    start_time TEXT NOT NULL,\n    end_time TEXT NOT NULL,\n    duration_minutes INTEGER NOT NULL,\n    time_is_estimated INTEGER NOT NULL DEFAULT 0,\n    session_type_raw TEXT NOT NULL,\n    resolved_session_type_id INTEGER REFERENCES session_types(id) ON DELETE SET NULL,\n    engagement_raw TEXT NOT NULL,\n    resolved_engagement_id INTEGER REFERENCES engagements(id) ON DELETE SET NULL,\n    notes TEXT,\n    warning_text TEXT,\n    UNIQUE (source_note_id, source_ordinal)\n);\n\nCREATE TABLE daily_metrics (\n    date DATE PRIMARY KEY,\n    mood REAL,\n    energy REAL,\n    stress REAL,\n    weight_kg REAL,\n    sleep_hours REAL,\n    calories INTEGER,\n    protein_g INTEGER,\n    fasted INTEGER DEFAULT 0,\n    dieted INTEGER DEFAULT 0,\n    studied INTEGER DEFAULT 0,\n    worked INTEGER DEFAULT 0,\n    exercised INTEGER DEFAULT 0,\n    notes TEXT\n);\n\nCREATE TABLE imported_notes (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    note_date DATE NOT NULL,\n    file_name TEXT NOT NULL,\n    file_path TEXT NOT NULL,\n    imported_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,\n    checksum TEXT,\n    UNIQUE (file_name)\n);\n\nCREATE TABLE accounts (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    name TEXT NOT NULL,\n    type TEXT,\n    address TEXT,\n    currency TEXT DEFAULT NULL\n);\n\nCREATE TABLE account_aliases (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    account_id INTEGER NOT NULL REFERENCES accounts(id),\n    alias TEXT NOT NULL UNIQUE\n);\n\nCREATE TABLE transactions (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    account_id INTEGER NOT NULL REFERENCES accounts(id),\n    date DATE NOT NULL,\n    amount REAL NOT NULL,\n    category TEXT,\n    description TEXT\n);\n\nCREATE TABLE budget_plans (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    period_start DATE NOT NULL,\n    period_end DATE NOT NULL,\n    source_file_name TEXT NOT NULL,\n    source_file_path TEXT NOT NULL,\n    source_checksum TEXT NOT NULL,\n    imported_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,\n    CHECK (julianday(period_end) - julianday(period_start) >= 3),\n    UNIQUE (period_start, period_end)\n);\n\nCREATE TABLE budget_targets (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    budget_plan_id INTEGER NOT NULL REFERENCES budget_plans(id) ON DELETE CASCADE,\n    source_ordinal INTEGER NOT NULL,\n    currency TEXT NOT NULL CHECK (trim(currency) <> ''),\n    amount REAL NOT NULL CHECK (amount <> 0),\n    engagement_id INTEGER NOT NULL REFERENCES engagements(id),\n    engagement_raw TEXT NOT NULL,\n    UNIQUE (budget_plan_id, source_ordinal)\n);\n\nCREATE TABLE expected_financial_movements (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    budget_plan_id INTEGER NOT NULL REFERENCES budget_plans(id) ON DELETE CASCADE,\n    source_ordinal INTEGER NOT NULL,\n    due_date DATE NOT NULL,\n    currency TEXT NOT NULL CHECK (trim(currency) <> ''),\n    amount REAL NOT NULL CHECK (amount <> 0),\n    account_id INTEGER NOT NULL REFERENCES accounts(id),\n    engagement_id INTEGER NOT NULL REFERENCES engagements(id),\n    engagement_raw TEXT NOT NULL,\n    description TEXT,\n    UNIQUE (budget_plan_id, source_ordinal)\n);\n\nCREATE TABLE valuation_rate_sets (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    rate_date DATE NOT NULL UNIQUE,\n    source_file_name TEXT NOT NULL,\n    source_file_path TEXT NOT NULL,\n    source_checksum TEXT NOT NULL,\n    imported_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP\n);\n\nCREATE TABLE valuation_rates (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    rate_set_id INTEGER NOT NULL REFERENCES valuation_rate_sets(id) ON DELETE CASCADE,\n    source_ordinal INTEGER NOT NULL,\n    unit_key TEXT NOT NULL,\n    unit_label TEXT NOT NULL,\n    value REAL NOT NULL CHECK (value > 0),\n    UNIQUE (rate_set_id, source_ordinal),\n    UNIQUE (rate_set_id, unit_key)\n);\n\nCREATE TABLE engagement_aliases (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    engagement_id INTEGER NOT NULL REFERENCES engagements(id),\n    alias TEXT NOT NULL UNIQUE\n);\n\nCREATE TABLE engagement_milestones (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    engagement_id INTEGER NOT NULL REFERENCES engagements(id),\n    name TEXT NOT NULL,\n    date DATE,\n    notes TEXT,\n    session_id INTEGER NOT NULL REFERENCES sessions(id) ON DELETE RESTRICT\n);\n\nCREATE TABLE engagement_measurements (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    milestone_id INTEGER NOT NULL REFERENCES engagement_milestones(id),\n    metric_name TEXT NOT NULL,\n    metric_value TEXT NOT NULL,\n    measurement_date DATE,\n    notes TEXT\n);\n\nCREATE TABLE exercises (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    name TEXT NOT NULL,\n    category TEXT\n);\n\nCREATE TABLE exercise_aliases (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    exercise_id INTEGER NOT NULL REFERENCES exercises(id),\n    alias TEXT NOT NULL UNIQUE\n);\n\nCREATE TABLE session_exercises (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    session_id INTEGER NOT NULL REFERENCES sessions(id),\n    exercise_id INTEGER NOT NULL REFERENCES exercises(id),\n    order_index INTEGER\n);\n\nCREATE TABLE exercise_sets (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    session_exercise_id INTEGER NOT NULL REFERENCES session_exercises(id),\n    set_number INTEGER,\n    weight REAL,\n    reps INTEGER,\n    distance REAL,\n    duration_minutes REAL,\n    notes TEXT,\n    pain_level REAL,\n    duration_seconds REAL\n);\n\nCREATE TABLE muscles (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    name TEXT NOT NULL UNIQUE,\n    body_region TEXT,\n    notes TEXT\n);\n\nCREATE TABLE exercise_muscles (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    exercise_id INTEGER NOT NULL REFERENCES exercises(id),\n    muscle_id INTEGER NOT NULL REFERENCES muscles(id),\n    role TEXT\n);\n\nCREATE TABLE people (\n    id INTEGER PRIMARY KEY,\n    name TEXT NOT NULL\n);\n\nCREATE TABLE reports (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    person_id INTEGER NOT NULL REFERENCES people(id),\n    report_timestamp TEXT NOT NULL,\n    report_type TEXT NOT NULL,\n    provider TEXT,\n    title TEXT,\n    relative_path TEXT NOT NULL\n);\n\nCREATE TABLE markers (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    name TEXT NOT NULL UNIQUE,\n    unit TEXT,\n    textbook_normal_range TEXT\n);\n\nCREATE TABLE measurements (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    report_id INTEGER NOT NULL REFERENCES reports(id),\n    marker_id INTEGER NOT NULL REFERENCES markers(id),\n    value REAL NOT NULL,\n    notes TEXT,\n    reference_range_at_time TEXT,\n    flag TEXT\n);\n\nCREATE TABLE stoicism_entries (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    date DATE NOT NULL,\n    score REAL,\n    notes TEXT\n);\n\nCREATE TABLE weekly_plans (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    week_start_date DATE NOT NULL UNIQUE,\n    source_file_name TEXT NOT NULL,\n    source_file_path TEXT NOT NULL UNIQUE,\n    source_checksum TEXT NOT NULL,\n    main_outcome TEXT,\n    important_deadline TEXT,\n    constraint_or_risk TEXT,\n    imported_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP\n);\n\nCREATE TABLE weekly_plan_sessions (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    weekly_plan_id INTEGER NOT NULL REFERENCES weekly_plans(id) ON DELETE CASCADE,\n    date DATE NOT NULL,\n    start_time TEXT NOT NULL,\n    end_time TEXT NOT NULL,\n    duration_minutes INTEGER NOT NULL CHECK (duration_minutes > 0),\n    session_type_id INTEGER REFERENCES session_types(id),\n    engagement_id INTEGER REFERENCES engagements(id),\n    original_cell_text TEXT NOT NULL,\n    notes TEXT,\n    source_row INTEGER NOT NULL,\n    source_column_start INTEGER NOT NULL,\n    source_column_end INTEGER NOT NULL,\n    UNIQUE (weekly_plan_id, date, start_time, end_time)\n);\n\nCREATE TABLE weekly_commitments (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    weekly_plan_id INTEGER NOT NULL REFERENCES weekly_plans(id) ON DELETE CASCADE,\n    source_ordinal INTEGER NOT NULL,\n    target_minutes INTEGER NOT NULL CHECK (target_minutes > 0),\n    engagement_id INTEGER NOT NULL REFERENCES engagements(id),\n    engagement_raw TEXT NOT NULL,\n    commitment_text TEXT NOT NULL,\n    UNIQUE (weekly_plan_id, source_ordinal)\n);\n\nCREATE TABLE meal_events (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    day DATE NOT NULL,\n    meal_type TEXT NOT NULL COLLATE NOCASE,\n    is_leisure INTEGER NOT NULL DEFAULT 0 CHECK (is_leisure IN (0, 1)),\n    classification_source TEXT NOT NULL DEFAULT 'default'\n        CHECK (classification_source IN ('default', 'manual', 'meal_limit', 'manual_and_meal_limit')),\n    calorie_limit_kcal REAL CHECK (calorie_limit_kcal IS NULL OR calorie_limit_kcal > 0),\n    notes TEXT,\n    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,\n    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,\n    CHECK (meal_type IN ('breakfast', 'lunch', 'dinner', 'snacks')),\n    UNIQUE (day, meal_type)\n);\n\nCREATE TABLE daily_meals (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    day DATE NOT NULL,\n    food TEXT NOT NULL CHECK (trim(food) <> ''),\n    calories INTEGER,\n    protein_g REAL,\n    meal_event_id INTEGER REFERENCES meal_events(id) ON DELETE CASCADE,\n    item_ordinal INTEGER CHECK (item_ordinal IS NULL OR item_ordinal > 0),\n    food_id INTEGER REFERENCES foods(id) ON DELETE SET NULL,\n    amount_g REAL CHECK (amount_g IS NULL OR amount_g > 0),\n    carbs_g REAL CHECK (carbs_g IS NULL OR carbs_g >= 0),\n    fat_g REAL CHECK (fat_g IS NULL OR fat_g >= 0),\n    salt_g REAL CHECK (salt_g IS NULL OR salt_g >= 0),\n    fiber_g REAL CHECK (fiber_g IS NULL OR fiber_g >= 0),\n    cholesterol_mg REAL CHECK (cholesterol_mg IS NULL OR cholesterol_mg >= 0)\n);\n\nCREATE TABLE foods (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    name TEXT NOT NULL COLLATE NOCASE UNIQUE CHECK (trim(name) <> ''),\n    category TEXT,\n    calories_kcal_per_100g REAL NOT NULL CHECK (calories_kcal_per_100g >= 0),\n    protein_g_per_100g REAL NOT NULL CHECK (protein_g_per_100g >= 0),\n    carbs_g_per_100g REAL NOT NULL CHECK (carbs_g_per_100g >= 0),\n    fat_g_per_100g REAL NOT NULL CHECK (fat_g_per_100g >= 0),\n    salt_g_per_100g REAL NOT NULL CHECK (salt_g_per_100g >= 0),\n    fiber_g_per_100g REAL CHECK (fiber_g_per_100g IS NULL OR fiber_g_per_100g >= 0),\n    cholesterol_mg_per_100g REAL CHECK (cholesterol_mg_per_100g IS NULL OR cholesterol_mg_per_100g >= 0),\n    notes TEXT,\n    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,\n    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP\n);\n\nCREATE TABLE food_aliases (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    food_id INTEGER NOT NULL REFERENCES foods(id) ON DELETE CASCADE,\n    alias TEXT NOT NULL COLLATE NOCASE UNIQUE CHECK (trim(alias) <> '')\n);\n\nCREATE TABLE daily_meal_assessments (\n    day DATE PRIMARY KEY,\n    daily_calorie_limit_kcal REAL NOT NULL CHECK (daily_calorie_limit_kcal >= 0),\n    minimum_protein_g REAL NOT NULL DEFAULT 0 CHECK (minimum_protein_g >= 0),\n    daily_calories_kcal REAL CHECK (daily_calories_kcal IS NULL OR daily_calories_kcal >= 0),\n    daily_metrics_calories_kcal REAL CHECK (daily_metrics_calories_kcal IS NULL OR daily_metrics_calories_kcal >= 0),\n    meal_items_calories_kcal REAL NOT NULL DEFAULT 0 CHECK (meal_items_calories_kcal >= 0),\n    daily_calorie_source TEXT NOT NULL DEFAULT 'missing'\n        CHECK (daily_calorie_source IN ('daily_metrics', 'meal_items', 'higher_of_both', 'missing')),\n    protein_g REAL CHECK (protein_g IS NULL OR protein_g >= 0),\n    recorded_dieted INTEGER CHECK (recorded_dieted IS NULL OR recorded_dieted IN (0, 1)),\n    evaluated_dieted INTEGER CHECK (evaluated_dieted IS NULL OR evaluated_dieted IN (0, 1)),\n    evaluated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP\n);\n\nCREATE TABLE note_import_components (\n    note_date DATE NOT NULL,\n    component TEXT NOT NULL CHECK (trim(component) <> ''),\n    lifecycle_state TEXT NOT NULL CHECK (lifecycle_state IN ('ephemeral', 'finalized')),\n    source_file_path TEXT NOT NULL CHECK (trim(source_file_path) <> ''),\n    source_checksum TEXT NOT NULL CHECK (trim(source_checksum) <> ''),\n    plugin_version TEXT NOT NULL CHECK (trim(plugin_version) <> ''),\n    row_count INTEGER NOT NULL DEFAULT 0 CHECK (row_count >= 0),\n    imported_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,\n    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,\n    PRIMARY KEY (note_date, component)\n);\n\nCREATE UNIQUE INDEX uq_accounts_name_nocase ON accounts(name COLLATE NOCASE);\nCREATE UNIQUE INDEX uq_account_aliases_alias_nocase ON account_aliases(alias COLLATE NOCASE);\nCREATE UNIQUE INDEX uq_engagements_name_nocase ON engagements(name COLLATE NOCASE);\nCREATE UNIQUE INDEX uq_engagement_aliases_alias_nocase ON engagement_aliases(alias COLLATE NOCASE);\nCREATE UNIQUE INDEX uq_exercise_aliases_alias_nocase ON exercise_aliases(alias COLLATE NOCASE);\nCREATE UNIQUE INDEX uq_muscles_name_nocase ON muscles(name COLLATE NOCASE);\nCREATE INDEX idx_sessions_date ON sessions(date);\nCREATE INDEX idx_sessions_engagement ON sessions(engagement_id);\nCREATE INDEX idx_sessions_type ON sessions(session_type_id);\nCREATE INDEX idx_engagements_type ON engagements(type_id);\nCREATE INDEX idx_engagements_status ON engagements(status_id);\nCREATE INDEX idx_note_sources_date ON note_sources(note_date);\nCREATE INDEX idx_note_sources_state ON note_sources(lifecycle_state);\nCREATE INDEX idx_planned_sessions_date ON planned_sessions(date);\nCREATE INDEX idx_planned_sessions_source ON planned_sessions(source_note_id);\nCREATE INDEX idx_planned_sessions_type ON planned_sessions(resolved_session_type_id);\nCREATE INDEX idx_transactions_date ON transactions(date);\nCREATE INDEX idx_budget_plans_period ON budget_plans(period_start, period_end);\nCREATE INDEX idx_budget_targets_plan_currency ON budget_targets(budget_plan_id, currency);\nCREATE INDEX idx_budget_targets_engagement ON budget_targets(engagement_id);\nCREATE INDEX idx_expected_financial_movements_plan_due ON expected_financial_movements(budget_plan_id, due_date);\nCREATE INDEX idx_expected_financial_movements_account ON expected_financial_movements(account_id, due_date);\nCREATE INDEX idx_valuation_rate_sets_date ON valuation_rate_sets(rate_date);\nCREATE INDEX idx_valuation_rates_unit ON valuation_rates(unit_key, rate_set_id);\nCREATE INDEX idx_engagement_milestones_session ON engagement_milestones(session_id);\nCREATE INDEX idx_exercise_sets_session ON exercise_sets(session_exercise_id);\nCREATE INDEX idx_weekly_plan_sessions_plan ON weekly_plan_sessions(weekly_plan_id);\nCREATE INDEX idx_weekly_plan_sessions_date ON weekly_plan_sessions(date);\nCREATE INDEX idx_weekly_plan_sessions_type ON weekly_plan_sessions(session_type_id);\nCREATE INDEX idx_weekly_plan_sessions_engagement ON weekly_plan_sessions(engagement_id);\nCREATE INDEX idx_weekly_commitments_plan ON weekly_commitments(weekly_plan_id);\nCREATE INDEX idx_weekly_commitments_engagement ON weekly_commitments(engagement_id);\nCREATE INDEX idx_meal_events_day ON meal_events(day);\nCREATE INDEX idx_meal_events_type ON meal_events(meal_type);\nCREATE INDEX idx_daily_meals_day ON daily_meals(day);\nCREATE INDEX idx_daily_meals_meal_event ON daily_meals(meal_event_id, item_ordinal);\nCREATE INDEX idx_daily_meals_food ON daily_meals(food_id, day);\nCREATE INDEX idx_food_aliases_food ON food_aliases(food_id);\nCREATE INDEX idx_note_import_components_state ON note_import_components(lifecycle_state, note_date);\n\nCREATE TRIGGER sessions_require_active_type_insert\nBEFORE INSERT ON sessions\nWHEN NEW.session_type_id IS NOT NULL\n AND NOT EXISTS (SELECT 1 FROM session_types WHERE id = NEW.session_type_id AND is_active = 1)\nBEGIN SELECT RAISE(ABORT, 'unknown or inactive session type'); END;\n\nCREATE TRIGGER sessions_require_active_type_update\nBEFORE UPDATE OF session_type_id ON sessions\nWHEN NEW.session_type_id IS NOT NULL\n AND NOT EXISTS (SELECT 1 FROM session_types WHERE id = NEW.session_type_id AND is_active = 1)\nBEGIN SELECT RAISE(ABORT, 'unknown or inactive session type'); END;\n\nCREATE TRIGGER engagements_require_active_type_insert\nBEFORE INSERT ON engagements\nWHEN NOT EXISTS (SELECT 1 FROM engagement_types WHERE id = NEW.type_id AND is_active = 1)\nBEGIN SELECT RAISE(ABORT, 'unknown or inactive engagement type'); END;\n\nCREATE TRIGGER engagements_require_active_type_update\nBEFORE UPDATE OF type_id ON engagements\nWHEN NOT EXISTS (SELECT 1 FROM engagement_types WHERE id = NEW.type_id AND is_active = 1)\nBEGIN SELECT RAISE(ABORT, 'unknown or inactive engagement type'); END;\n\nCREATE TRIGGER engagements_require_active_status_insert\nBEFORE INSERT ON engagements\nWHEN NEW.status_id IS NOT NULL\n AND NOT EXISTS (SELECT 1 FROM engagement_statuses WHERE id = NEW.status_id AND is_active = 1)\nBEGIN SELECT RAISE(ABORT, 'unknown or inactive engagement status'); END;\n\nCREATE TRIGGER engagements_require_active_status_update\nBEFORE UPDATE OF status_id ON engagements\nWHEN NEW.status_id IS NOT NULL\n AND NOT EXISTS (SELECT 1 FROM engagement_statuses WHERE id = NEW.status_id AND is_active = 1)\nBEGIN SELECT RAISE(ABORT, 'unknown or inactive engagement status'); END;\n\nCREATE TRIGGER daily_meals_meal_event_day_insert\nBEFORE INSERT ON daily_meals\nWHEN NEW.meal_event_id IS NOT NULL\n AND NOT EXISTS (SELECT 1 FROM meal_events WHERE id = NEW.meal_event_id AND day = NEW.day)\nBEGIN SELECT RAISE(ABORT, 'daily_meals.day must match its meal event day'); END;\n\nCREATE TRIGGER daily_meals_meal_event_day_update\nBEFORE UPDATE OF meal_event_id, day ON daily_meals\nWHEN NEW.meal_event_id IS NOT NULL\n AND NOT EXISTS (SELECT 1 FROM meal_events WHERE id = NEW.meal_event_id AND day = NEW.day)\nBEGIN SELECT RAISE(ABORT, 'daily_meals.day must match its meal event day'); END;\n\nCREATE TRIGGER trg_exercises_name_nocase_insert\nBEFORE INSERT ON exercises\nWHEN EXISTS (SELECT 1 FROM exercises WHERE name = NEW.name COLLATE NOCASE)\nBEGIN SELECT RAISE(ABORT, 'exercise name already exists (case-insensitive)'); END;\n\nCREATE TRIGGER trg_exercises_name_nocase_update\nBEFORE UPDATE OF name ON exercises\nWHEN EXISTS (SELECT 1 FROM exercises WHERE id <> OLD.id AND name = NEW.name COLLATE NOCASE)\nBEGIN SELECT RAISE(ABORT, 'exercise name already exists (case-insensitive)'); END;\n\nCREATE VIEW meal_event_totals AS\nSELECT\n    me.id AS meal_event_id,\n    me.day,\n    me.meal_type,\n    me.is_leisure AS recorded_is_leisure,\n    me.classification_source,\n    me.calorie_limit_kcal,\n    COUNT(dm.id) AS item_count,\n    COALESCE(SUM(dm.calories), 0) AS total_calories_kcal,\n    COALESCE(SUM(dm.protein_g), 0.0) AS total_protein_g,\n    SUM(CASE WHEN dm.id IS NOT NULL AND dm.calories IS NULL THEN 1 ELSE 0 END) AS items_missing_calories,\n    CASE\n        WHEN me.meal_type = 'snacks' THEN 0\n        WHEN me.is_leisure = 1 THEN 1\n        WHEN me.calorie_limit_kcal IS NOT NULL\n         AND COALESCE(SUM(dm.calories), 0) > me.calorie_limit_kcal THEN 1\n        ELSE 0\n    END AS evaluated_is_leisure\nFROM meal_events AS me\nLEFT JOIN daily_meals AS dm ON dm.meal_event_id = me.id\nGROUP BY me.id, me.day, me.meal_type, me.is_leisure, me.classification_source, me.calorie_limit_kcal;\n\nCREATE VIEW daily_leisure_meal_summary AS\nWITH evaluated_days AS (\n    SELECT\n        dma.day,\n        dma.daily_calorie_limit_kcal,\n        dma.daily_calories_kcal,\n        COALESCE(SUM(CASE\n            WHEN met.meal_type IN ('breakfast', 'lunch', 'dinner') THEN met.evaluated_is_leisure\n            ELSE 0\n        END), 0) AS direct_leisure_meals\n    FROM daily_meal_assessments AS dma\n    LEFT JOIN meal_event_totals AS met ON met.day = dma.day\n    GROUP BY dma.day, dma.daily_calorie_limit_kcal, dma.daily_calories_kcal\n)\nSELECT\n    day,\n    3 AS counted_meals,\n    direct_leisure_meals,\n    daily_calories_kcal,\n    daily_calorie_limit_kcal,\n    CASE\n        WHEN daily_calories_kcal IS NOT NULL\n         AND daily_calories_kcal > daily_calorie_limit_kcal\n         AND daily_calorie_limit_kcal > 0 THEN 1\n        ELSE 0\n    END AS daily_limit_exceeded,\n    CASE\n        WHEN daily_calories_kcal IS NOT NULL\n         AND daily_calories_kcal > daily_calorie_limit_kcal\n         AND daily_calorie_limit_kcal > 0\n         AND direct_leisure_meals < 2 THEN 2\n        ELSE direct_leisure_meals\n    END AS leisure_meals\nFROM evaluated_days;\n\nINSERT INTO session_types (code, label, description, sort_order) VALUES\n('authorship', 'Authorship', 'Creating an authored work', 10),\n('chore', 'Chore', 'Routine personal or household work', 20),\n('exercise', 'Exercise', 'Physical training', 30),\n('leisure', 'Leisure', 'Recreation and unstructured leisure', 40),\n('maintenance', 'Maintenance', 'Maintaining systems, spaces, or obligations', 50),\n('meditation', 'Meditation', 'Meditation or contemplative practice', 60),\n('reading', 'Reading', 'Reading not classified as study or research', 70),\n('research', 'Research', 'Exploratory search and evidence gathering', 80),\n('social', 'Social', 'Social and relationship time', 90),\n('study', 'Study', 'Structured learning toward mastery', 100),\n('thinking', 'Thinking', 'Deliberate reflection or problem framing', 110),\n('work', 'Work', 'Professional execution', 120),\n('writing', 'Writing', 'Writing not classified as authorship', 130);\n\nINSERT INTO engagement_types (code, label, sort_order) VALUES\n('article', 'Article', 10), ('authorship', 'Authorship', 20), ('book', 'Book', 30),\n('career', 'Career', 40), ('certification', 'Certification', 50), ('course', 'Course', 60),\n('exam', 'Exam', 70), ('fitness', 'Fitness', 80), ('leisure', 'Leisure', 90),\n('maintenance', 'Maintenance', 100), ('practice', 'Practice', 110),\n('relationship', 'Relationship', 120), ('speech', 'Speech', 130), ('startup', 'Startup', 140);\n\nINSERT INTO engagement_statuses (code, label, sort_order) VALUES\n('planned', 'Planned', 10), ('pending', 'Pending', 20), ('active', 'Active', 30),\n('paused', 'Paused', 40), ('completed', 'Completed', 50), ('abandoned', 'Abandoned', 60);\n\nINSERT INTO schema_migrations (version, name) VALUES\n(1, 'official schema v1: food, finance, valuation, mutable budgets, and optional session types');\n\nPRAGMA user_version = 1;\nCOMMIT;\nPRAGMA foreign_keys = ON;\n";
@@ -9542,7 +9672,7 @@ var LoggerService = class {
   }
   requireFile(path, label) {
     const file = this.app.vault.getAbstractFileByPath(path);
-    if (!(file instanceof import_obsidian5.TFile)) throw new Error(`${label} was not found inside the vault: ${path}`);
+    if (!(file instanceof import_obsidian6.TFile)) throw new Error(`${label} was not found inside the vault: ${path}`);
     return file;
   }
   async createBackup(databasePath, bytes, label = "meals") {
@@ -9551,9 +9681,9 @@ var LoggerService = class {
     const dot = fileName.lastIndexOf(".");
     const stem = dot > 0 ? fileName.slice(0, dot) : fileName;
     const extension = dot > 0 ? fileName.slice(dot) : ".db";
-    const backupDirectory = (0, import_obsidian5.normalizePath)(backupDirectoryForDatabase(databasePath));
+    const backupDirectory = (0, import_obsidian6.normalizePath)(backupDirectoryForDatabase(databasePath));
     await this.ensureFolder(backupDirectory);
-    const backupPath = (0, import_obsidian5.normalizePath)(
+    const backupPath = (0, import_obsidian6.normalizePath)(
       `${backupDirectory}/${stem}.before-${label}-${backupTimestamp()}${extension}`
     );
     if (await this.app.vault.adapter.exists(backupPath)) {
@@ -9568,7 +9698,7 @@ var LoggerService = class {
     if (limit === 0) return { backupsPruned: 0, backupRetentionWarning: null };
     let backupsPruned = 0;
     try {
-      const backupDirectory = (0, import_obsidian5.normalizePath)(backupDirectoryForDatabase(databasePath));
+      const backupDirectory = (0, import_obsidian6.normalizePath)(backupDirectoryForDatabase(databasePath));
       const listing = await this.app.vault.adapter.list(backupDirectory);
       const removals = pluginBackupRetentionPlan(databasePath, listing.files, limit, protectedPath);
       for (const path of removals) {
@@ -9591,7 +9721,7 @@ var LoggerService = class {
       indexedType: (candidate) => {
         const existing = this.app.vault.getAbstractFileByPath(candidate);
         if (!existing) return null;
-        return existing instanceof import_obsidian5.TFolder ? "folder" : "file";
+        return existing instanceof import_obsidian6.TFolder ? "folder" : "file";
       },
       persistedType: async (candidate) => {
         var _a;
@@ -9622,20 +9752,20 @@ var LoggerService = class {
 };
 
 // src/CommandForms.ts
-var import_obsidian8 = require("obsidian");
+var import_obsidian9 = require("obsidian");
 
 // src/command-staging.ts
-var import_obsidian7 = require("obsidian");
+var import_obsidian8 = require("obsidian");
 
 // src/AdminEventStageModal.ts
-var import_obsidian6 = require("obsidian");
+var import_obsidian7 = require("obsidian");
 function chooseAdminEventStageTarget(app, targets) {
   return new Promise((resolve) => new AdminEventStageTargetModal(app, targets, resolve).open());
 }
 function confirmAdminEventStage(app, preview) {
   return new Promise((resolve) => new AdminEventStageConfirmationModal(app, preview, resolve).open());
 }
-var AdminEventStageTargetModal = class extends import_obsidian6.Modal {
+var AdminEventStageTargetModal = class extends import_obsidian7.Modal {
   constructor(app, targets, resolve) {
     super(app);
     this.targets = targets;
@@ -9671,7 +9801,7 @@ var AdminEventStageTargetModal = class extends import_obsidian6.Modal {
     this.contentEl.empty();
   }
 };
-var AdminEventStageConfirmationModal = class extends import_obsidian6.Modal {
+var AdminEventStageConfirmationModal = class extends import_obsidian7.Modal {
   constructor(app, preview, resolve) {
     super(app);
     this.preview = preview;
@@ -9706,7 +9836,7 @@ var AdminEventStageConfirmationModal = class extends import_obsidian6.Modal {
 // src/command-staging.ts
 async function chooseUnimportedDailyNote(plugin, preferredTarget) {
   if (preferredTarget && preferredTarget.status !== "imported") return preferredTarget;
-  const today = (0, import_obsidian7.moment)().format("YYYY-MM-DD");
+  const today = (0, import_obsidian8.moment)().format("YYYY-MM-DD");
   const index = await plugin.database.dailyNoteIndex(plugin.settings.databasePath);
   const candidates = (await buildDailyNoteList(
     plugin.app,
@@ -9715,7 +9845,7 @@ async function chooseUnimportedDailyNote(plugin, preferredTarget) {
     plugin.knownForms()
   )).filter((item) => item.status !== "imported");
   if (candidates.length === 0) {
-    new import_obsidian7.Notice("There are no unimported EH Daily Notes available to receive this command.");
+    new import_obsidian8.Notice("There are no unimported EH Daily Notes available to receive this command.");
     return null;
   }
   if (candidates.length === 1) return candidates[0];
@@ -9727,7 +9857,7 @@ async function stageAdminCommands(options) {
   const target = await chooseUnimportedDailyNote(options.plugin, options.preferredTarget);
   if (!target) return null;
   const file = options.plugin.app.vault.getAbstractFileByPath(target.filePath);
-  if (!(file instanceof import_obsidian7.TFile)) throw new Error(`Daily Note not found: ${target.filePath}`);
+  if (!(file instanceof import_obsidian8.TFile)) throw new Error(`Daily Note not found: ${target.filePath}`);
   const preview = await options.plugin.logger.previewAdminEventStage({
     noteDate: target.date,
     fileName: target.fileName,
@@ -9737,7 +9867,7 @@ async function stageAdminCommands(options) {
   });
   if (!await confirmAdminEventStage(options.plugin.app, preview)) return null;
   await options.plugin.logger.stageAdminEvent(preview);
-  new import_obsidian7.Notice(`${commands.length === 1 ? "Command staged" : `${commands.length} commands staged`} in ${target.fileName}.`, 8e3);
+  new import_obsidian8.Notice(`${commands.length === 1 ? "Command staged" : `${commands.length} commands staged`} in ${target.fileName}.`, 8e3);
   return target;
 }
 
@@ -9774,7 +9904,7 @@ function collectionFor(catalog, kind) {
 function openReferenceRepair(app, options) {
   new ReferenceRepairModal(app, options).open();
 }
-var ReferenceRepairModal = class extends import_obsidian8.Modal {
+var ReferenceRepairModal = class extends import_obsidian9.Modal {
   constructor(app, options) {
     var _a, _b, _c, _d;
     super(app);
@@ -9835,23 +9965,23 @@ var ReferenceRepairModal = class extends import_obsidian8.Modal {
     });
   }
   renderCreateFields(kindLabel) {
-    new import_obsidian8.Setting(this.contentEl).setName(`Canonical ${kindLabel} name`).setDesc("This is the name EH stores as the source of truth.").addText((text) => text.setValue(this.canonicalName).onChange((value) => {
+    new import_obsidian9.Setting(this.contentEl).setName(`Canonical ${kindLabel} name`).setDesc("This is the name EH stores as the source of truth.").addText((text) => text.setValue(this.canonicalName).onChange((value) => {
       this.canonicalName = value;
     }));
-    new import_obsidian8.Setting(this.contentEl).setName(`Also keep \u201C${this.options.reference.rawName}\u201D as an alias`).setDesc("Recommended when today\u2019s wording differs from the canonical name.").addToggle((toggle) => toggle.setValue(this.includeRawAlias).onChange((value) => {
+    new import_obsidian9.Setting(this.contentEl).setName(`Also keep \u201C${this.options.reference.rawName}\u201D as an alias`).setDesc("Recommended when today\u2019s wording differs from the canonical name.").addToggle((toggle) => toggle.setValue(this.includeRawAlias).onChange((value) => {
       this.includeRawAlias = value;
     }));
     if (this.options.reference.kind === "food") this.renderFoodFields();
     if (this.options.reference.kind === "engagement") this.renderEngagementFields();
     if (this.options.reference.kind === "exercise") {
-      new import_obsidian8.Setting(this.contentEl).setName("Category (optional)").addText((text) => text.setValue(this.category).onChange((value) => {
+      new import_obsidian9.Setting(this.contentEl).setName("Category (optional)").addText((text) => text.setValue(this.category).onChange((value) => {
         this.category = value;
       }));
     }
     if (this.options.reference.kind === "account") this.renderAccountFields();
   }
   renderFoodFields() {
-    new import_obsidian8.Setting(this.contentEl).setName("Food category (optional)").addText((text) => text.setValue(this.category).onChange((value) => {
+    new import_obsidian9.Setting(this.contentEl).setName("Food category (optional)").addText((text) => text.setValue(this.category).onChange((value) => {
       this.category = value;
     }));
     const fields2 = [
@@ -9864,7 +9994,7 @@ var ReferenceRepairModal = class extends import_obsidian8.Modal {
       ["cholesterol", "Cholesterol per 100 g", false, "mg, optional"]
     ];
     for (const [key, name, , description] of fields2) {
-      new import_obsidian8.Setting(this.contentEl).setName(name).setDesc(description).addText((text) => {
+      new import_obsidian9.Setting(this.contentEl).setName(name).setDesc(description).addText((text) => {
         text.inputEl.type = "number";
         text.inputEl.min = "0";
         text.inputEl.step = "any";
@@ -9873,32 +10003,32 @@ var ReferenceRepairModal = class extends import_obsidian8.Modal {
         });
       });
     }
-    new import_obsidian8.Setting(this.contentEl).setName("Notes (optional)").addTextArea((text) => text.setValue(this.notes).onChange((value) => {
+    new import_obsidian9.Setting(this.contentEl).setName("Notes (optional)").addTextArea((text) => text.setValue(this.notes).onChange((value) => {
       this.notes = value;
     }));
   }
   renderEngagementFields() {
-    new import_obsidian8.Setting(this.contentEl).setName("Engagement type").addDropdown((dropdown) => {
+    new import_obsidian9.Setting(this.contentEl).setName("Engagement type").addDropdown((dropdown) => {
       for (const value of this.options.catalog.engagementTypes) dropdown.addOption(value, value);
       return dropdown.setValue(this.engagementType).onChange((value) => {
         this.engagementType = value;
       });
     });
-    new import_obsidian8.Setting(this.contentEl).setName("Initial status").addDropdown((dropdown) => {
+    new import_obsidian9.Setting(this.contentEl).setName("Initial status").addDropdown((dropdown) => {
       for (const value of this.options.catalog.engagementStatuses) dropdown.addOption(value, value);
       return dropdown.setValue(this.engagementStatus).onChange((value) => {
         this.engagementStatus = value;
       });
     });
-    new import_obsidian8.Setting(this.contentEl).setName("Notes (optional)").addTextArea((text) => text.setValue(this.notes).onChange((value) => {
+    new import_obsidian9.Setting(this.contentEl).setName("Notes (optional)").addTextArea((text) => text.setValue(this.notes).onChange((value) => {
       this.notes = value;
     }));
   }
   renderAccountFields() {
-    new import_obsidian8.Setting(this.contentEl).setName("Account type (optional)").addText((text) => text.setValue(this.accountType).onChange((value) => {
+    new import_obsidian9.Setting(this.contentEl).setName("Account type (optional)").addText((text) => text.setValue(this.accountType).onChange((value) => {
       this.accountType = value;
     }));
-    new import_obsidian8.Setting(this.contentEl).setName("Currency (optional)").addText((text) => text.setValue(this.currency).onChange((value) => {
+    new import_obsidian9.Setting(this.contentEl).setName("Currency (optional)").addText((text) => text.setValue(this.currency).onChange((value) => {
       this.currency = value;
     }));
   }
@@ -9911,7 +10041,7 @@ var ReferenceRepairModal = class extends import_obsidian8.Modal {
       });
       return;
     }
-    new import_obsidian8.Setting(this.contentEl).setName(`Existing ${kindLabel}`).setDesc(`EH will stage \u201C${this.options.reference.rawName}\u201D as an alias of the selected canonical record.`).addDropdown((dropdown) => {
+    new import_obsidian9.Setting(this.contentEl).setName(`Existing ${kindLabel}`).setDesc(`EH will stage \u201C${this.options.reference.rawName}\u201D as an alias of the selected canonical record.`).addDropdown((dropdown) => {
       for (const choice of choices) dropdown.addOption(choice.name, choice.name);
       return dropdown.setValue(this.selectedExistingName).onChange((value) => {
         this.selectedExistingName = value;
@@ -9968,7 +10098,7 @@ var ReferenceRepairModal = class extends import_obsidian8.Modal {
       this.close();
       await this.options.onStaged();
     } catch (error) {
-      new import_obsidian8.Notice(error instanceof Error ? error.message : String(error), 1e4);
+      new import_obsidian9.Notice(error instanceof Error ? error.message : String(error), 1e4);
     } finally {
       button.disabled = false;
     }
@@ -9980,7 +10110,7 @@ var ReferenceRepairModal = class extends import_obsidian8.Modal {
 function openFoodEditor(app, options) {
   new FoodEditorModal(app, options).open();
 }
-var FoodEditorModal = class extends import_obsidian8.Modal {
+var FoodEditorModal = class extends import_obsidian9.Modal {
   constructor(app, options) {
     var _a, _b;
     super(app);
@@ -10014,7 +10144,7 @@ var FoodEditorModal = class extends import_obsidian8.Modal {
     this.modalEl.addClass("examined-human-command-modal");
     this.contentEl.createEl("h2", { text: this.food ? `Edit food \u2014 ${this.food.name}` : "Create food" });
     const textField = (name, initial, assign, description) => {
-      new import_obsidian8.Setting(this.contentEl).setName(name).setDesc(description != null ? description : "").addText((text) => text.setValue(initial).onChange(assign));
+      new import_obsidian9.Setting(this.contentEl).setName(name).setDesc(description != null ? description : "").addText((text) => text.setValue(initial).onChange(assign));
     };
     textField("Canonical food name", this.name, (value) => {
       this.name = value;
@@ -10032,7 +10162,7 @@ var FoodEditorModal = class extends import_obsidian8.Modal {
       ["Cholesterol per 100 g", "cholesterol", false, "mg, optional"]
     ];
     for (const [label, key, , description] of numeric) {
-      new import_obsidian8.Setting(this.contentEl).setName(label).setDesc(description).addText((text) => {
+      new import_obsidian9.Setting(this.contentEl).setName(label).setDesc(description).addText((text) => {
         text.inputEl.type = "number";
         text.inputEl.min = "0";
         text.inputEl.step = "any";
@@ -10041,11 +10171,11 @@ var FoodEditorModal = class extends import_obsidian8.Modal {
         });
       });
     }
-    new import_obsidian8.Setting(this.contentEl).setName("Notes (optional)").addTextArea((text) => text.setValue(this.notes).onChange((value) => {
+    new import_obsidian9.Setting(this.contentEl).setName("Notes (optional)").addTextArea((text) => text.setValue(this.notes).onChange((value) => {
       this.notes = value;
     }));
     if (!this.food) {
-      new import_obsidian8.Setting(this.contentEl).setName("Aliases (optional)").setDesc("Comma-separated alternate spellings to store with this new canonical food.").addText((text) => text.setValue(this.aliases).onChange((value) => {
+      new import_obsidian9.Setting(this.contentEl).setName("Aliases (optional)").setDesc("Comma-separated alternate spellings to store with this new canonical food.").addText((text) => text.setValue(this.aliases).onChange((value) => {
         this.aliases = value;
       }));
     }
@@ -10090,7 +10220,7 @@ var FoodEditorModal = class extends import_obsidian8.Modal {
       this.close();
       await this.options.onStaged();
     } catch (error) {
-      new import_obsidian8.Notice(error instanceof Error ? error.message : String(error), 1e4);
+      new import_obsidian9.Notice(error instanceof Error ? error.message : String(error), 1e4);
     } finally {
       button.disabled = false;
     }
@@ -10102,7 +10232,7 @@ var FoodEditorModal = class extends import_obsidian8.Modal {
 function openEntityEditor(app, options) {
   new EntityEditorModal(app, options).open();
 }
-var EntityEditorModal = class extends import_obsidian8.Modal {
+var EntityEditorModal = class extends import_obsidian9.Modal {
   constructor(app, options) {
     var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j;
     super(app);
@@ -10147,13 +10277,13 @@ var EntityEditorModal = class extends import_obsidian8.Modal {
     this.modalEl.addClass("examined-human-command-modal");
     const label = this.options.kind === "engagement" ? "Engagement" : this.options.kind === "exercise" ? "Exercise" : "Account";
     this.contentEl.createEl("h2", { text: this.options.entity ? `Edit ${label}` : `Create ${label}` });
-    new import_obsidian8.Setting(this.contentEl).setName(`Canonical ${label} name`).addText((text) => text.setValue(this.name).onChange((value) => {
+    new import_obsidian9.Setting(this.contentEl).setName(`Canonical ${label} name`).addText((text) => text.setValue(this.name).onChange((value) => {
       this.name = value;
     }));
     if (this.options.kind === "engagement") this.renderEngagement();
     if (this.options.kind === "exercise") this.renderExercise();
     if (this.options.kind === "account") this.renderAccount();
-    new import_obsidian8.Setting(this.contentEl).setName("Aliases (optional)").setDesc("Comma-separated alternate spellings. Existing aliases remain; this adds the listed aliases.").addText((text) => text.setValue(this.aliases).onChange((value) => {
+    new import_obsidian9.Setting(this.contentEl).setName("Aliases (optional)").setDesc("Comma-separated alternate spellings. Existing aliases remain; this adds the listed aliases.").addText((text) => text.setValue(this.aliases).onChange((value) => {
       this.aliases = value;
     }));
     const actions = this.contentEl.createDiv({ cls: "examined-human-modal-actions" });
@@ -10164,13 +10294,13 @@ var EntityEditorModal = class extends import_obsidian8.Modal {
     });
   }
   renderEngagement() {
-    new import_obsidian8.Setting(this.contentEl).setName("Engagement type").addDropdown((dropdown) => {
+    new import_obsidian9.Setting(this.contentEl).setName("Engagement type").addDropdown((dropdown) => {
       for (const value of this.options.catalog.engagementTypes) dropdown.addOption(value, value);
       return dropdown.setValue(this.type).onChange((value) => {
         this.type = value;
       });
     });
-    new import_obsidian8.Setting(this.contentEl).setName("Status").addDropdown((dropdown) => {
+    new import_obsidian9.Setting(this.contentEl).setName("Status").addDropdown((dropdown) => {
       for (const value of this.options.catalog.engagementStatuses) dropdown.addOption(value, value);
       return dropdown.setValue(this.status).onChange((value) => {
         this.status = value;
@@ -10187,28 +10317,28 @@ var EntityEditorModal = class extends import_obsidian8.Modal {
         this.completionDate = next;
       }, this.completionDate]
     ]) {
-      new import_obsidian8.Setting(this.contentEl).setName(name).addText((text) => {
+      new import_obsidian9.Setting(this.contentEl).setName(name).addText((text) => {
         text.inputEl.type = "date";
         return text.setValue(value).onChange(assign);
       });
     }
-    new import_obsidian8.Setting(this.contentEl).setName("Notes (optional)").addTextArea((text) => text.setValue(this.notes).onChange((value) => {
+    new import_obsidian9.Setting(this.contentEl).setName("Notes (optional)").addTextArea((text) => text.setValue(this.notes).onChange((value) => {
       this.notes = value;
     }));
   }
   renderExercise() {
-    new import_obsidian8.Setting(this.contentEl).setName("Category (optional)").addText((text) => text.setValue(this.category).onChange((value) => {
+    new import_obsidian9.Setting(this.contentEl).setName("Category (optional)").addText((text) => text.setValue(this.category).onChange((value) => {
       this.category = value;
     }));
   }
   renderAccount() {
-    new import_obsidian8.Setting(this.contentEl).setName("Account type (optional)").addText((text) => text.setValue(this.type).onChange((value) => {
+    new import_obsidian9.Setting(this.contentEl).setName("Account type (optional)").addText((text) => text.setValue(this.type).onChange((value) => {
       this.type = value;
     }));
-    new import_obsidian8.Setting(this.contentEl).setName("Currency (optional)").addText((text) => text.setValue(this.currency).onChange((value) => {
+    new import_obsidian9.Setting(this.contentEl).setName("Currency (optional)").addText((text) => text.setValue(this.currency).onChange((value) => {
       this.currency = value;
     }));
-    new import_obsidian8.Setting(this.contentEl).setName("Address (optional)").addText((text) => text.setValue(this.address).onChange((value) => {
+    new import_obsidian9.Setting(this.contentEl).setName("Address (optional)").addText((text) => text.setValue(this.address).onChange((value) => {
       this.address = value;
     }));
   }
@@ -10257,7 +10387,7 @@ var EntityEditorModal = class extends import_obsidian8.Modal {
       this.close();
       await this.options.onStaged();
     } catch (error) {
-      new import_obsidian8.Notice(error instanceof Error ? error.message : String(error), 1e4);
+      new import_obsidian9.Notice(error instanceof Error ? error.message : String(error), 1e4);
     } finally {
       button.disabled = false;
     }
@@ -10269,13 +10399,12 @@ var EntityEditorModal = class extends import_obsidian8.Modal {
 
 // src/DailyAssessmentView.ts
 var EXAMINED_HUMAN_DAILY_ASSESSMENT_VIEW_TYPE = "examined-human-daily-assessment";
-var FINGERPRINT_INTERVAL_MS = 1e4;
 function formatDecimal(value) {
   return value.toFixed(2);
 }
-var DailyAssessmentView = class extends import_obsidian9.ItemView {
+var DailyAssessmentView = class extends ReadingView {
   constructor(leaf, plugin) {
-    super(leaf);
+    super(leaf, plugin);
     this.plugin = plugin;
     this.selectedDate = null;
     this.items = [];
@@ -10286,8 +10415,6 @@ var DailyAssessmentView = class extends import_obsidian9.ItemView {
     this.standaloneMealInspection = null;
     this.loggerOutput = null;
     this.renderGeneration = 0;
-    this.fingerprintTimer = null;
-    this.lastFingerprint = null;
     this.actionButton = null;
   }
   getViewType() {
@@ -10299,39 +10426,31 @@ var DailyAssessmentView = class extends import_obsidian9.ItemView {
   getIcon() {
     return "clipboard-check";
   }
+  scrollContext() {
+    var _a;
+    return (_a = this.selectedDate) != null ? _a : "";
+  }
+  sourceNotePath() {
+    var _a, _b;
+    return (_b = (_a = this.selectedItem) == null ? void 0 : _a.filePath) != null ? _b : null;
+  }
   async onOpen() {
+    this.startReadingUpdates();
     this.contentEl.addClass("examined-human-daily-view");
     await this.refresh();
-    this.registerEvent(this.app.vault.on("modify", (file) => {
-      var _a;
-      try {
-        const databaseChanged = (0, import_obsidian9.normalizePath)(file.path) === this.plugin.database.normalizeVaultPath(this.plugin.settings.databasePath);
-        const selectedNoteChanged = file.path === ((_a = this.selectedItem) == null ? void 0 : _a.filePath);
-        if ((databaseChanged || selectedNoteChanged) && !this.plugin.logger.isRunning) void this.refresh();
-      } catch (e) {
-      }
-    }));
-    try {
-      this.lastFingerprint = await this.plugin.database.fingerprint(this.plugin.settings.databasePath);
-    } catch (e) {
-      this.lastFingerprint = null;
-    }
-    this.fingerprintTimer = window.setInterval(() => {
-      void this.checkDatabaseFingerprint();
-    }, FINGERPRINT_INTERVAL_MS);
   }
   async onClose() {
-    if (this.fingerprintTimer != null) window.clearInterval(this.fingerprintTimer);
+    this.stopReadingUpdates();
     this.contentEl.empty();
   }
-  async refresh() {
+  async refreshContent() {
     var _a, _b, _c, _d, _e;
     const generation = ++this.renderGeneration;
     this.contentEl.empty();
     this.contentEl.addClass("examined-human-daily-view");
     this.contentEl.createDiv({ cls: "examined-human-loading", text: "Loading Daily Assessment\u2026" });
     try {
-      const today = (0, import_obsidian9.moment)().format("YYYY-MM-DD");
+      const today = (0, import_obsidian10.moment)().format("YYYY-MM-DD");
       const index = await this.plugin.database.dailyNoteIndex(this.plugin.settings.databasePath);
       const items = await buildDailyNoteList(this.app, index, today, this.plugin.knownForms());
       if (generation !== this.renderGeneration) return;
@@ -10355,7 +10474,7 @@ var DailyAssessmentView = class extends import_obsidian9.ItemView {
       this.standaloneMealInspection = null;
       if (this.selectedItem && this.selectedItem.status !== "imported") {
         const noteFile = this.app.vault.getAbstractFileByPath(this.selectedItem.filePath);
-        if (noteFile instanceof import_obsidian9.TFile) {
+        if (noteFile instanceof import_obsidian10.TFile) {
           const sourceText = await this.app.vault.read(noteFile);
           const thresholds = {
             mealCalorieLimitKcal: this.plugin.settings.mealCalorieLimitKcal,
@@ -10424,7 +10543,7 @@ var DailyAssessmentView = class extends import_obsidian9.ItemView {
     identity.createEl("h2", { text: "Examined Human \u2014 Daily Assessment" });
     identity.createDiv({
       cls: "examined-human-toolbar-status",
-      text: this.selectedItem ? `${(0, import_obsidian9.moment)(this.selectedItem.date, "YYYY-MM-DD").format("ddd, MMM D, YYYY")} \xB7 ${this.statusLabel(this.selectedItem)}` : "Review journal data and safely import historical notes"
+      text: this.selectedItem ? `${(0, import_obsidian10.moment)(this.selectedItem.date, "YYYY-MM-DD").format("ddd, MMM D, YYYY")} \xB7 ${this.statusLabel(this.selectedItem)}` : "Review journal data and safely import historical notes"
     });
     const actions = header.createDiv({ cls: "examined-human-toolbar-actions" });
     this.actionButton = actions.createEl("button", { cls: "examined-human-toolbar-button mod-cta" });
@@ -10478,8 +10597,8 @@ var DailyAssessmentView = class extends import_obsidian9.ItemView {
         ].join(" "),
         attr: { "aria-label": `${item.date}, ${this.statusLabel(item)}` }
       });
-      button.createSpan({ cls: "examined-human-daily-date-primary", text: (0, import_obsidian9.moment)(item.date, "YYYY-MM-DD").format("MMM D, YYYY") });
-      button.createSpan({ cls: "examined-human-daily-date-secondary", text: (0, import_obsidian9.moment)(item.date, "YYYY-MM-DD").format("dddd") });
+      button.createSpan({ cls: "examined-human-daily-date-primary", text: (0, import_obsidian10.moment)(item.date, "YYYY-MM-DD").format("MMM D, YYYY") });
+      button.createSpan({ cls: "examined-human-daily-date-secondary", text: (0, import_obsidian10.moment)(item.date, "YYYY-MM-DD").format("dddd") });
       button.addEventListener("click", () => {
         if (item.date === this.selectedDate) return;
         this.selectedDate = item.date;
@@ -10565,7 +10684,7 @@ var DailyAssessmentView = class extends import_obsidian9.ItemView {
         onStaged: async () => this.refresh()
       });
     } catch (error) {
-      new import_obsidian9.Notice(error instanceof Error ? error.message : String(error), 1e4);
+      new import_obsidian10.Notice(error instanceof Error ? error.message : String(error), 1e4);
     } finally {
       button.disabled = false;
     }
@@ -10689,7 +10808,7 @@ var DailyAssessmentView = class extends import_obsidian9.ItemView {
     const header = block.createDiv({ cls: "examined-human-daily-output-header" });
     header.createEl("strong", { text: label });
     header.createEl("button", { text: "Copy", cls: "examined-human-toolbar-button" }).addEventListener("click", () => {
-      void navigator.clipboard.writeText(output).then(() => new import_obsidian9.Notice("Copied logger output."));
+      void navigator.clipboard.writeText(output).then(() => new import_obsidian10.Notice("Copied logger output."));
     });
     const textarea = block.createEl("textarea", { cls: "examined-human-daily-output", attr: { readonly: "true", rows: "7" } });
     textarea.value = output;
@@ -10699,12 +10818,12 @@ var DailyAssessmentView = class extends import_obsidian9.ItemView {
     const item = this.selectedItem;
     if (!item || item.status === "imported") return;
     if (item.status === "needs-import" && ((_b = (_a = this.assessment) == null ? void 0 : _a.mealImport) == null ? void 0 : _b.lifecycleState) === "finalized") {
-      new import_obsidian9.Notice(`Meals for historical date ${item.date} were already imported.`, 8e3);
+      new import_obsidian10.Notice(`Meals for historical date ${item.date} were already imported.`, 8e3);
       return;
     }
     const noteFile = this.app.vault.getAbstractFileByPath(item.filePath);
-    if (!(noteFile instanceof import_obsidian9.TFile)) {
-      new import_obsidian9.Notice(`Daily Note not found: ${item.filePath}`, 8e3);
+    if (!(noteFile instanceof import_obsidian10.TFile)) {
+      new import_obsidian10.Notice(`Daily Note not found: ${item.filePath}`, 8e3);
       return;
     }
     try {
@@ -10721,7 +10840,7 @@ var DailyAssessmentView = class extends import_obsidian9.ItemView {
       this.mealInspection = inspection;
       if (!inspection.ready) {
         this.renderDashboard();
-        new import_obsidian9.Notice("Meals validation failed. Review the blockers before importing.", 1e4);
+        new import_obsidian10.Notice("Meals validation failed. Review the blockers before importing.", 1e4);
         return;
       }
       const confirmed = await confirmMealImport(this.app, {
@@ -10734,7 +10853,7 @@ var DailyAssessmentView = class extends import_obsidian9.ItemView {
       const result = await this.plugin.logger.importMeals({
         databasePath: this.plugin.settings.databasePath,
         noteDate: item.date,
-        todayDate: (0, import_obsidian9.moment)().format("YYYY-MM-DD"),
+        todayDate: (0, import_obsidian10.moment)().format("YYYY-MM-DD"),
         sourceFilePath: item.filePath,
         sourceText,
         inspection
@@ -10745,14 +10864,14 @@ var DailyAssessmentView = class extends import_obsidian9.ItemView {
         ...backupMutationOutput(result)
       ].join("\n");
       await this.refresh();
-      new import_obsidian9.Notice(
+      new import_obsidian10.Notice(
         `${result.replaced ? "Meals replaced" : "Meals imported"} for ${item.date}. ${result.backupPath ? "Backup created." : "No backup was needed for this ephemeral write."}`,
         8e3
       );
     } catch (error) {
       this.loggerOutput = error instanceof Error ? error.message : String(error);
       this.renderDashboard();
-      new import_obsidian9.Notice("Native Meals import did not complete. No unverified write was kept.", 1e4);
+      new import_obsidian10.Notice("Native Meals import did not complete. No unverified write was kept.", 1e4);
     }
   }
   async handleImport() {
@@ -10760,7 +10879,7 @@ var DailyAssessmentView = class extends import_obsidian9.ItemView {
     const item = this.selectedItem;
     if (!item) return;
     if (item.temporalState === "future") {
-      new import_obsidian9.Notice("Future Daily Forms cannot be imported. Wait until that date.", 1e4);
+      new import_obsidian10.Notice("Future Daily Forms cannot be imported. Wait until that date.", 1e4);
       return;
     }
     (_a = this.actionButton) == null ? void 0 : _a.setText("Validating\u2026");
@@ -10768,13 +10887,13 @@ var DailyAssessmentView = class extends import_obsidian9.ItemView {
     if (activeButton) activeButton.disabled = true;
     try {
       const noteFile = this.app.vault.getAbstractFileByPath(item.filePath);
-      if (!(noteFile instanceof import_obsidian9.TFile)) throw new Error(`Daily Note not found: ${item.filePath}`);
+      if (!(noteFile instanceof import_obsidian10.TFile)) throw new Error(`Daily Note not found: ${item.filePath}`);
       const sourceText = await this.app.vault.read(noteFile);
       const request = {
         databasePath: this.plugin.settings.databasePath,
         replaceExisting: true,
         noteDate: item.date,
-        todayDate: (0, import_obsidian9.moment)().format("YYYY-MM-DD"),
+        todayDate: (0, import_obsidian10.moment)().format("YYYY-MM-DD"),
         fileName: item.fileName,
         filePath: item.filePath,
         sourceText,
@@ -10792,7 +10911,7 @@ var DailyAssessmentView = class extends import_obsidian9.ItemView {
       if (!inspection.ready) {
         this.loggerOutput = inspection.errors.join("\n\n");
         this.renderDashboard();
-        new import_obsidian9.Notice("Failed. Look at the errors in the assessment.", 1e4);
+        new import_obsidian10.Notice("Failed. Look at the errors in the assessment.", 1e4);
         return;
       }
       const confirmed = await confirmDailyImport(this.app, {
@@ -10817,12 +10936,12 @@ var DailyAssessmentView = class extends import_obsidian9.ItemView {
       ].filter(Boolean).join("\n");
       await this.plugin.refreshViews();
       const imported = ((_c = this.selectedItem) == null ? void 0 : _c.status) === "imported";
-      if (imported) new import_obsidian9.Notice(result.replaced ? "Day replaced successfully." : "Imported successfully.", 8e3);
-      else new import_obsidian9.Notice("Failed. Look at the errors in the assessment.", 1e4);
+      if (imported) new import_obsidian10.Notice(result.replaced ? "Day replaced successfully." : "Imported successfully.", 8e3);
+      else new import_obsidian10.Notice("Failed. Look at the errors in the assessment.", 1e4);
     } catch (error) {
       this.loggerOutput = error instanceof Error ? error.message : String(error);
       this.renderDashboard();
-      new import_obsidian9.Notice("EH Logger could not complete the requested action.", 1e4);
+      new import_obsidian10.Notice("EH Logger could not complete the requested action.", 1e4);
     } finally {
       if (activeButton == null ? void 0 : activeButton.isConnected) {
         activeButton.disabled = false;
@@ -10841,29 +10960,19 @@ var DailyAssessmentView = class extends import_obsidian9.ItemView {
     panel.createEl("h3", { text: "Could not open Daily Assessment" });
     panel.createDiv({ text: error instanceof Error ? error.message : String(error) });
   }
-  async checkDatabaseFingerprint() {
-    try {
-      const fingerprint = await this.plugin.database.fingerprint(this.plugin.settings.databasePath);
-      if (this.lastFingerprint != null && fingerprint !== this.lastFingerprint && !this.plugin.logger.isRunning) {
-        await this.refresh();
-      }
-      this.lastFingerprint = fingerprint;
-    } catch (e) {
-    }
-  }
 };
 
 // src/CommandCenterView.ts
-var import_obsidian11 = require("obsidian");
+var import_obsidian12 = require("obsidian");
 
 // src/WeeklyActionConfirmationModal.ts
-var import_obsidian10 = require("obsidian");
+var import_obsidian11 = require("obsidian");
 function confirmWeeklyAction(app, options) {
   return new Promise((resolve) => {
     new WeeklyActionConfirmationModal(app, options, resolve).open();
   });
 }
-var WeeklyActionConfirmationModal = class extends import_obsidian10.Modal {
+var WeeklyActionConfirmationModal = class extends import_obsidian11.Modal {
   constructor(app, options, resolveChoice) {
     super(app);
     this.options = options;
@@ -10923,9 +11032,9 @@ function nutritionAt(food, grams) {
     ["Cholesterol", food.cholesterolMgPer100g == null ? "\u2014" : `${number(food.cholesterolMgPer100g * factor, 0)} mg`]
   ];
 }
-var CommandCenterView = class extends import_obsidian11.ItemView {
+var CommandCenterView = class extends ReadingView {
   constructor(leaf, plugin) {
-    super(leaf);
+    super(leaf, plugin);
     this.plugin = plugin;
     this.foods = [];
     this.catalog = null;
@@ -10946,13 +11055,15 @@ var CommandCenterView = class extends import_obsidian11.ItemView {
     return "wrench";
   }
   async onOpen() {
+    this.startReadingUpdates();
     this.contentEl.addClass("examined-human-command-center");
     await this.refresh();
   }
   async onClose() {
+    this.stopReadingUpdates();
     this.contentEl.empty();
   }
-  async refresh() {
+  async refreshContent() {
     var _a, _b;
     this.contentEl.empty();
     this.contentEl.addClass("examined-human-command-center");
@@ -10968,7 +11079,7 @@ var CommandCenterView = class extends import_obsidian11.ItemView {
         this.finance = await this.plugin.database.financialDashboard(
           this.plugin.settings.databasePath,
           null,
-          (0, import_obsidian11.moment)().format("YYYY-MM-DD"),
+          (0, import_obsidian12.moment)().format("YYYY-MM-DD"),
           { label: this.plugin.settings.valuationUnitLabel, referenceUnit: this.plugin.settings.valuationReferenceUnit }
         );
       } catch (e) {
@@ -10997,7 +11108,6 @@ var CommandCenterView = class extends import_obsidian11.ItemView {
     this.renderPrimaryAction(actions);
     actions.createEl("button", { cls: "examined-human-toolbar-button", text: "Refresh" }).addEventListener("click", () => {
       void this.plugin.refreshViews();
-      void this.refresh();
     });
     const tabs = this.contentEl.createDiv({ cls: "examined-human-command-tabs" });
     const tabDefinitions = [
@@ -11360,11 +11470,11 @@ var CommandCenterView = class extends import_obsidian11.ItemView {
       const staged = await stageAdminCommands({ plugin: this.plugin, commands });
       if (staged) await this.refresh();
     } catch (error) {
-      new import_obsidian11.Notice(error instanceof Error ? error.message : String(error), 1e4);
+      new import_obsidian12.Notice(error instanceof Error ? error.message : String(error), 1e4);
     }
   }
 };
-var FoodDeleteModal = class extends import_obsidian11.Modal {
+var FoodDeleteModal = class extends import_obsidian12.Modal {
   constructor(app, plugin, food, onStaged) {
     super(app);
     this.plugin = plugin;
@@ -11390,14 +11500,14 @@ var FoodDeleteModal = class extends import_obsidian11.Modal {
       this.close();
       await this.onStaged();
     } catch (error) {
-      new import_obsidian11.Notice(error instanceof Error ? error.message : String(error), 1e4);
+      new import_obsidian12.Notice(error instanceof Error ? error.message : String(error), 1e4);
     }
   }
   onClose() {
     this.contentEl.empty();
   }
 };
-var FoodAliasMoveModal = class extends import_obsidian11.Modal {
+var FoodAliasMoveModal = class extends import_obsidian12.Modal {
   constructor(app, plugin, source, alias, foods, onStaged) {
     var _a, _b;
     super(app);
@@ -11411,7 +11521,7 @@ var FoodAliasMoveModal = class extends import_obsidian11.Modal {
   onOpen() {
     this.modalEl.addClass("examined-human-command-modal");
     this.contentEl.createEl("h2", { text: `Move alias \u201C${this.alias}\u201D` });
-    new import_obsidian11.Setting(this.contentEl).setName("Destination food").addDropdown((dropdown) => {
+    new import_obsidian12.Setting(this.contentEl).setName("Destination food").addDropdown((dropdown) => {
       for (const food of this.foods.filter((food2) => food2.id !== this.source.id)) dropdown.addOption(food.name, food.name);
       return dropdown.setValue(this.destination).onChange((value) => {
         this.destination = value;
@@ -11434,14 +11544,14 @@ var FoodAliasMoveModal = class extends import_obsidian11.Modal {
       this.close();
       await this.onStaged();
     } catch (error) {
-      new import_obsidian11.Notice(error instanceof Error ? error.message : String(error), 1e4);
+      new import_obsidian12.Notice(error instanceof Error ? error.message : String(error), 1e4);
     }
   }
   onClose() {
     this.contentEl.empty();
   }
 };
-var ValuationRateStageModal = class extends import_obsidian11.Modal {
+var ValuationRateStageModal = class extends import_obsidian12.Modal {
   constructor(app, plugin, onStaged) {
     super(app);
     this.plugin = plugin;
@@ -11473,7 +11583,7 @@ var ValuationRateStageModal = class extends import_obsidian11.Modal {
       const target = await chooseUnimportedDailyNote(this.plugin, null);
       if (!target) return;
       const file = this.app.vault.getAbstractFileByPath(target.filePath);
-      if (!(file instanceof import_obsidian11.TFile)) throw new Error(`Daily Note not found: ${target.filePath}`);
+      if (!(file instanceof import_obsidian12.TFile)) throw new Error(`Daily Note not found: ${target.filePath}`);
       const preview = await this.plugin.logger.previewValuationRateStage({
         noteDate: target.date,
         fileName: target.fileName,
@@ -11490,18 +11600,18 @@ var ValuationRateStageModal = class extends import_obsidian11.Modal {
       });
       if (!confirmed) return;
       await this.plugin.logger.stageValuationRates(preview);
-      new import_obsidian11.Notice(`Valuation Rates staged in ${target.fileName}.`, 8e3);
+      new import_obsidian12.Notice(`Valuation Rates staged in ${target.fileName}.`, 8e3);
       this.close();
       await this.onStaged();
     } catch (error) {
-      new import_obsidian11.Notice(error instanceof Error ? error.message : String(error), 1e4);
+      new import_obsidian12.Notice(error instanceof Error ? error.message : String(error), 1e4);
     }
   }
   onClose() {
     this.contentEl.empty();
   }
 };
-var EntityAliasMoveModal = class extends import_obsidian11.Modal {
+var EntityAliasMoveModal = class extends import_obsidian12.Modal {
   constructor(app, plugin, kind, sourceName, alias, names, onStaged) {
     var _a;
     super(app);
@@ -11520,7 +11630,7 @@ var EntityAliasMoveModal = class extends import_obsidian11.Modal {
       this.contentEl.createDiv({ text: "Create another canonical record before moving this alias." });
       return;
     }
-    new import_obsidian11.Setting(this.contentEl).setName(`Destination ${this.kind}`).addDropdown((dropdown) => {
+    new import_obsidian12.Setting(this.contentEl).setName(`Destination ${this.kind}`).addDropdown((dropdown) => {
       for (const name of this.names) dropdown.addOption(name, name);
       return dropdown.setValue(this.destination).onChange((value) => {
         this.destination = value;
@@ -11543,7 +11653,7 @@ var EntityAliasMoveModal = class extends import_obsidian11.Modal {
       this.close();
       await this.onStaged();
     } catch (error) {
-      new import_obsidian11.Notice(error instanceof Error ? error.message : String(error), 1e4);
+      new import_obsidian12.Notice(error instanceof Error ? error.message : String(error), 1e4);
     }
   }
   onClose() {
@@ -11552,10 +11662,10 @@ var EntityAliasMoveModal = class extends import_obsidian11.Modal {
 };
 
 // src/EngagementDashboardView.ts
-var import_obsidian13 = require("obsidian");
+var import_obsidian14 = require("obsidian");
 
 // src/dismissible-warning.ts
-var import_obsidian12 = require("obsidian");
+var import_obsidian13 = require("obsidian");
 function renderDismissibleWarning(container, plugin, key, message, className) {
   if (plugin.settings.dismissedWarningKeys.includes(key)) return null;
   const warning = container.createDiv({
@@ -11581,7 +11691,7 @@ function renderDismissibleWarning(container, plugin, key, message, className) {
     cls: "clickable-icon examined-human-dismissible-warning-close",
     attr: { "aria-label": "Close warning", title: "Close warning" }
   });
-  (0, import_obsidian12.setIcon)(close, "x");
+  (0, import_obsidian13.setIcon)(close, "x");
   close.addEventListener("click", () => warning.remove());
   return warning;
 }
@@ -11609,7 +11719,6 @@ function sanitizeDismissedWarningKeys(value) {
 
 // src/EngagementDashboardView.ts
 var EXAMINED_HUMAN_ENGAGEMENT_DASHBOARD_VIEW_TYPE = "examined-human-engagement-dashboard";
-var FINGERPRINT_INTERVAL_MS2 = 1e4;
 var MAX_ACTIVITY_BUCKETS = 16;
 function humanizeCode(value) {
   if (!value || value === "unspecified") return "Unspecified";
@@ -11621,7 +11730,7 @@ function formatDuration(totalMinutes) {
 }
 function formatDate(value) {
   if (!value) return "\u2014";
-  const parsed = (0, import_obsidian13.moment)(value, "YYYY-MM-DD", true);
+  const parsed = (0, import_obsidian14.moment)(value, "YYYY-MM-DD", true);
   return parsed.isValid() ? parsed.format("MMM D, YYYY") : value;
 }
 function formatTimeRange(startTime, endTime) {
@@ -11633,7 +11742,7 @@ function formatAmount(value, currency2) {
   return `${formatted} ${currency2}`;
 }
 function rangeStart(range, endDate, days) {
-  const end = (0, import_obsidian13.moment)(endDate, "YYYY-MM-DD", true);
+  const end = (0, import_obsidian14.moment)(endDate, "YYYY-MM-DD", true);
   if (range === "days") return end.clone().subtract(Math.max(1, days) - 1, "days").format("YYYY-MM-DD");
   return null;
 }
@@ -11643,14 +11752,14 @@ function rangeLabel(range, startDate, endDate) {
 }
 function buildActivityBuckets(activity, startDate, endDate, firstSessionDate) {
   var _a, _b, _c;
-  const start = (0, import_obsidian13.moment)((_a = startDate != null ? startDate : firstSessionDate) != null ? _a : endDate, "YYYY-MM-DD", true);
-  const end = (0, import_obsidian13.moment)(endDate, "YYYY-MM-DD", true);
+  const start = (0, import_obsidian14.moment)((_a = startDate != null ? startDate : firstSessionDate) != null ? _a : endDate, "YYYY-MM-DD", true);
+  const end = (0, import_obsidian14.moment)(endDate, "YYYY-MM-DD", true);
   if (!start.isValid() || !end.isValid() || start.isAfter(end)) return { buckets: [], subtitle: "" };
   const spanDays = end.diff(start, "days") + 1;
   const unit = spanDays <= 31 ? "day" : spanDays <= 180 ? "week" : "month";
   const totals = /* @__PURE__ */ new Map();
   for (const record of activity) {
-    const date = (0, import_obsidian13.moment)(record.date, "YYYY-MM-DD", true);
+    const date = (0, import_obsidian14.moment)(record.date, "YYYY-MM-DD", true);
     if (!date.isValid()) continue;
     const key = date.startOf(unit).format("YYYY-MM-DD");
     totals.set(key, ((_b = totals.get(key)) != null ? _b : 0) + record.totalMinutes);
@@ -11670,9 +11779,9 @@ function buildActivityBuckets(activity, startDate, endDate, firstSessionDate) {
   const subtitle = buckets.length > MAX_ACTIVITY_BUCKETS ? `Latest ${MAX_ACTIVITY_BUCKETS} ${unitLabel} buckets in the selected period` : `${humanizeCode(unit)} activity in the selected period`;
   return { buckets: visible, subtitle };
 }
-var EngagementDashboardView = class extends import_obsidian13.ItemView {
+var EngagementDashboardView = class extends ReadingView {
   constructor(leaf, plugin) {
-    super(leaf);
+    super(leaf, plugin);
     this.plugin = plugin;
     this.result = null;
     this.selectedEngagementId = null;
@@ -11682,8 +11791,6 @@ var EngagementDashboardView = class extends import_obsidian13.ItemView {
     this.typeFilter = "all";
     this.renderGeneration = 0;
     this.filterSelectionTimer = null;
-    this.fingerprintTimer = null;
-    this.lastFingerprint = null;
   }
   getViewType() {
     return EXAMINED_HUMAN_ENGAGEMENT_DASHBOARD_VIEW_TYPE;
@@ -11694,38 +11801,27 @@ var EngagementDashboardView = class extends import_obsidian13.ItemView {
   getIcon() {
     return "target";
   }
+  scrollContext() {
+    return `${this.selectedEngagementId}:${this.selectedRange}`;
+  }
   async onOpen() {
+    this.startReadingUpdates();
     this.contentEl.addClass("examined-human-engagement-view");
     await this.refresh();
-    this.registerEvent(this.app.vault.on("modify", (file) => {
-      try {
-        const databaseChanged = (0, import_obsidian13.normalizePath)(file.path) === this.plugin.database.normalizeVaultPath(this.plugin.settings.databasePath);
-        if (databaseChanged && !this.plugin.logger.isRunning) void this.refresh();
-      } catch (e) {
-      }
-    }));
-    try {
-      this.lastFingerprint = await this.plugin.database.fingerprint(this.plugin.settings.databasePath);
-    } catch (e) {
-      this.lastFingerprint = null;
-    }
-    this.fingerprintTimer = window.setInterval(() => {
-      void this.checkDatabaseFingerprint();
-    }, FINGERPRINT_INTERVAL_MS2);
   }
   async onClose() {
-    if (this.fingerprintTimer != null) window.clearInterval(this.fingerprintTimer);
+    this.stopReadingUpdates();
     if (this.filterSelectionTimer != null) window.clearTimeout(this.filterSelectionTimer);
     this.contentEl.empty();
   }
-  async refresh() {
+  async refreshContent() {
     var _a, _b;
     const generation = ++this.renderGeneration;
     this.contentEl.empty();
     this.contentEl.addClass("examined-human-engagement-view");
     this.contentEl.createDiv({ cls: "examined-human-loading", text: "Loading Engagement Dashboard\u2026" });
     try {
-      const endDate = (0, import_obsidian13.moment)().format("YYYY-MM-DD");
+      const endDate = (0, import_obsidian14.moment)().format("YYYY-MM-DD");
       const startDate = rangeStart(this.selectedRange, endDate, this.plugin.settings.defaultDashboardDays);
       const result = await this.plugin.database.engagementDashboard(
         this.plugin.settings.databasePath,
@@ -12138,31 +12234,21 @@ var EngagementDashboardView = class extends import_obsidian13.ItemView {
       text: `Check the vault-relative database path in Examined Human settings: ${this.plugin.settings.databasePath}`
     });
   }
-  async checkDatabaseFingerprint() {
-    if (this.plugin.logger.isRunning) return;
-    try {
-      const next = await this.plugin.database.fingerprint(this.plugin.settings.databasePath);
-      if (this.lastFingerprint !== null && next !== this.lastFingerprint) await this.refresh();
-      this.lastFingerprint = next;
-    } catch (e) {
-    }
-  }
 };
 
 // src/ExerciseDashboardView.ts
-var import_obsidian15 = require("obsidian");
+var import_obsidian16 = require("obsidian");
 
 // src/DashboardViewBase.ts
-var import_obsidian14 = require("obsidian");
-var FINGERPRINT_INTERVAL_MS3 = 1e4;
+var import_obsidian15 = require("obsidian");
 function dashboardRangeStart(range, endDate, days) {
-  const end = (0, import_obsidian14.moment)(endDate, "YYYY-MM-DD", true);
+  const end = (0, import_obsidian15.moment)(endDate, "YYYY-MM-DD", true);
   if (range === "days") return end.clone().subtract(Math.max(1, days) - 1, "days").format("YYYY-MM-DD");
   return null;
 }
 function formatDashboardDate(value) {
   if (!value) return "\u2014";
-  const parsed = (0, import_obsidian14.moment)(value, "YYYY-MM-DD", true);
+  const parsed = (0, import_obsidian15.moment)(value, "YYYY-MM-DD", true);
   return parsed.isValid() ? parsed.format("MMM D, YYYY") : value;
 }
 function formatDashboardDuration(totalMinutes) {
@@ -12333,9 +12419,9 @@ function renderDashboardTrend(container, records) {
     item.createDiv({ cls: "examined-human-domain-trend-label", text: record.label });
   }
 }
-var DashboardViewBase = class extends import_obsidian14.ItemView {
+var DashboardViewBase = class extends ReadingView {
   constructor(leaf, plugin) {
-    super(leaf);
+    super(leaf, plugin);
     this.plugin = plugin;
     this.result = null;
     this.selectedRange = "days";
@@ -12348,36 +12434,23 @@ var DashboardViewBase = class extends import_obsidian14.ItemView {
      */
     this.endDateOverride = null;
     this.renderGeneration = 0;
-    this.fingerprintTimer = null;
-    this.lastFingerprint = null;
+  }
+  scrollContext() {
+    return `${this.selectedRange}:${this.endDateOverride}`;
   }
   async onOpen() {
+    this.startReadingUpdates();
     this.contentEl.addClass("examined-human-domain-view");
     await this.refresh();
-    this.registerEvent(this.app.vault.on("modify", (file) => {
-      try {
-        const databaseChanged = (0, import_obsidian14.normalizePath)(file.path) === this.plugin.database.normalizeVaultPath(this.plugin.settings.databasePath);
-        if (databaseChanged && !this.plugin.logger.isRunning) void this.refresh();
-      } catch (e) {
-      }
-    }));
-    try {
-      this.lastFingerprint = await this.plugin.database.fingerprint(this.plugin.settings.databasePath);
-    } catch (e) {
-      this.lastFingerprint = null;
-    }
-    this.fingerprintTimer = window.setInterval(() => {
-      void this.checkDatabaseFingerprint();
-    }, FINGERPRINT_INTERVAL_MS3);
   }
   async onClose() {
-    if (this.fingerprintTimer != null) window.clearInterval(this.fingerprintTimer);
+    this.stopReadingUpdates();
     this.contentEl.empty();
   }
-  async refresh() {
+  async refreshContent() {
     var _a;
     const generation = ++this.renderGeneration;
-    this.endDate = (_a = this.endDateOverride) != null ? _a : (0, import_obsidian14.moment)().format("YYYY-MM-DD");
+    this.endDate = (_a = this.endDateOverride) != null ? _a : (0, import_obsidian15.moment)().format("YYYY-MM-DD");
     this.startDate = dashboardRangeStart(this.selectedRange, this.endDate, this.plugin.settings.defaultDashboardDays);
     this.contentEl.empty();
     this.contentEl.addClass("examined-human-domain-view");
@@ -12449,18 +12522,6 @@ var DashboardViewBase = class extends import_obsidian14.ItemView {
     if (this.startDate == null) return `All recorded history through ${formatDashboardDate(this.endDate)}`;
     return `${formatDashboardDate(this.startDate)} \u2013 ${formatDashboardDate(this.endDate)}`;
   }
-  async checkDatabaseFingerprint() {
-    try {
-      const fingerprint = await this.plugin.database.fingerprint(this.plugin.settings.databasePath);
-      if (this.lastFingerprint !== null && fingerprint !== this.lastFingerprint && !this.plugin.logger.isRunning) {
-        this.lastFingerprint = fingerprint;
-        await this.refresh();
-      } else {
-        this.lastFingerprint = fingerprint;
-      }
-    } catch (e) {
-    }
-  }
 };
 
 // src/ExerciseDashboardView.ts
@@ -12519,7 +12580,7 @@ var ExerciseDashboardView = class extends DashboardViewBase {
     const records = result.daily.slice(-20);
     const panel = createDashboardPanel(container, "Workout duration", "Latest 20 training days in the selected period");
     renderDashboardTrend(panel, records.map((day) => ({
-      label: (0, import_obsidian15.moment)(day.date, "YYYY-MM-DD", true).format("MMM D"),
+      label: (0, import_obsidian16.moment)(day.date, "YYYY-MM-DD", true).format("MMM D"),
       value: day.totalMinutes,
       displayValue: formatDashboardDuration(day.totalMinutes),
       ariaLabel: `${formatDashboardDate(day.date)}, ${day.workoutCount} workouts and ${day.setCount} sets`
@@ -12610,14 +12671,14 @@ var ExerciseDashboardView = class extends DashboardViewBase {
         this.plugin.settings.databasePath,
         workout.date,
         workout.date,
-        (0, import_obsidian15.moment)().format("YYYY-MM-DD"),
+        (0, import_obsidian16.moment)().format("YYYY-MM-DD"),
         false
       );
       const event = result.events.find((candidate) => candidate.id === String(workout.id));
       if (!event) throw new Error("The selected workout is no longer available. Refresh the dashboard and try again.");
       new SessionDetailsModal(this.app, event).open();
     } catch (error) {
-      new import_obsidian15.Notice(`Could not open workout details: ${error instanceof Error ? error.message : String(error)}`, 9e3);
+      new import_obsidian16.Notice(`Could not open workout details: ${error instanceof Error ? error.message : String(error)}`, 9e3);
     } finally {
       button.disabled = false;
     }
@@ -12625,16 +12686,16 @@ var ExerciseDashboardView = class extends DashboardViewBase {
 };
 
 // src/FinancialDashboardView.ts
-var import_obsidian17 = require("obsidian");
+var import_obsidian18 = require("obsidian");
 
 // src/budget-note-index.ts
-var import_obsidian16 = require("obsidian");
+var import_obsidian17 = require("obsidian");
 function budgetNoteCandidates(app) {
   return app.vault.getMarkdownFiles().map((file) => ({ fileName: file.name, filePath: file.path })).sort((left, right) => left.filePath.localeCompare(right.filePath));
 }
 async function readBudgetNote(app, candidate) {
   const file = app.vault.getAbstractFileByPath(candidate.filePath);
-  if (!(file instanceof import_obsidian16.TFile)) throw new Error(`Budget note was not found: ${candidate.filePath}`);
+  if (!(file instanceof import_obsidian17.TFile)) throw new Error(`Budget note was not found: ${candidate.filePath}`);
   const sourceText = await app.vault.read(file);
   if (!hasBudgetForm(sourceText)) throw new Error(`${candidate.filePath} does not contain an EH Budget Form.`);
   return { ...candidate, sourceText };
@@ -12700,7 +12761,7 @@ var FinancialDashboardView = class extends DashboardViewBase {
       asOf.value = result.endDate;
       asOf.addEventListener("change", () => {
         const candidate = asOf.value;
-        if (!(0, import_obsidian17.moment)(candidate, "YYYY-MM-DD", true).isValid()) {
+        if (!(0, import_obsidian18.moment)(candidate, "YYYY-MM-DD", true).isValid()) {
           asOf.value = result.endDate;
           return;
         }
@@ -12839,7 +12900,7 @@ var FinancialDashboardView = class extends DashboardViewBase {
     const lineRecords = sampled.map((record) => {
       const value = valued ? record.valuationBalance : record.nativeBalance;
       return {
-        label: (0, import_obsidian17.moment)(record.date, "YYYY-MM-DD", true).format(sampled.length > 120 ? "MMM YYYY" : "MMM D"),
+        label: (0, import_obsidian18.moment)(record.date, "YYYY-MM-DD", true).format(sampled.length > 120 ? "MMM YYYY" : "MMM D"),
         value,
         displayValue: value == null ? "Missing valuation rate" : formatDashboardAmount(value, unit),
         ariaLabel: formatDashboardDate(record.date)
@@ -12938,13 +12999,13 @@ Expected movements: ${preview.expectedMovementCount}`,
       });
       if (!confirmed) return;
       const file = this.app.vault.getAbstractFileByPath(candidate.filePath);
-      if (!(file instanceof import_obsidian17.TFile)) throw new Error(`Budget note was not found: ${candidate.filePath}`);
+      if (!(file instanceof import_obsidian18.TFile)) throw new Error(`Budget note was not found: ${candidate.filePath}`);
       const result = await this.plugin.logger.importBudget(request);
       const cleanup = await this.plugin.removeImportedFormAfterImport(file, "budget", candidate.sourceText);
-      new import_obsidian17.Notice(`Imported Budget Form for ${result.periodStart} through ${result.periodEnd}.${cleanup === "removed" ? " Source form removed." : ""} ${result.backupPath ? `Backup: ${result.backupPath}` : ""}`, 1e4);
+      new import_obsidian18.Notice(`Imported Budget Form for ${result.periodStart} through ${result.periodEnd}.${cleanup === "removed" ? " Source form removed." : ""} ${result.backupPath ? `Backup: ${result.backupPath}` : ""}`, 1e4);
       await this.plugin.refreshViews();
     } catch (error) {
-      new import_obsidian17.Notice(`Budget Form was not imported: ${error instanceof Error ? error.message : String(error)}`, 12e3);
+      new import_obsidian18.Notice(`Budget Form was not imported: ${error instanceof Error ? error.message : String(error)}`, 12e3);
     }
   }
   async stageBalanceEntry(account, kind) {
@@ -12954,17 +13015,17 @@ Expected movements: ${preview.expectedMovementCount}`,
       const amount = kind === "opening" ? entry.actualBalance : entry.actualBalance - account.balance;
       if (!Number.isFinite(amount)) throw new Error("The balance adjustment is not a finite number.");
       if (kind === "reconciliation" && amount === 0) {
-        new import_obsidian17.Notice("The recorded and observed balances already match; no reconciliation entry was staged.");
+        new import_obsidian18.Notice("The recorded and observed balances already match; no reconciliation entry was staged.");
         return;
       }
-      const today = (0, import_obsidian17.moment)().format("YYYY-MM-DD");
+      const today = (0, import_obsidian18.moment)().format("YYYY-MM-DD");
       const index = await this.plugin.database.dailyNoteIndex(this.plugin.settings.databasePath);
       const targets = (await buildDailyNoteList(this.app, index, today, this.plugin.knownForms())).filter((note) => note.status !== "imported" && note.date >= today);
       if (targets.length === 0) throw new Error("Create an unimported current or future Daily Note before staging this entry.");
       const target = await chooseDailyNote(this.app, targets);
       if (!target) return;
       const file = this.app.vault.getAbstractFileByPath(target.filePath);
-      if (!(file instanceof import_obsidian17.TFile)) throw new Error(`Daily Note was not found: ${target.filePath}`);
+      if (!(file instanceof import_obsidian18.TFile)) throw new Error(`Daily Note was not found: ${target.filePath}`);
       const sourceText = await this.app.vault.read(file);
       const marker = kind === "opening" ? "[EH opening balance]" : "[EH reconciliation]";
       const description = entry.reason ? `${marker} ${entry.reason}` : marker;
@@ -12979,13 +13040,13 @@ Expected movements: ${preview.expectedMovementCount}`,
       });
       if (!confirmed) return;
       await this.plugin.logger.stageFinanceEntry(preview);
-      new import_obsidian17.Notice(`Staged ${kind === "opening" ? "opening balance" : "reconciliation"} in ${target.fileName}. Import that Daily Note to update the ledger.`, 1e4);
+      new import_obsidian18.Notice(`Staged ${kind === "opening" ? "opening balance" : "reconciliation"} in ${target.fileName}. Import that Daily Note to update the ledger.`, 1e4);
     } catch (error) {
-      new import_obsidian17.Notice(`Financial entry was not staged: ${error instanceof Error ? error.message : String(error)}`, 12e3);
+      new import_obsidian18.Notice(`Financial entry was not staged: ${error instanceof Error ? error.message : String(error)}`, 12e3);
     }
   }
 };
-var BudgetNotePickerModal = class extends import_obsidian17.Modal {
+var BudgetNotePickerModal = class extends import_obsidian18.Modal {
   constructor(app, candidates, resolveChoice) {
     super(app);
     this.candidates = candidates;
@@ -13027,7 +13088,7 @@ var BudgetNotePickerModal = class extends import_obsidian17.Modal {
     this.contentEl.empty();
   }
 };
-var BalanceEntryModal = class extends import_obsidian17.Modal {
+var BalanceEntryModal = class extends import_obsidian18.Modal {
   constructor(app, account, kind, resolveChoice) {
     super(app);
     this.account = account;
@@ -13050,7 +13111,7 @@ var BalanceEntryModal = class extends import_obsidian17.Modal {
     actions.createEl("button", { cls: "mod-cta", text: "Choose Daily Note" }).addEventListener("click", () => {
       const actualBalance = Number(this.actualInput.value);
       if (!Number.isFinite(actualBalance)) {
-        new import_obsidian17.Notice("Enter a valid observed balance.");
+        new import_obsidian18.Notice("Enter a valid observed balance.");
         return;
       }
       this.resolveChoice({ kind: this.kind, actualBalance, reason: this.reasonInput.value.trim() });
@@ -13061,7 +13122,7 @@ var BalanceEntryModal = class extends import_obsidian17.Modal {
     this.contentEl.empty();
   }
 };
-var FinanceDailyNotePickerModal = class extends import_obsidian17.Modal {
+var FinanceDailyNotePickerModal = class extends import_obsidian18.Modal {
   constructor(app, targets, resolveChoice) {
     super(app);
     this.targets = targets;
@@ -13263,7 +13324,7 @@ function cachedEhForms(app, cache) {
 }
 
 // src/NutritionDashboardView.ts
-var import_obsidian18 = require("obsidian");
+var import_obsidian19 = require("obsidian");
 var EXAMINED_HUMAN_NUTRITION_DASHBOARD_VIEW_TYPE = "examined-human-nutrition-dashboard";
 function average(values) {
   const available = values.filter((value) => value != null && Number.isFinite(value));
@@ -13344,7 +13405,7 @@ var NutritionDashboardView = class extends DashboardViewBase {
     renderDashboardTrend(panel, records.map((day) => {
       var _a, _b;
       return {
-        label: (0, import_obsidian18.moment)(day.date, "YYYY-MM-DD", true).format("MMM D"),
+        label: (0, import_obsidian19.moment)(day.date, "YYYY-MM-DD", true).format("MMM D"),
         value: (_a = day.calories) != null ? _a : 0,
         displayValue: `${formatDashboardNumber((_b = day.calories) != null ? _b : 0, 0)}`,
         ariaLabel: `${formatDashboardDate(day.date)}, calories`
@@ -13357,7 +13418,7 @@ var NutritionDashboardView = class extends DashboardViewBase {
     renderDashboardTrend(panel, records.map((day) => {
       var _a, _b;
       return {
-        label: (0, import_obsidian18.moment)(day.date, "YYYY-MM-DD", true).format("MMM D"),
+        label: (0, import_obsidian19.moment)(day.date, "YYYY-MM-DD", true).format("MMM D"),
         value: (_a = day.proteinG) != null ? _a : 0,
         displayValue: `${formatDashboardNumber((_b = day.proteinG) != null ? _b : 0, 0)} g`,
         ariaLabel: `${formatDashboardDate(day.date)}, protein`
@@ -13407,7 +13468,7 @@ var NutritionDashboardView = class extends DashboardViewBase {
 };
 
 // src/TimelineView.ts
-var import_obsidian19 = require("obsidian");
+var import_obsidian20 = require("obsidian");
 var EXAMINED_HUMAN_CALENDAR_VIEW_TYPE = "examined-human";
 var INITIAL_DAYS_EACH_SIDE = 45;
 var WINDOW_SHIFT_DAYS = 28;
@@ -13415,13 +13476,12 @@ var GUTTER_WIDTH = 68;
 var HEADER_HEIGHT = 58;
 var BASE_PX_PER_MINUTE = 1.15;
 var ZOOM_LEVELS = [0.7, 0.85, 1, 1.25, 1.5, 2];
-var FINGERPRINT_INTERVAL_MS4 = 1e4;
-var TimelineView = class extends import_obsidian19.ItemView {
+var TimelineView = class extends ReadingView {
   constructor(leaf, plugin) {
-    super(leaf);
+    super(leaf, plugin);
     this.plugin = plugin;
-    this.rangeStart = (0, import_obsidian19.moment)().startOf("day").subtract(INITIAL_DAYS_EACH_SIDE, "days");
-    this.rangeEnd = (0, import_obsidian19.moment)().startOf("day").add(INITIAL_DAYS_EACH_SIDE, "days");
+    this.rangeStart = (0, import_obsidian20.moment)().startOf("day").subtract(INITIAL_DAYS_EACH_SIDE, "days");
+    this.rangeEnd = (0, import_obsidian20.moment)().startOf("day").add(INITIAL_DAYS_EACH_SIDE, "days");
     this.zoomIndex = 2;
     this.scrollEl = null;
     this.statusEl = null;
@@ -13430,8 +13490,6 @@ var TimelineView = class extends import_obsidian19.ItemView {
     this.shifting = false;
     this.scrollTimer = null;
     this.resizeTimer = null;
-    this.fingerprintTimer = null;
-    this.lastFingerprint = null;
     this.warningNoticeShown = false;
   }
   getViewType() {
@@ -13443,34 +13501,27 @@ var TimelineView = class extends import_obsidian19.ItemView {
   getIcon() {
     return "calendar-clock";
   }
+  sourceNotePath() {
+    var _a, _b;
+    return (_b = (_a = this.plugin.knownForms().find((form) => form.kind === "daily" && form.date === (0, import_obsidian20.moment)().format("YYYY-MM-DD"))) == null ? void 0 : _a.filePath) != null ? _b : null;
+  }
+  scrollContext() {
+    return `${this.getViewType()}:${this.rangeStart.format("YYYY-MM-DD")}`;
+  }
   async onOpen() {
+    this.startReadingUpdates();
     this.contentEl.addClass("examined-human-view");
     await this.plugin.syncTodayPlanningFromDailyForm();
     await this.renderCalendar({
       viewport: {
-        centerDate: (0, import_obsidian19.moment)().format("YYYY-MM-DD"),
+        centerDate: (0, import_obsidian20.moment)().format("YYYY-MM-DD"),
         scrollMinute: this.plugin.settings.initialScrollHour * 60
       }
     });
-    this.registerEvent(this.app.vault.on("modify", (file) => {
-      const configuredPath = this.plugin.settings.databasePath;
-      try {
-        if ((0, import_obsidian19.normalizePath)(file.path) === this.plugin.database.normalizeVaultPath(configuredPath) && !this.plugin.logger.isRunning) void this.refresh();
-      } catch (e) {
-      }
-    }));
-    try {
-      this.lastFingerprint = await this.plugin.database.fingerprint(this.plugin.settings.databasePath);
-    } catch (e) {
-      this.lastFingerprint = null;
-    }
-    this.fingerprintTimer = window.setInterval(() => {
-      void this.checkDatabaseFingerprint();
-    }, FINGERPRINT_INTERVAL_MS4);
     const viewWindow = this.contentEl.ownerDocument.defaultView;
     if (viewWindow) {
       this.registerDomEvent(viewWindow, "resize", () => {
-        if (!import_obsidian19.Platform.isMobile) return;
+        if (!import_obsidian20.Platform.isMobile) return;
         if (this.resizeTimer != null) window.clearTimeout(this.resizeTimer);
         this.resizeTimer = window.setTimeout(() => {
           void this.refresh();
@@ -13479,12 +13530,12 @@ var TimelineView = class extends import_obsidian19.ItemView {
     }
   }
   async onClose() {
+    this.stopReadingUpdates();
     if (this.scrollTimer != null) window.clearTimeout(this.scrollTimer);
     if (this.resizeTimer != null) window.clearTimeout(this.resizeTimer);
-    if (this.fingerprintTimer != null) window.clearInterval(this.fingerprintTimer);
     this.contentEl.empty();
   }
-  async refresh() {
+  async refreshContent() {
     await this.plugin.syncTodayPlanningFromDailyForm();
     await this.renderCalendar({ viewport: this.captureViewport() });
   }
@@ -13492,7 +13543,7 @@ var TimelineView = class extends import_obsidian19.ItemView {
     return BASE_PX_PER_MINUTE * ZOOM_LEVELS[this.zoomIndex];
   }
   get dayWidth() {
-    if (import_obsidian19.Platform.isMobile) {
+    if (import_obsidian20.Platform.isMobile) {
       return this.plugin.settings.mobileDayColumnWidth;
     }
     return this.plugin.settings.dayColumnWidth;
@@ -13511,7 +13562,7 @@ var TimelineView = class extends import_obsidian19.ItemView {
         this.plugin.settings.databasePath,
         this.rangeStart.format("YYYY-MM-DD"),
         this.rangeEnd.format("YYYY-MM-DD"),
-        (0, import_obsidian19.moment)().format("YYYY-MM-DD")
+        (0, import_obsidian20.moment)().format("YYYY-MM-DD")
       );
     } catch (error) {
       if (generation !== this.renderGeneration) return;
@@ -13536,13 +13587,13 @@ var TimelineView = class extends import_obsidian19.ItemView {
       this.statusEl.setText(`${result.events.length} sessions \xB7 ${dayCount} days loaded${overdueLabel}`);
     }
     window.requestAnimationFrame(() => {
-      var _a2, _b2;
-      if (!this.scrollEl) return;
-      const centerDate = (_a2 = viewport == null ? void 0 : viewport.centerDate) != null ? _a2 : (0, import_obsidian19.moment)().format("YYYY-MM-DD");
-      const centerIndex = (0, import_obsidian19.moment)(centerDate, "YYYY-MM-DD", true).diff(this.rangeStart, "days");
-      const desiredLeft = GUTTER_WIDTH + centerIndex * this.dayWidth - (this.scrollEl.clientWidth - this.dayWidth) / 2;
+      var _a2, _b2, _c;
+      if (generation !== this.renderGeneration || !this.scrollEl) return;
+      const centerDate = (_a2 = viewport == null ? void 0 : viewport.centerDate) != null ? _a2 : (0, import_obsidian20.moment)().format("YYYY-MM-DD");
+      const centerIndex = (0, import_obsidian20.moment)(centerDate, "YYYY-MM-DD", true).diff(this.rangeStart, "days");
+      const desiredLeft = GUTTER_WIDTH + (centerIndex + ((_b2 = viewport == null ? void 0 : viewport.dayFraction) != null ? _b2 : 0.5)) * this.dayWidth - this.scrollEl.clientWidth / 2;
       this.scrollEl.scrollLeft = Math.max(0, desiredLeft);
-      this.scrollEl.scrollTop = Math.max(0, ((_b2 = viewport == null ? void 0 : viewport.scrollMinute) != null ? _b2 : this.plugin.settings.initialScrollHour * 60) * this.pxPerMinute);
+      this.scrollEl.scrollTop = Math.max(0, ((_c = viewport == null ? void 0 : viewport.scrollMinute) != null ? _c : this.plugin.settings.initialScrollHour * 60) * this.pxPerMinute);
       this.shifting = false;
     });
   }
@@ -13582,7 +13633,7 @@ var TimelineView = class extends import_obsidian19.ItemView {
     warning.setAttribute("title", messages.join("\n"));
     if (chorMessages.length > 0 && !this.warningNoticeShown) {
       this.warningNoticeShown = true;
-      new import_obsidian19.Notice(`Examined Human found ${chorMessages.length} session${chorMessages.length === 1 ? "" : "s"} with type "chor". Correct the data in EH.db.`, 1e4);
+      new import_obsidian20.Notice(`Examined Human found ${chorMessages.length} session${chorMessages.length === 1 ? "" : "s"} with type "chor". Correct the data in EH.db.`, 1e4);
     }
   }
   renderGrid(eventsByDate, dayStates) {
@@ -13599,7 +13650,7 @@ var TimelineView = class extends import_obsidian19.ItemView {
     grid.style.gridTemplateRows = `${HEADER_HEIGHT}px ${1440 * this.pxPerMinute}px`;
     const corner = grid.createDiv({ cls: "examined-human-grid-corner" });
     corner.setText("Time");
-    const today = (0, import_obsidian19.moment)().format("YYYY-MM-DD");
+    const today = (0, import_obsidian20.moment)().format("YYYY-MM-DD");
     for (let index = 0; index < days.length; index++) {
       const day = days[index];
       const date = day.format("YYYY-MM-DD");
@@ -13661,7 +13712,7 @@ var TimelineView = class extends import_obsidian19.ItemView {
         column.appendChild(eventElement);
       }
       if (relation === "today") {
-        const now = (0, import_obsidian19.moment)();
+        const now = (0, import_obsidian20.moment)();
         const nowLine = column.createDiv({ cls: "examined-human-now-line" });
         nowLine.style.top = `${(now.hours() * 60 + now.minutes()) * this.pxPerMinute}px`;
       }
@@ -13676,16 +13727,18 @@ var TimelineView = class extends import_obsidian19.ItemView {
     panel.createEl("p", { text: "Set the vault-relative database path in Settings \u2192 Community plugins \u2192 Examined Human, then use Test connection." });
   }
   captureViewport() {
-    if (!this.scrollEl) return void 0;
+    var _a;
+    if (!((_a = this.scrollEl) == null ? void 0 : _a.isConnected)) return void 0;
     const centerPixel = this.scrollEl.scrollLeft + this.scrollEl.clientWidth / 2 - GUTTER_WIDTH;
     const dayIndex = Math.max(0, Math.floor(centerPixel / this.dayWidth));
     return {
       centerDate: this.rangeStart.clone().add(dayIndex, "days").format("YYYY-MM-DD"),
-      scrollMinute: this.scrollEl.scrollTop / this.pxPerMinute
+      scrollMinute: this.scrollEl.scrollTop / this.pxPerMinute,
+      dayFraction: centerPixel / this.dayWidth - dayIndex
     };
   }
   async goToToday() {
-    const today = (0, import_obsidian19.moment)().startOf("day");
+    const today = (0, import_obsidian20.moment)().startOf("day");
     this.rangeStart = today.clone().subtract(INITIAL_DAYS_EACH_SIDE, "days");
     this.rangeEnd = today.clone().add(INITIAL_DAYS_EACH_SIDE, "days");
     await this.renderCalendar({
@@ -13722,18 +13775,10 @@ var TimelineView = class extends import_obsidian19.ItemView {
     this.rangeEnd.add(direction * WINDOW_SHIFT_DAYS, "days");
     await this.renderCalendar({ viewport });
   }
-  async checkDatabaseFingerprint() {
-    try {
-      const fingerprint = await this.plugin.database.fingerprint(this.plugin.settings.databasePath);
-      if (this.lastFingerprint != null && fingerprint !== this.lastFingerprint) await this.refresh();
-      this.lastFingerprint = fingerprint;
-    } catch (e) {
-    }
-  }
 };
 
 // src/WeeklyAssessmentView.ts
-var import_obsidian20 = require("obsidian");
+var import_obsidian21 = require("obsidian");
 
 // src/weekly-note-index.ts
 function temporalState(startDate, endDate, todayDate, imported) {
@@ -13795,7 +13840,6 @@ async function buildWeeklyNoteList(_app, index, todayDate, discoveredForms = [])
 
 // src/WeeklyAssessmentView.ts
 var EXAMINED_HUMAN_WEEKLY_ASSESSMENT_VIEW_TYPE = "examined-human-weekly-assessment";
-var FINGERPRINT_INTERVAL_MS5 = 1e4;
 var WEEKLY_NOTE_PATTERN = /^\d{4}-W\d{1,2}\.md$/i;
 function formatDuration2(totalMinutes) {
   const minutes = Math.max(0, Math.round(totalMinutes));
@@ -13806,8 +13850,8 @@ function formatDuration2(totalMinutes) {
   return `${hours}h ${remainder}m`;
 }
 function formatWeekRange(startDate, endDate) {
-  const start = (0, import_obsidian20.moment)(startDate, "YYYY-MM-DD", true);
-  const end = (0, import_obsidian20.moment)(endDate, "YYYY-MM-DD", true);
+  const start = (0, import_obsidian21.moment)(startDate, "YYYY-MM-DD", true);
+  const end = (0, import_obsidian21.moment)(endDate, "YYYY-MM-DD", true);
   if (!start.isValid() || !end.isValid()) return `${startDate} \u2013 ${endDate}`;
   if (start.year() === end.year() && start.month() === end.month()) {
     return `${start.format("MMM D")}\u2013${end.format("D, YYYY")}`;
@@ -13841,9 +13885,9 @@ function planningOutput(result) {
     `Missing sources marked deleted: ${result.deletedSourceCount}`
   ].join("\n");
 }
-var WeeklyAssessmentView = class extends import_obsidian20.ItemView {
+var WeeklyAssessmentView = class extends ReadingView {
   constructor(leaf, plugin) {
-    super(leaf);
+    super(leaf, plugin);
     this.plugin = plugin;
     this.selectedWeekStart = null;
     this.items = [];
@@ -13852,8 +13896,6 @@ var WeeklyAssessmentView = class extends import_obsidian20.ItemView {
     this.financeBriefing = null;
     this.loggerOutput = null;
     this.renderGeneration = 0;
-    this.fingerprintTimer = null;
-    this.lastFingerprint = null;
     this.actionButton = null;
   }
   getViewType() {
@@ -13865,50 +13907,43 @@ var WeeklyAssessmentView = class extends import_obsidian20.ItemView {
   getIcon() {
     return "chart-column";
   }
+  scrollContext() {
+    var _a;
+    return (_a = this.selectedWeekStart) != null ? _a : "";
+  }
+  sourceNotePath() {
+    var _a, _b;
+    return (_b = (_a = this.selectedItem) == null ? void 0 : _a.filePath) != null ? _b : null;
+  }
   async onOpen() {
+    this.startReadingUpdates();
     this.contentEl.addClass("examined-human-weekly-view");
     await this.refresh();
-    this.registerEvent(this.app.vault.on("modify", (file) => {
-      var _a;
-      try {
-        const databaseChanged = (0, import_obsidian20.normalizePath)(file.path) === this.plugin.database.normalizeVaultPath(this.plugin.settings.databasePath);
-        const selectedNoteChanged = file.path === ((_a = this.selectedItem) == null ? void 0 : _a.filePath);
-        if ((databaseChanged || selectedNoteChanged) && !this.plugin.logger.isRunning) void this.refresh();
-      } catch (e) {
-      }
-    }));
     this.registerEvent(this.app.vault.on("create", (file) => {
-      if (WEEKLY_NOTE_PATTERN.test(file.name)) void this.refresh();
+      if (WEEKLY_NOTE_PATTERN.test(file.name)) this.markDataUpdated("Weekly notes updated");
     }));
     this.registerEvent(this.app.vault.on("delete", (file) => {
-      if (WEEKLY_NOTE_PATTERN.test(file.name)) void this.refresh();
+      if (WEEKLY_NOTE_PATTERN.test(file.name)) this.markDataUpdated("Weekly notes updated");
     }));
     this.registerEvent(this.app.vault.on("rename", (file, oldPath) => {
       var _a;
-      const oldName = (_a = oldPath.split("/").pop()) != null ? _a : "";
-      if (WEEKLY_NOTE_PATTERN.test(file.name) || WEEKLY_NOTE_PATTERN.test(oldName)) void this.refresh();
+      if (WEEKLY_NOTE_PATTERN.test(file.name) || WEEKLY_NOTE_PATTERN.test((_a = oldPath.split("/").pop()) != null ? _a : "")) {
+        this.markDataUpdated("Weekly notes updated");
+      }
     }));
-    try {
-      this.lastFingerprint = await this.plugin.database.fingerprint(this.plugin.settings.databasePath);
-    } catch (e) {
-      this.lastFingerprint = null;
-    }
-    this.fingerprintTimer = window.setInterval(() => {
-      void this.checkDatabaseFingerprint();
-    }, FINGERPRINT_INTERVAL_MS5);
   }
   async onClose() {
-    if (this.fingerprintTimer != null) window.clearInterval(this.fingerprintTimer);
+    this.stopReadingUpdates();
     this.contentEl.empty();
   }
-  async refresh() {
+  async refreshContent() {
     var _a, _b, _c, _d, _e, _f;
     const generation = ++this.renderGeneration;
     this.contentEl.empty();
     this.contentEl.addClass("examined-human-weekly-view");
     this.contentEl.createDiv({ cls: "examined-human-loading", text: "Loading Weekly Assessment\u2026" });
     try {
-      const today = (0, import_obsidian20.moment)().format("YYYY-MM-DD");
+      const today = (0, import_obsidian21.moment)().format("YYYY-MM-DD");
       const index = await this.plugin.database.weeklyPlanIndex(this.plugin.settings.databasePath);
       const items = await buildWeeklyNoteList(this.app, index, today, this.plugin.knownForms());
       if (generation !== this.renderGeneration) return;
@@ -13975,7 +14010,7 @@ var WeeklyAssessmentView = class extends import_obsidian20.ItemView {
   renderHeader() {
     var _a;
     const item = this.selectedItem;
-    const today = (0, import_obsidian20.moment)().format("YYYY-MM-DD");
+    const today = (0, import_obsidian21.moment)().format("YYYY-MM-DD");
     const header = this.contentEl.createDiv({ cls: "examined-human-toolbar examined-human-weekly-toolbar" });
     const identity = header.createDiv({ cls: "examined-human-toolbar-identity" });
     identity.createEl("h2", { text: "Examined Human \u2014 Weekly Assessment" });
@@ -13996,13 +14031,13 @@ var WeeklyAssessmentView = class extends import_obsidian20.ItemView {
     });
     const submitDate = () => {
       const value = dateInput.value.trim();
-      if (!(0, import_obsidian20.moment)(value, "YYYY-MM-DD", true).isValid()) {
-        new import_obsidian20.Notice("Enter a date as YYYY-MM-DD.", 5e3);
+      if (!(0, import_obsidian21.moment)(value, "YYYY-MM-DD", true).isValid()) {
+        new import_obsidian21.Notice("Enter a date as YYYY-MM-DD.", 5e3);
         return;
       }
       const match = this.items.find((candidate) => candidate.weekStartDate <= value && candidate.weekEndDate >= value);
       if (!match) {
-        new import_obsidian20.Notice("No weekly note contains that date.", 6e3);
+        new import_obsidian21.Notice("No weekly note contains that date.", 6e3);
         return;
       }
       this.selectedWeekStart = match.weekStartDate;
@@ -14091,7 +14126,7 @@ var WeeklyAssessmentView = class extends import_obsidian20.ItemView {
         cls: "examined-human-daily-validation-note",
         text: "Importing validates and records the weekly plan. It does not write Daily Notes."
       });
-    } else if (item.weekEndDate >= (0, import_obsidian20.moment)().format("YYYY-MM-DD")) {
+    } else if (item.weekEndDate >= (0, import_obsidian21.moment)().format("YYYY-MM-DD")) {
       badge.addClass("is-ready");
       badge.setText("Ready to sync");
       section.createDiv({
@@ -14117,7 +14152,7 @@ var WeeklyAssessmentView = class extends import_obsidian20.ItemView {
     const header = block.createDiv({ cls: "examined-human-daily-output-header" });
     header.createEl("strong", { text: label });
     header.createEl("button", { text: "Copy", cls: "examined-human-toolbar-button" }).addEventListener("click", () => {
-      void navigator.clipboard.writeText(output).then(() => new import_obsidian20.Notice("Copied logger output."));
+      void navigator.clipboard.writeText(output).then(() => new import_obsidian21.Notice("Copied logger output."));
     });
     const textarea = block.createEl("textarea", {
       cls: "examined-human-daily-output",
@@ -14244,11 +14279,11 @@ var WeeklyAssessmentView = class extends import_obsidian20.ItemView {
     }
     try {
       if (item.status === "pending") await this.importSelectedWeek(item);
-      else if (item.weekEndDate >= (0, import_obsidian20.moment)().format("YYYY-MM-DD")) await this.syncSelectedWeek(item);
+      else if (item.weekEndDate >= (0, import_obsidian21.moment)().format("YYYY-MM-DD")) await this.syncSelectedWeek(item);
     } catch (error) {
       this.loggerOutput = error instanceof Error ? error.message : String(error);
       this.renderDashboard();
-      new import_obsidian20.Notice("EH Logger could not complete the weekly action.", 1e4);
+      new import_obsidian21.Notice("EH Logger could not complete the weekly action.", 1e4);
     } finally {
       if (activeButton == null ? void 0 : activeButton.isConnected) {
         activeButton.disabled = false;
@@ -14259,7 +14294,7 @@ var WeeklyAssessmentView = class extends import_obsidian20.ItemView {
   async importSelectedWeek(item) {
     var _a;
     const file = this.app.vault.getAbstractFileByPath(item.filePath);
-    if (!(file instanceof import_obsidian20.TFile)) throw new Error(`Weekly note not found: ${item.filePath}`);
+    if (!(file instanceof import_obsidian21.TFile)) throw new Error(`Weekly note not found: ${item.filePath}`);
     const request = {
       databasePath: this.plugin.settings.databasePath,
       weekStartDate: item.weekStartDate,
@@ -14287,7 +14322,7 @@ var WeeklyAssessmentView = class extends import_obsidian20.ItemView {
       ...backupMutationOutput(live)
     ].filter(Boolean).join("\n");
     await this.plugin.refreshViews();
-    new import_obsidian20.Notice(`${item.weekLabel} imported successfully.${cleanup === "removed" ? " Source form removed." : ""}`, 8e3);
+    new import_obsidian21.Notice(`${item.weekLabel} imported successfully.${cleanup === "removed" ? " Source form removed." : ""}`, 8e3);
   }
   async syncSelectedWeek(item) {
     var _a, _b, _c;
@@ -14319,13 +14354,13 @@ ${planningOutput(futureLive)}
 ${backupMutationOutput(futureLive).join("\n")}`
     ].join("\n\n");
     await this.plugin.refreshViews();
-    new import_obsidian20.Notice(`${item.weekLabel} was written to Daily Notes and future projections were refreshed.`, 1e4);
+    new import_obsidian21.Notice(`${item.weekLabel} was written to Daily Notes and future projections were refreshed.`, 1e4);
   }
   async weeklyDailyNoteRequest(item) {
-    const todayDate = (0, import_obsidian20.moment)().format("YYYY-MM-DD");
+    const todayDate = (0, import_obsidian21.moment)().format("YYYY-MM-DD");
     const first = item.weekStartDate > todayDate ? item.weekStartDate : todayDate;
     const dates = [];
-    for (let date = (0, import_obsidian20.moment)(first, "YYYY-MM-DD"); date.format("YYYY-MM-DD") <= item.weekEndDate; date = date.clone().add(1, "day")) {
+    for (let date = (0, import_obsidian21.moment)(first, "YYYY-MM-DD"); date.format("YYYY-MM-DD") <= item.weekEndDate; date = date.clone().add(1, "day")) {
       dates.push(date.format("YYYY-MM-DD"));
     }
     const notes = await Promise.all(dates.map(async (date) => {
@@ -14347,7 +14382,7 @@ ${backupMutationOutput(futureLive).join("\n")}`
     };
   }
   async planningSyncRequest() {
-    const cutoffDate = (0, import_obsidian20.moment)().format("YYYY-MM-DD");
+    const cutoffDate = (0, import_obsidian21.moment)().format("YYYY-MM-DD");
     const index = await this.plugin.database.dailyNoteIndex(this.plugin.settings.databasePath);
     const items = await buildDailyNoteList(
       this.app,
@@ -14358,7 +14393,7 @@ ${backupMutationOutput(futureLive).join("\n")}`
     const candidates = items.filter((item) => item.status === "current-future" && item.date >= cutoffDate);
     const notes = await Promise.all(candidates.map(async (item) => {
       const file = this.app.vault.getAbstractFileByPath(item.filePath);
-      if (!(file instanceof import_obsidian20.TFile)) throw new Error(`Daily Note not found: ${item.filePath}`);
+      if (!(file instanceof import_obsidian21.TFile)) throw new Error(`Daily Note not found: ${item.filePath}`);
       return {
         noteDate: item.date,
         fileName: item.fileName,
@@ -14380,18 +14415,10 @@ ${backupMutationOutput(futureLive).join("\n")}`
     panel.createDiv({ text: error instanceof Error ? error.message : String(error) });
     panel.createEl("code", { text: this.plugin.settings.databasePath || "(no path configured)" });
   }
-  async checkDatabaseFingerprint() {
-    try {
-      const fingerprint = await this.plugin.database.fingerprint(this.plugin.settings.databasePath);
-      if (this.lastFingerprint != null && fingerprint !== this.lastFingerprint && !this.plugin.logger.isRunning) await this.refresh();
-      this.lastFingerprint = fingerprint;
-    } catch (e) {
-    }
-  }
 };
 
 // src/settings.ts
-var import_obsidian21 = require("obsidian");
+var import_obsidian22 = require("obsidian");
 var DEFAULT_SETTINGS = {
   databasePath: "EH.db",
   journalFolder: DEFAULT_JOURNAL_FOLDER,
@@ -14437,7 +14464,7 @@ function scalarString(value, fallback = "") {
   return typeof value === "string" || typeof value === "number" || typeof value === "boolean" ? String(value) : fallback;
 }
 var COLOR_TYPES = [.../* @__PURE__ */ new Set([...SESSION_TYPES, ...ENGAGEMENT_TYPES])];
-var ExaminedHumanSettingTab = class extends import_obsidian21.PluginSettingTab {
+var ExaminedHumanSettingTab = class extends import_obsidian22.PluginSettingTab {
   constructor(app, plugin) {
     super(app, plugin);
     this.plugin = plugin;
@@ -14742,12 +14769,12 @@ var ExaminedHumanSettingTab = class extends import_obsidian21.PluginSettingTab {
   renderLegacyDefinition(item) {
     var _a;
     if (item.type === "page" || item.type === "group") {
-      new import_obsidian21.Setting(this.containerEl).setName(item.name).setHeading();
+      new import_obsidian22.Setting(this.containerEl).setName(item.name).setHeading();
       if (item.description) this.containerEl.createEl("p", { text: item.description, cls: "setting-item-description" });
       for (const child of (_a = item.items) != null ? _a : []) this.renderLegacyDefinition(child);
       return;
     }
-    const setting = new import_obsidian21.Setting(this.containerEl).setName(item.name).setDesc(item.description);
+    const setting = new import_obsidian22.Setting(this.containerEl).setName(item.name).setDesc(item.description);
     if (item.render) {
       item.render(setting);
       return;
@@ -14809,7 +14836,7 @@ var ExaminedHumanSettingTab = class extends import_obsidian21.PluginSettingTab {
         try {
           await this.setControlValue(control.key, value);
         } catch (caught) {
-          new import_obsidian21.Notice(caught instanceof Error ? caught.message : String(caught), 8e3);
+          new import_obsidian22.Notice(caught instanceof Error ? caught.message : String(caught), 8e3);
         }
       });
     });
@@ -14822,9 +14849,9 @@ var ExaminedHumanSettingTab = class extends import_obsidian21.PluginSettingTab {
       try {
         const result = await this.plugin.database.inspect(this.plugin.settings.databasePath);
         const range = result.firstDate && result.lastDate ? `${result.firstDate} to ${result.lastDate}` : "no dated sessions";
-        new import_obsidian21.Notice(`Examined Human database OK: ${result.sessionCount} sessions across ${result.distinctDays} days (${range}).`, 8e3);
+        new import_obsidian22.Notice(`Examined Human database OK: ${result.sessionCount} sessions across ${result.distinctDays} days (${range}).`, 8e3);
       } catch (error) {
-        new import_obsidian21.Notice(`Examined Human database error: ${error instanceof Error ? error.message : String(error)}`, 1e4);
+        new import_obsidian22.Notice(`Examined Human database error: ${error instanceof Error ? error.message : String(error)}`, 1e4);
       } finally {
         button.setDisabled(false);
       }
@@ -14832,10 +14859,10 @@ var ExaminedHumanSettingTab = class extends import_obsidian21.PluginSettingTab {
       button.setDisabled(true);
       try {
         const result = await this.plugin.logger.createDatabase(this.plugin.settings.databasePath);
-        new import_obsidian21.Notice(`Created an empty Examined Human Data Schema v${result.schemaVersion} database at ${result.databasePath}.`, 9e3);
+        new import_obsidian22.Notice(`Created an empty Examined Human Data Schema v${result.schemaVersion} database at ${result.databasePath}.`, 9e3);
         await this.plugin.refreshViews();
       } catch (error) {
-        new import_obsidian21.Notice(`Examined Human database creation failed: ${error instanceof Error ? error.message : String(error)}`, 1e4);
+        new import_obsidian22.Notice(`Examined Human database creation failed: ${error instanceof Error ? error.message : String(error)}`, 1e4);
       } finally {
         button.setDisabled(false);
       }
@@ -14882,11 +14909,11 @@ Optional canonical session types needed: ${preview.needsOptionalSessionTypes ? "
         });
         if (!confirmed) return;
         const result = await this.plugin.logger.upgradeToOfficialSchemaV1(this.plugin.settings.databasePath);
-        new import_obsidian21.Notice(`Upgraded ${result.databasePath} to official Data Schema v1. ${result.backupPath ? `Backup: ${result.backupPath}` : ""}`, 12e3);
+        new import_obsidian22.Notice(`Upgraded ${result.databasePath} to official Data Schema v1. ${result.backupPath ? `Backup: ${result.backupPath}` : ""}`, 12e3);
         await this.plugin.refreshViews();
         this.updateDeclarativeOrLegacy();
       } catch (error) {
-        new import_obsidian21.Notice(`Database upgrade was not performed: ${error instanceof Error ? error.message : String(error)}`, 12e3);
+        new import_obsidian22.Notice(`Database upgrade was not performed: ${error instanceof Error ? error.message : String(error)}`, 12e3);
       } finally {
         button.setDisabled(false);
       }
@@ -14899,8 +14926,70 @@ Optional canonical session types needed: ${preview.needsOptionalSessionTypes ? "
   }
 };
 
+// src/refresh/source-monitor.ts
+var SourceMonitor = class {
+  constructor(access) {
+    this.fingerprint = null;
+    this.signature = null;
+    this.day = null;
+    this.queue = Promise.resolve();
+    this.checking = null;
+    this.forceRequested = false;
+    this.access = access;
+  }
+  check(authoritative = false) {
+    this.forceRequested || (this.forceRequested = authoritative);
+    if (this.checking) return this.checking;
+    const run = this.enqueue(async () => {
+      do {
+        const force = this.forceRequested;
+        this.forceRequested = false;
+        await this.probe(force, true);
+      } while (this.forceRequested);
+    });
+    this.checking = run.finally(() => {
+      this.checking = null;
+    });
+    return this.checking;
+  }
+  /** Capture the source about to be rendered; later changes still notify. */
+  acknowledge() {
+    return this.enqueue(() => this.probe(true, false));
+  }
+  enqueue(operation) {
+    const run = this.queue.then(operation);
+    this.queue = run.catch(() => {
+    });
+    return run;
+  }
+  async probe(authoritative, notify) {
+    const day = this.access.day();
+    let fingerprint;
+    try {
+      fingerprint = await this.access.fingerprint();
+    } catch (error) {
+      fingerprint = `unavailable:${String(error)}`;
+    }
+    if (!authoritative && fingerprint === this.fingerprint && day === this.day) return;
+    let signature;
+    let message = "Updated data available";
+    try {
+      signature = await this.access.signature(authoritative);
+    } catch (error) {
+      signature = `unavailable:${String(error)}`;
+      message = "Database unavailable or awaiting a WAL checkpoint";
+    }
+    const changed = this.signature !== null && (signature !== this.signature || day !== this.day);
+    this.fingerprint = fingerprint;
+    this.signature = signature;
+    this.day = day;
+    if (changed && notify) this.access.changed(message);
+  }
+};
+
 // src/main.ts
 var AUTHORITATIVE_DATABASE_RELOAD_INTERVAL_MS = 10 * 60 * 1e3;
+var DATABASE_FINGERPRINT_INTERVAL_MS = 1e4;
 var COMMAND_DASHBOARD_COMMAND_ID = "open-command-dashboard";
 var COMMAND_DASHBOARD_COMMAND_NAME = "Open Command Dashboard";
 function boundedInteger(value, fallback, minimum, maximum) {
@@ -14918,13 +15007,16 @@ function storedJournalFolder(value) {
 function storedText(value, fallback) {
   return typeof value === "string" && value.trim() ? value.trim() : fallback;
 }
-var ExaminedHumanPlugin = class extends import_obsidian22.Plugin {
+var ExaminedHumanPlugin = class extends import_obsidian23.Plugin {
   constructor() {
     super(...arguments);
     this.settings = DEFAULT_SETTINGS;
     this.refreshPromise = null;
     this.todayPlanningSyncPromise = null;
     this.lastTodayPlanningSyncError = null;
+    this.sourceMonitor = null;
+    this.sourceCheckTimer = null;
+    this.sourceListeners = /* @__PURE__ */ new Set();
   }
   /** @deprecated Use logger. Retained temporarily for integration compatibility. */
   get nativeLogger() {
@@ -15034,9 +15126,62 @@ var ExaminedHumanPlugin = class extends import_obsidian22.Plugin {
       }
     });
     this.addSettingTab(new ExaminedHumanSettingTab(this.app, this));
+    this.sourceMonitor = new SourceMonitor({
+      fingerprint: async () => `${this.settings.databasePath}:${await this.database.fingerprint(this.settings.databasePath)}`,
+      signature: async (authoritative) => {
+        if (authoritative) this.database = new ExaminedHumanDatabase(this.app);
+        return this.database.contentSignature(this.settings.databasePath);
+      },
+      day: () => (0, import_obsidian23.moment)().format("YYYY-MM-DD"),
+      changed: (message) => this.notifySourceUpdates(message)
+    });
+    void this.sourceMonitor.check(true);
     this.registerInterval(window.setInterval(() => {
-      if (!this.logger.isRunning) void this.refreshViews();
+      var _a;
+      if (!this.logger.isRunning && !this.refreshPromise) void ((_a = this.sourceMonitor) == null ? void 0 : _a.check());
+    }, DATABASE_FINGERPRINT_INTERVAL_MS));
+    this.registerInterval(window.setInterval(() => {
+      var _a;
+      if (!this.logger.isRunning && !this.refreshPromise) void ((_a = this.sourceMonitor) == null ? void 0 : _a.check(true));
     }, AUTHORITATIVE_DATABASE_RELOAD_INTERVAL_MS));
+    const changedFile = (path) => {
+      if (this.logger.isRunning) return;
+      try {
+        const databasePath = this.database.normalizeVaultPath(this.settings.databasePath);
+        if (path === databasePath || path === `${databasePath}-wal`) {
+          if (this.sourceCheckTimer != null) window.clearTimeout(this.sourceCheckTimer);
+          this.sourceCheckTimer = window.setTimeout(() => {
+            var _a;
+            this.sourceCheckTimer = null;
+            if (!this.logger.isRunning && !this.refreshPromise) void ((_a = this.sourceMonitor) == null ? void 0 : _a.check(true));
+          }, 200);
+        }
+      } catch (e) {
+      }
+      this.notifySourceUpdates("Source note updated", path);
+    };
+    this.registerEvent(this.app.vault.on("modify", (file) => changedFile(file.path)));
+    this.registerEvent(this.app.vault.on("delete", (file) => changedFile(file.path)));
+    this.registerEvent(this.app.vault.on("rename", (file, oldPath) => {
+      changedFile(oldPath);
+      changedFile(file.path);
+    }));
+    this.register(() => {
+      if (this.sourceCheckTimer != null) window.clearTimeout(this.sourceCheckTimer);
+      this.sourceListeners.clear();
+    });
+  }
+  watchSourceUpdates(listener, notePath) {
+    const subscription = { listener, notePath };
+    this.sourceListeners.add(subscription);
+    return () => {
+      this.sourceListeners.delete(subscription);
+    };
+  }
+  notifySourceUpdates(message, path) {
+    for (const subscription of this.sourceListeners) {
+      if (path == null || subscription.notePath() === path) subscription.listener(message);
+    }
   }
   async loadSettings() {
     var _a;
@@ -15103,10 +15248,10 @@ var ExaminedHumanPlugin = class extends import_obsidian22.Plugin {
   async discoverFormsWithNotice() {
     try {
       const result = await this.discoverForms();
-      new import_obsidian22.Notice(`Found ${result.forms.length} EH Form${result.forms.length === 1 ? "" : "s"}; scanned ${result.scannedFileCount} changed file${result.scannedFileCount === 1 ? "" : "s"} and reused ${result.reusedFileCount} cached file${result.reusedFileCount === 1 ? "" : "s"}.`, 8e3);
+      new import_obsidian23.Notice(`Found ${result.forms.length} EH Form${result.forms.length === 1 ? "" : "s"}; scanned ${result.scannedFileCount} changed file${result.scannedFileCount === 1 ? "" : "s"} and reused ${result.reusedFileCount} cached file${result.reusedFileCount === 1 ? "" : "s"}.`, 8e3);
       await this.refreshViews();
     } catch (error) {
-      new import_obsidian22.Notice(`EH Form discovery stopped: ${error instanceof Error ? error.message : String(error)}`, 12e3);
+      new import_obsidian23.Notice(`EH Form discovery stopped: ${error instanceof Error ? error.message : String(error)}`, 12e3);
     }
   }
   async syncTodayPlanningFromDailyForm() {
@@ -15119,7 +15264,7 @@ var ExaminedHumanPlugin = class extends import_obsidian22.Plugin {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       if (message !== this.lastTodayPlanningSyncError) {
-        new import_obsidian22.Notice(`Today's Daily Form could not be projected: ${message}`, 12e3);
+        new import_obsidian23.Notice(`Today's Daily Form could not be projected: ${message}`, 12e3);
         this.lastTodayPlanningSyncError = message;
       }
     } finally {
@@ -15127,7 +15272,7 @@ var ExaminedHumanPlugin = class extends import_obsidian22.Plugin {
     }
   }
   async performTodayPlanningSync() {
-    const today = (0, import_obsidian22.moment)().format("YYYY-MM-DD");
+    const today = (0, import_obsidian23.moment)().format("YYYY-MM-DD");
     const discovery = await this.discoverForms();
     const matches = discovery.forms.filter((form) => form.kind === "daily" && form.date === today);
     if (matches.length > 1) {
@@ -15137,7 +15282,7 @@ var ExaminedHumanPlugin = class extends import_obsidian22.Plugin {
     if (matches.length === 1) {
       const discovered = matches[0];
       const file = this.app.vault.getAbstractFileByPath(discovered.filePath);
-      if (!(file instanceof import_obsidian22.TFile)) throw new Error(`Daily Form was not found: ${discovered.filePath}`);
+      if (!(file instanceof import_obsidian23.TFile)) throw new Error(`Daily Form was not found: ${discovered.filePath}`);
       const sourceText = await this.app.vault.read(file);
       const dailyForms = formsInText(file, sourceText).filter((form) => form.kind === "daily");
       if (dailyForms.length !== 1 || dailyForms[0].date !== today) {
@@ -15180,7 +15325,7 @@ var ExaminedHumanPlugin = class extends import_obsidian22.Plugin {
       await this.saveSettings();
       return true;
     } catch (error) {
-      new import_obsidian22.Notice(
+      new import_obsidian23.Notice(
         `The form import succeeded, but its EH form status could not be updated: ${error instanceof Error ? error.message : String(error)}`,
         12e3
       );
@@ -15202,7 +15347,7 @@ var ExaminedHumanPlugin = class extends import_obsidian22.Plugin {
       await this.saveSettings();
       return "removed";
     } catch (error) {
-      new import_obsidian22.Notice(
+      new import_obsidian23.Notice(
         `The form was imported successfully, but its source block was retained: ${error instanceof Error ? error.message : String(error)}`,
         12e3
       );
@@ -15211,7 +15356,7 @@ var ExaminedHumanPlugin = class extends import_obsidian22.Plugin {
   }
   async activeForm(kind) {
     const file = this.app.workspace.getActiveFile();
-    if (!(file instanceof import_obsidian22.TFile)) throw new Error("Open a Markdown note that contains the form you want to import.");
+    if (!(file instanceof import_obsidian23.TFile)) throw new Error("Open a Markdown note that contains the form you want to import.");
     const sourceText = await this.app.vault.read(file);
     const matches = formsInText(file, sourceText).filter((form) => form.kind === kind);
     if (matches.length === 0) throw new Error(`The active note contains no EH ${kind === "daily" ? "Daily" : kind === "weekly" ? "Weekly" : "Budget"} Form.`);
@@ -15244,7 +15389,7 @@ Planned time: ${preview.plannedMinutes} minutes`,
         await this.logger.importWeekly({ databasePath: this.settings.databasePath, weekStartDate: form.startDate, fileName: file.name, filePath: file.path, sourceText });
         await this.markImportedEhFormFileIfComplete(file);
         const cleanup = await this.removeImportedFormAfterImport(file, "weekly", sourceText);
-        new import_obsidian22.Notice(`Imported Weekly Form starting ${preview.weekStart}.${cleanup === "removed" ? " Source form removed." : ""}`, 8e3);
+        new import_obsidian23.Notice(`Imported Weekly Form starting ${preview.weekStart}.${cleanup === "removed" ? " Source form removed." : ""}`, 8e3);
       } else if (kind === "budget") {
         const preview = await this.logger.inspectBudget({ databasePath: this.settings.databasePath, fileName: file.name, filePath: file.path, sourceText });
         const confirmed = await confirmWeeklyAction(this.app, {
@@ -15260,9 +15405,9 @@ Expected movements: ${preview.expectedMovementCount}`,
         if (!confirmed) return;
         await this.logger.importBudget({ databasePath: this.settings.databasePath, fileName: file.name, filePath: file.path, sourceText });
         const cleanup = await this.removeImportedFormAfterImport(file, "budget", sourceText);
-        new import_obsidian22.Notice(`Imported Budget Form for ${preview.periodStart} through ${preview.periodEnd}.${cleanup === "removed" ? " Source form removed." : ""}`, 8e3);
+        new import_obsidian23.Notice(`Imported Budget Form for ${preview.periodStart} through ${preview.periodEnd}.${cleanup === "removed" ? " Source form removed." : ""}`, 8e3);
       } else {
-        const today = (0, import_obsidian22.moment)().format("YYYY-MM-DD");
+        const today = (0, import_obsidian23.moment)().format("YYYY-MM-DD");
         const noteDate = form.date;
         const request = {
           databasePath: this.settings.databasePath,
@@ -15312,18 +15457,18 @@ Expected movements: ${preview.expectedMovementCount}`,
                 preferredTarget,
                 onStaged: async () => this.importActiveForm("daily")
               });
-            }).catch((error) => new import_obsidian22.Notice(error instanceof Error ? error.message : String(error), 1e4));
+            }).catch((error) => new import_obsidian23.Notice(error instanceof Error ? error.message : String(error), 1e4));
           }
         });
         if (!confirmed) return;
         const result = await this.logger.importHistoricalDaily({ ...request, expectedDatabaseChecksum: inspection.databaseChecksum });
         await this.markImportedEhFormFileIfComplete(file);
         const cleanup = await this.removeImportedFormAfterImport(file, "daily", sourceText);
-        new import_obsidian22.Notice(`${result.replaced ? "Day replaced successfully." : "Imported successfully."}${cleanup === "removed" ? " Source form removed." : ""}`, 8e3);
+        new import_obsidian23.Notice(`${result.replaced ? "Day replaced successfully." : "Imported successfully."}${cleanup === "removed" ? " Source form removed." : ""}`, 8e3);
       }
       await this.refreshViews();
     } catch (error) {
-      new import_obsidian22.Notice(`EH Form import did not complete: ${error instanceof Error ? error.message : String(error)}`, 12e3);
+      new import_obsidian23.Notice(`EH Form import did not complete: ${error instanceof Error ? error.message : String(error)}`, 12e3);
     }
   }
   async activateView() {
@@ -15400,7 +15545,12 @@ Expected movements: ${preview.expectedMovementCount}`,
     }
   }
   async performAuthoritativeRefresh() {
+    var _a;
+    if (this.app.workspace.getLeavesOfType(EXAMINED_HUMAN_CALENDAR_VIEW_TYPE).length > 0) {
+      await this.syncTodayPlanningFromDailyForm();
+    }
     this.database = new ExaminedHumanDatabase(this.app);
+    await ((_a = this.sourceMonitor) == null ? void 0 : _a.acknowledge());
     const calendarRefreshes = this.app.workspace.getLeavesOfType(EXAMINED_HUMAN_CALENDAR_VIEW_TYPE).map(async (leaf) => {
       if (leaf.view instanceof TimelineView) await leaf.view.refresh();
     });

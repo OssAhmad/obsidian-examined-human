@@ -31,8 +31,10 @@ import { confirmDailyImport } from './DailyImportConfirmationModal.ts';
 import { dailyAssessmentTitle } from './DailyAssessmentReport.ts';
 import { openReferenceRepair } from './CommandForms.ts';
 import type { DailyNoteListItem } from './daily-note-index.ts';
+import { SourceMonitor } from './refresh/source-monitor.ts';
 
 const AUTHORITATIVE_DATABASE_RELOAD_INTERVAL_MS = 10 * 60 * 1000;
+const DATABASE_FINGERPRINT_INTERVAL_MS = 10_000;
 const COMMAND_DASHBOARD_COMMAND_ID = 'open-command-dashboard';
 const COMMAND_DASHBOARD_COMMAND_NAME = 'Open Command Dashboard';
 
@@ -63,6 +65,9 @@ export default class ExaminedHumanPlugin extends Plugin {
   private refreshPromise: Promise<void> | null = null;
   private todayPlanningSyncPromise: Promise<void> | null = null;
   private lastTodayPlanningSyncError: string | null = null;
+  private sourceMonitor: SourceMonitor | null = null;
+  private sourceCheckTimer: number | null = null;
+  private sourceListeners = new Set<{ listener: (message: string) => void; notePath: () => string | null }>();
 
   async onload(): Promise<void> {
     await this.loadSettings();
@@ -143,9 +148,55 @@ export default class ExaminedHumanPlugin extends Plugin {
       callback: () => { void this.refreshViews(); },
     });
     this.addSettingTab(new ExaminedHumanSettingTab(this.app, this));
+    this.sourceMonitor = new SourceMonitor({
+      fingerprint: async () => `${this.settings.databasePath}:${await this.database.fingerprint(this.settings.databasePath)}`,
+      signature: async (authoritative) => {
+        if (authoritative) this.database = new ExaminedHumanDatabase(this.app);
+        return this.database.contentSignature(this.settings.databasePath);
+      },
+      day: () => moment().format('YYYY-MM-DD'),
+      changed: (message) => this.notifySourceUpdates(message),
+    });
+    void this.sourceMonitor.check(true);
     this.registerInterval(window.setInterval(() => {
-      if (!this.logger.isRunning) void this.refreshViews();
+      if (!this.logger.isRunning && !this.refreshPromise) void this.sourceMonitor?.check();
+    }, DATABASE_FINGERPRINT_INTERVAL_MS));
+    this.registerInterval(window.setInterval(() => {
+      if (!this.logger.isRunning && !this.refreshPromise) void this.sourceMonitor?.check(true);
     }, AUTHORITATIVE_DATABASE_RELOAD_INTERVAL_MS));
+    const changedFile = (path: string): void => {
+      if (this.logger.isRunning) return;
+      try {
+        const databasePath = this.database.normalizeVaultPath(this.settings.databasePath);
+        if (path === databasePath || path === `${databasePath}-wal`) {
+          if (this.sourceCheckTimer != null) window.clearTimeout(this.sourceCheckTimer);
+          this.sourceCheckTimer = window.setTimeout(() => {
+            this.sourceCheckTimer = null;
+            if (!this.logger.isRunning && !this.refreshPromise) void this.sourceMonitor?.check(true);
+          }, 200);
+        }
+      } catch { /* An invalid source is surfaced by the shared checker. */ }
+      this.notifySourceUpdates('Source note updated', path);
+    };
+    this.registerEvent(this.app.vault.on('modify', (file) => changedFile(file.path)));
+    this.registerEvent(this.app.vault.on('delete', (file) => changedFile(file.path)));
+    this.registerEvent(this.app.vault.on('rename', (file, oldPath) => { changedFile(oldPath); changedFile(file.path); }));
+    this.register(() => {
+      if (this.sourceCheckTimer != null) window.clearTimeout(this.sourceCheckTimer);
+      this.sourceListeners.clear();
+    });
+  }
+
+  watchSourceUpdates(listener: (message: string) => void, notePath: () => string | null): () => void {
+    const subscription = { listener, notePath };
+    this.sourceListeners.add(subscription);
+    return () => { this.sourceListeners.delete(subscription); };
+  }
+
+  private notifySourceUpdates(message: string, path?: string): void {
+    for (const subscription of this.sourceListeners) {
+      if (path == null || subscription.notePath() === path) subscription.listener(message);
+    }
   }
 
   async loadSettings(): Promise<void> {
@@ -546,7 +597,14 @@ export default class ExaminedHumanPlugin extends Plugin {
     // Recreate the source boundary before every global/manual refresh. ExaminedHumanDatabase
     // never retains an open SQLite database, but this also discards any future
     // per-instance state and makes the physical vault file authoritative.
+    // Resolve today's optional projection before readers load and before the
+    // shared baseline is acknowledged, avoiding a second notification for our
+    // own refresh-triggered write.
+    if (this.app.workspace.getLeavesOfType(EXAMINED_HUMAN_CALENDAR_VIEW_TYPE).length > 0) {
+      await this.syncTodayPlanningFromDailyForm();
+    }
     this.database = new ExaminedHumanDatabase(this.app);
+    await this.sourceMonitor?.acknowledge();
     const calendarRefreshes = this.app.workspace.getLeavesOfType(EXAMINED_HUMAN_CALENDAR_VIEW_TYPE)
       .map(async (leaf) => {
         if (leaf.view instanceof TimelineView) await leaf.view.refresh();

@@ -133,6 +133,13 @@ export class ExaminedHumanDatabase {
     return `${stats.size}:${stats.mtime}:wal:${walFingerprint}`;
   }
 
+  async contentSignature(databasePath: string): Promise<string> {
+    const bytes = await this.readBytes(databasePath);
+    const digest = await crypto.subtle.digest('SHA-256', bytes.slice().buffer);
+    const checksum = Array.from(new Uint8Array(digest), (value) => value.toString(16).padStart(2, '0')).join('');
+    return `${this.normalizeVaultPath(databasePath)}:${checksum}`;
+  }
+
   private async readBytes(databasePath: string): Promise<Uint8Array> {
     const normalizedPath = this.normalizeVaultPath(databasePath);
     const walStats = await this.app.vault.adapter.stat(`${normalizedPath}-wal`);

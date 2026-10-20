@@ -131,6 +131,9 @@ The source database is read into memory for each inspection or range query. sql.
 
 - `src/main.ts` — plugin lifecycle, settings load/save, view registration, ribbon icon, commands, and refreshing all open dashboard views.
 - `src/plugin-services.ts` — stable capability contract supplied to views and staging workflows, avoiding dependencies on the complete plugin lifecycle class.
+- `src/refresh/source-monitor.ts` — one serialized fingerprint/content-signature checker shared by file events, ten-second polling, and ten-minute authoritative source checks.
+- `src/refresh/reading-view.ts` — non-disruptive update notices, deduplicated explicit redraws, and scroll preservation shared by all EH reading views.
+- `src/refresh/scroll-state.ts` — outer and nested scroll capture/restoration, including sidebars, timelines, and horizontal tables.
 - `src/examined-human-database.ts` — resolves configured paths, reads database bytes, initializes SQL.js, creates short-lived read-only database instances, and computes file fingerprints.
 - `src/sql-runtime.ts` — shared, embedded SQL.js initialization used by the isolated reader and writer services.
 - `src/read-models/` — owns every feature query contract, shared SQL/schema/value helpers, and the extracted command catalog, database inspection, weekly, nutrition, and exercise implementations.
@@ -311,14 +314,16 @@ Events that meet exactly at an endpoint do not overlap. The algorithm is determi
 
 ## Refresh behavior
 
-There are four refresh paths:
+Source freshness and visible redraws are separate:
 
-1. Every toolbar Refresh button and the refresh command rebuild the `ExaminedHumanDatabase` source boundary, then refresh every open Examined Human view from physical vault bytes.
-2. A vault `modify` event refreshes immediately when the configured database changes.
-3. A ten-second main-file/WAL size/mtime fingerprint poll detects ordinary changes that do not produce a usable vault event.
-4. A plugin-level ten-minute timer performs an unconditional authoritative reload even when another app preserves the same file metadata or Obsidian misses the external change entirely.
+1. Every toolbar/notice Refresh button and the refresh command rebuild the `ExaminedHumanDatabase` source boundary and refresh every open EH view. Today's optional Calendar projection is reconciled before the shared source baseline and readers are loaded. Controlled import actions also request this explicit global refresh.
+2. Database/WAL file events are debounced and share one serialized checker with the ten-second size/mtime poll. When metadata changes, a SHA-256 content signature distinguishes an actual source change from metadata-only changes. A single change produces one update notification even if both an event and a poll detect it.
+3. The ten-minute timer unconditionally rebuilds the source boundary and checks the physical bytes, detecting external writers that preserve metadata or emit no event. An unchanged source performs no DOM work and displays no notice. Date rollover is also detected for date-relative views.
+4. A background change displays an undismissed, per-view “Updated data available” notice with a Refresh button. The existing report/grid remains mounted until the user chooses Refresh. Selected Daily/Weekly source-note edits and Weekly note structural events also notify instead of rebuilding the reading view. Unavailable/WAL-blocked sources show an explicit source-status notice without reading stale main-file bytes.
 
-Engagement, Finance, Nutrition, and Exercise dashboards participate in all four paths. Engagement preserves its selected item, canonical-name/alias search, and taxonomy filters; the shared analytical views preserve date range and Finance also preserves its currency filter.
+Calendar, Daily/Weekly Assessment, Command Center, Engagement, Finance, Nutrition, and Exercise share `ReadingView`. It captures outer and nested scrolling before an explicit redraw and restores it after renderer initialization frames, including zero-position timelines. Duplicate redraw requests for the same context share one promise; navigation during an in-flight redraw schedules the latest context. Late frames cannot restore a different selected day. Calendar additionally preserves fractional horizontal offsets and ignores obsolete grid restoration frames. Navigation to a different date/range starts the new context normally. Notices are mounted outside the scrolling content, so they neither replace the page nor shift its layout. Subscriptions are released when a view closes.
+
+Engagement preserves its selected item, canonical-name/alias search, and taxonomy filters; analytical dashboards preserve date range and Finance also preserves its currency filter. This behavior uses no new persisted settings.
 
 The fingerprint mechanism does not continuously hold the database open. Every query constructs a new sql.js database from freshly read bytes and closes it in `finally`; no SQLite database image is intentionally retained between renders. Failed polls are ignored so a transient replacement or lock can recover on the next interval. Query failures render an in-view error with the configured path and recovery instructions.
 

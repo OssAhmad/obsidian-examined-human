@@ -1,4 +1,5 @@
-import { ItemView, moment, normalizePath, Notice, TFile, WorkspaceLeaf } from 'obsidian';
+import { ReadingView } from './refresh/reading-view.ts';
+import { moment, Notice, TFile, WorkspaceLeaf } from 'obsidian';
 import type { FormWorkflowServices } from './plugin-services.ts';
 import { buildDailyNoteList, type DailyNoteListItem } from './daily-note-index.ts';
 import { confirmMealImport } from './MealImportConfirmationModal.ts';
@@ -18,13 +19,12 @@ import {
 
 export const EXAMINED_HUMAN_DAILY_ASSESSMENT_VIEW_TYPE = 'examined-human-daily-assessment';
 
-const FINGERPRINT_INTERVAL_MS = 10_000;
 
 function formatDecimal(value: number): string {
   return value.toFixed(2);
 }
 
-export class DailyAssessmentView extends ItemView {
+export class DailyAssessmentView extends ReadingView {
   private selectedDate: string | null = null;
   private items: DailyNoteListItem[] = [];
   private selectedItem: DailyNoteListItem | null = null;
@@ -34,12 +34,10 @@ export class DailyAssessmentView extends ItemView {
   private standaloneMealInspection: MealInspection | null = null;
   private loggerOutput: string | null = null;
   private renderGeneration = 0;
-  private fingerprintTimer: number | null = null;
-  private lastFingerprint: string | null = null;
   private actionButton: HTMLButtonElement | null = null;
 
   constructor(leaf: WorkspaceLeaf, private plugin: FormWorkflowServices) {
-    super(leaf);
+    super(leaf, plugin);
   }
 
   getViewType(): string {
@@ -54,34 +52,21 @@ export class DailyAssessmentView extends ItemView {
     return 'clipboard-check';
   }
 
+  protected scrollContext(): string { return this.selectedDate ?? ''; }
+  protected sourceNotePath(): string | null { return this.selectedItem?.filePath ?? null; }
+
   async onOpen(): Promise<void> {
+    this.startReadingUpdates();
     this.contentEl.addClass('examined-human-daily-view');
     await this.refresh();
-    this.registerEvent(this.app.vault.on('modify', (file) => {
-      try {
-        const databaseChanged = normalizePath(file.path)
-          === this.plugin.database.normalizeVaultPath(this.plugin.settings.databasePath);
-        const selectedNoteChanged = file.path === this.selectedItem?.filePath;
-        if ((databaseChanged || selectedNoteChanged)
-          && !this.plugin.logger.isRunning) void this.refresh();
-      } catch {
-        // The visible error state explains invalid paths.
-      }
-    }));
-    try {
-      this.lastFingerprint = await this.plugin.database.fingerprint(this.plugin.settings.databasePath);
-    } catch {
-      this.lastFingerprint = null;
-    }
-    this.fingerprintTimer = window.setInterval(() => { void this.checkDatabaseFingerprint(); }, FINGERPRINT_INTERVAL_MS);
   }
 
   async onClose(): Promise<void> {
-    if (this.fingerprintTimer != null) window.clearInterval(this.fingerprintTimer);
+    this.stopReadingUpdates();
     this.contentEl.empty();
   }
 
-  async refresh(): Promise<void> {
+  protected async refreshContent(): Promise<void> {
     const generation = ++this.renderGeneration;
     this.contentEl.empty();
     this.contentEl.addClass('examined-human-daily-view');
@@ -620,17 +605,5 @@ export class DailyAssessmentView extends ItemView {
     panel.createDiv({ text: error instanceof Error ? error.message : String(error) });
   }
 
-  private async checkDatabaseFingerprint(): Promise<void> {
-    try {
-      const fingerprint = await this.plugin.database.fingerprint(this.plugin.settings.databasePath);
-      if (this.lastFingerprint != null
-        && fingerprint !== this.lastFingerprint
-        && !this.plugin.logger.isRunning) {
-        await this.refresh();
-      }
-      this.lastFingerprint = fingerprint;
-    } catch {
-      // The visible error state or next successful poll will explain/recover.
-    }
-  }
+
 }
