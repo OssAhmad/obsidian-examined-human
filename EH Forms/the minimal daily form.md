@@ -4,6 +4,9 @@ EH form: <% "unimported" %>
 
 # Examined Human Daily Form
 
+> [!info] Health collection design draft
+> Medication and Symptoms below are proposed sections, not implemented imports. The current Daily importer skips their contents, and full Daily reimport rejects these headings even when empty. Retain your source notes and disable automatic Daily Form cleanup while using these sections. See the [README health definitions](../README.md#health-collection-drafts).
+
 #### EH Daily Form
 date: <% tp.file.title %>
 
@@ -52,6 +55,26 @@ ENTRIES:
 
 
 ###### Snacks
+ENTRIES:
+
+
+##### Medication
+
+FORMAT:
+`time (hh:mm) | medication | amount | notes`
+
+Use a canonical medication name or alias. The proposed `medications` table supplies its required dose unit. Blank means unrecorded; a standalone `none` explicitly means no medication was taken that day.
+
+ENTRIES:
+
+
+##### Symptoms
+
+FORMAT:
+`time (hh:mm) | symptom | notes`
+
+Use a canonical name or alias; all three fields are required. Blank means unrecorded; a standalone `none` explicitly means no symptoms were experienced that day.
+
 ENTRIES:
 
 

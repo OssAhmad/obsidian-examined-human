@@ -114,6 +114,13 @@ The repository includes both explained and minimal versions:
 - [Minimal Weekly Form](<EH Forms/the minimal weekly form.md>)
 - [Minimal Budget Form](<EH Forms/the minimal budget form.md>)
 
+Health collection drafts are also available:
+
+- [Medical Form with explanations](<EH Forms/the medical form with explanations.md>)
+- [Minimal Medical Form](<EH Forms/the minimal medical form.md>)
+
+The Daily templates now include proposed Medication and Symptoms sections. These additions and the Medical Forms are **collection design drafts, not supported imports**. Read [Health collection drafts](#health-collection-drafts) before using them with the current plugin.
+
 Start with the explained forms. Use the minimal forms after the entry formats feel familiar.
 
 Copy the forms into your Obsidian template system or paste them into notes manually. If you do not use the Templater community plugin, replace expressions such as `<% tp.file.title %>` with the real ISO date yourself.
@@ -251,6 +258,94 @@ Importing the same start and end dates again updates that budget.
 The Command Center manages your canonical foods, engagements, exercises, accounts, aliases, and valuation rates. Its actions are intentionally staged into a selected unimported Daily Form so you can read the exact change before importing it.
 
 The Financial Dashboard uses the same pattern for opening balances and reconciliations: it stages a normal, clearly marked transaction in a Daily Form. The Daily Form import is the step that applies it.
+
+## Health collection drafts
+
+This section defines the proposed user workflow and vocabulary. **Health catalogs, discovery of Medical Forms, health validation, parsing, importing, and dashboard display are not implemented.** The current Daily importer skips Medication and Symptoms contents; full Daily reimport rejects those section headings even when empty. Keep the original notes and disable automatic Daily Form cleanup on notes containing health entries. The Medical templates use `EH form: false` to keep these drafts out of current discovery.
+
+The collection workflow has two parts:
+
+- **During an ordinary day**, a person or agent records doses actually taken and symptoms actually experienced in that day's Daily Form. Blank sections remain unrecorded; an explicit `none` records an absence.
+- **When a medical report is available**, a person or agent retains the source document and transcribes it into one Medical Form, using compact Measurements and Procedures rows. A laboratory report with 34 results is one form. A hospital discharge summary describing several days of treatment is also one form. Each separate report has its own form; do not create a separate form per result or maintain one growing form for an entire medical episode.
+
+The scope is high-quality collection: preserve identities, observations, context, dates, and source material. Report generation and interpretation are outside this collection design.
+
+### Daily Medication and Symptoms
+
+The proposed sections appear in both [Daily Form templates](<EH Forms/the daily form with explanations.md>):
+
+| Section | Entry format | Meaning |
+| --- | --- | --- |
+| Medication | `time (hh:mm) \| medication \| amount \| notes` | One dose actually taken; its canonical record in the proposed `medications` table supplies the amount's unit. |
+| Symptoms | `time (hh:mm) \| symptom \| notes` | One symptom occurrence, with its context in the person's own words. |
+
+Every field in these rows is required. Times use 24-hour `HH:mm`; names can be canonical names or aliases. Notes hold context such as route for medication, or onset, duration, severity, and interference with work for symptoms. There is no separate symptom severity field and no optional-column variant. Use `none` in a notes field when there is no additional context. Missing facts must not be filled with guessed times, identities, or amounts.
+
+Medication must be defined in a **canonical `medications` table with units**. This is a collection requirement for the future schema, not a table created by this documentation change. Each canonical record requires a name and one dose unit, such as `tablet`, `mL`, or `mg`, and identifies the product's strength and formulation where relevant. Aliases point to the same canonical medication record. A bare medication name without a defined unit is insufficient for recording an amount.
+
+For a product named `Example medicine 10 mg tablet` with dose unit `tablet`, an amount of `1` means one tablet, not one mg. An alias must identify the same product, not silently combine different strengths or formulations. The entering person or agent checks the canonical unit, converts only when the conversion is established, and retains the original amount and unit in notes when converted. Resolve missing catalog records or units instead of guessing. The intended intake record retains the unit used at entry so a later catalog edit cannot relabel historical doses. Prescriptions, planned doses, and skipped doses do not belong in Medication.
+
+The proposed symptom catalog groups equivalent symptom names while retaining each entry's original notes. Headaches, runny nose, abdominal pain, drowsiness, brain fog, and everyday allergic symptoms or reactions belong here. A clinician's documented finding belongs in the Medical Form for that report. Repeated occurrences can have separate timestamped rows. Health catalogs and their alias-management workflow remain to be implemented; existing Admin Events do not yet create these records.
+
+For example, these are symptom rows:
+
+```text
+10:30 | Headache | Started while working; distracting, but I continued.
+14:15 | Brain fog | Felt fuzzy and struggled to follow my reading.
+```
+
+To explicitly record a symptom-free day, write:
+
+```markdown
+##### Symptoms
+
+ENTRIES:
+none
+```
+
+The same standalone `none` in Medication means no medication was taken that day. It must be the only entry in that section. An empty or omitted section means **unrecorded**, never `none`, zero, or a negative observation. The two sections are independent. A `none` used inside a row's notes field means only that there are no additional notes.
+
+### Medical Form: one source report
+
+Use the [explained Medical Form](<EH Forms/the medical form with explanations.md>) or the [minimal Medical Form](<EH Forms/the minimal medical form.md>). It begins with `#### EH Medical Form`, has one Measurements section and one Procedures section, and ends with `#### END`. There are no separate sections for Vital Signs, Conditions, or Allergies.
+
+The header records shared context once:
+
+| Field | Definition |
+| --- | --- |
+| `report` | A descriptive title for this source report or consultation record. |
+| `performed` | Sample collection, examination, or treatment date; use `YYYY-MM-DD`, optionally followed by `HH:mm`. A report covering several days can use `YYYY-MM-DD to YYYY-MM-DD`. |
+| `reported` | Date the report was issued or the clinician documented the findings, optionally followed by `HH:mm`; distinct from when it was received or entered. |
+| `source` | Vault-relative path to the original report or consultation note. |
+
+Unknown header dates or an unavailable source path stay blank. A filename is not evidence of when a sample was collected. When a hospital summary or another complex report contains entries from different dates, preserve each known date, time, page, or location in the relevant row's notes. Do not assign the report's issue or discharge date to every measurement or procedure. Keep the source document available for details that are not extracted.
+
+### Measurements, values, and units
+
+Measurements use `measurement | value | notes`. A measurement is the thing observed; its proposed catalog definition supplies a canonical name, aliases, accepted value type, and a unit when applicable. A value is the result recorded for this observation. The word **value** includes qualitative and textual results as well as amounts.
+
+| Example measurement | Example value | Intended value type |
+| --- | --- | --- |
+| Systolic blood pressure | `118` | Numeric, in the catalog unit. |
+| Blood in urine | `no` | Qualitative. |
+| Urine protein | `trace` | Qualitative. |
+| A laboratory measurement | `<0.01` | Numeric with its comparison operator preserved. |
+| Chest X-ray impression | Written conclusion from the report | Text. |
+| Clinician assessment | The clinician's recorded assessment | Text. |
+
+The examples describe entry shapes, not facts about a user. Accepted values depend on the measurement. `No`, `negative`, `trace`, `indeterminate`, and `not performed` must retain their distinct meanings where applicable; do not force them into numeric zero or infer them from a missing result.
+
+For numeric measurements, the entering person or agent converts the source value into the catalog's unit when the conversion is established. Preserve the original value and unit in notes when converting, and retain the source report's reference range and flag when supplied. Resolve uncertain conversions instead of guessing. The intended database record must snapshot the unit used at import so later catalog edits cannot relabel historical values. A bare number alone cannot prove that a conversion was correct.
+
+Use separate rows for each component result of a panel such as a CBC. Preserve distinctions such as left/right or specimen when they identify different measurements; aliases must not collapse different measurements. Multiple observations of the same measurement in one report remain separate rows, with their dates and context in notes.
+
+X-ray, ultrasound, endoscopy, and other narrative findings fit the same format: extract clearly identifiable measurements and preserve useful written findings or the report's impression as text-valued rows. Do not force every sentence into a number or yes/no answer. Long text may wrap visually in the editor; retain the original report for the full narrative. Exact escaping and multiline parser rules are implementation details, not new entry fields in this collection draft.
+
+### Procedures
+
+Procedures use `procedure | notes`. The canonical procedure name or alias identifies what was done; notes retain its known date, time, site, laterality, and other context. Examples include chest tube insertion, chest tube removal, endoscopy, and ultrasound. Findings from those procedures belong in Measurements in the same form. A recommendation or order must not be entered as though the procedure was performed.
+
+Leave an unrecorded Medical section blank. A standalone `none` is an explicit assertion of no entries for that section and must not be mixed with rows. A negative value in one measurement row applies only to that measurement. Further sections and additional columns are unnecessary for the agreed collection workflow.
 
 ## Refreshing without losing your place
 
@@ -391,6 +486,8 @@ Keep independent vault backups, especially before connecting or upgrading an exi
 ## Current boundaries
 
 Examined Human does not provide reminders, notifications, automatic exchange rates, market-price fetching, recurring transactions, medical records, recurrence rules, calendar synchronization, or automatic repair of ambiguous old data. Sessions that cross midnight must be split across two dates.
+
+The [health collection drafts](#health-collection-drafts) document proposed forms and Daily sections; they do not add medical-record support to the current release.
 
 These limits keep the system focused on deliberate recording, reviewable plans, and evidence you control.
 
