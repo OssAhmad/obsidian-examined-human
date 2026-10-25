@@ -46,6 +46,7 @@ function labeledDate(formText: string, label: string): string | null {
 }
 
 function formDates(kind: EhFormKind, formText: string): Pick<CachedEhForm, 'date' | 'startDate' | 'endDate'> {
+  if (kind === 'medical') return { date: labeledDate(formText, 'reported'), startDate: null, endDate: null };
   if (kind === 'daily') {
     const date = labeledDate(formText, 'date');
     if (!date) throw new Error('EH Daily Form requires a valid date: YYYY-MM-DD field.');
@@ -123,7 +124,7 @@ export function sanitizeFormDiscoveryCache(value: unknown): FormDiscoveryCache {
     if (!Number.isFinite(entry.mtime) || !Number.isFinite(entry.size) || !Array.isArray(entry.forms)) continue;
     const forms = entry.forms.filter((form): form is CachedEhForm => (
       !!form && typeof form === 'object'
-       && ['daily', 'weekly', 'budget'].includes(form.kind)
+       && ['daily', 'weekly', 'budget', 'medical'].includes(form.kind)
     )).map((form) => ({
       kind: form.kind,
       date: typeof form.date === 'string' ? form.date : null,

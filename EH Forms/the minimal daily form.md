@@ -4,8 +4,8 @@ EH form: <% "unimported" %>
 
 # Examined Human Daily Form
 
-> [!info] Health collection design draft
-> Medication and Symptoms below are proposed sections, not implemented imports. The current Daily importer skips their contents, and full Daily reimport rejects these headings even when empty. Retain your source notes and disable automatic Daily Form cleanup while using these sections. See the [README health definitions](../README.md#health-collection-drafts).
+> [!info] Medication and Symptoms
+> These sections are included in full Daily import and reimport. Existing databases need **Upgrade medical database** first. Define canonical medications with dose units, symptoms, and aliases through **Manage health catalogs**. Blank means unrecorded; standalone `none` means explicitly none. See the [README](../README.md#health-records).
 
 #### EH Daily Form
 date: <% tp.file.title %>
@@ -63,7 +63,7 @@ ENTRIES:
 FORMAT:
 `time (hh:mm) | medication | amount | notes`
 
-Use a canonical medication name or alias. The proposed `medications` table supplies its required dose unit. Blank means unrecorded; a standalone `none` explicitly means no medication was taken that day.
+Use a canonical medication name or alias. The `medications` table supplies its required dose unit. Blank means unrecorded; a standalone `none` explicitly means no medication was taken that day.
 
 ENTRIES:
 

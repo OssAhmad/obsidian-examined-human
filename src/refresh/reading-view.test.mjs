@@ -9,6 +9,7 @@ const { EngagementDashboardView } = await import('../EngagementDashboardView.ts'
 const { FinancialDashboardView } = await import('../FinancialDashboardView.ts');
 const { NutritionDashboardView } = await import('../NutritionDashboardView.ts');
 const { ExerciseDashboardView } = await import('../ExerciseDashboardView.ts');
+const { RecordsView } = await import('../RecordsView.ts');
 const { CommandCenterView } = await import('../CommandCenterView.ts');
 
 let frames = [];
@@ -44,7 +45,7 @@ function fixture(Type = ReadingView) {
 
 test('all EH views retain their rendered page on background updates and preserve nested scroll on refresh', async () => {
   for (const Type of [DailyAssessmentView, WeeklyAssessmentView, EngagementDashboardView, FinancialDashboardView,
-    NutritionDashboardView, ExerciseDashboardView, CommandCenterView, TimelineView]) {
+    NutritionDashboardView, ExerciseDashboardView, CommandCenterView, TimelineView, RecordsView]) {
     const { view, listeners, renders, refreshes } = fixture(Type);
     view.startReadingUpdates();
     await view.refresh(); flushFrames();

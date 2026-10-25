@@ -1,3 +1,4 @@
+import { inspectDailyHealth, writeDailyHealth, type DailyHealth } from './daily-health.ts';
 import type { Database, SqlValue } from 'sql.js';
 import { inferDailyActivity, inferSleepHours, type DailySessionSignal } from '../daily-inference.ts';
 import { normalizeValuationUnit } from '../domain/valuation.ts';
@@ -106,6 +107,7 @@ export interface DailyInspection {
   warnings: string[];
   completeness: DashboardCompleteness;
   preview: {
+    health?: DailyHealth;
     daily_metrics: Record<string, string | number | null>;
     meals: Array<{
       meal_type: string;
@@ -206,6 +208,7 @@ interface ParsedMilestone {
 }
 
 interface ParsedDailyNote {
+  health?: DailyHealth;
   metrics: Record<string, string | number | null>;
   sessions: ParsedSession[];
   transactions: ParsedTransaction[];
@@ -422,6 +425,7 @@ function parseDaily(db: Database, sourceText: string, noteDate: string, threshol
   const formBody = dailyFormBody(sourceText, noteDate);
   const sections = sectionsFromForm(sourceText, noteDate);
   const metrics = metricMap(sections.get('daily metrics'), errors);
+  const health = inspectDailyHealth(db, dailyFormBody(sourceText, noteDate));
   const sessions: ParsedSession[] = entries(sections.get('sessions')).map((line, index) => {
     const fields = parseSessionRowFields(line);
     if (!fields) errors.push(`Invalid session row '${line}'; expected ${SESSION_ROW_FORMAT}.`);
@@ -472,7 +476,7 @@ function parseDaily(db: Database, sourceText: string, noteDate: string, threshol
     return { command: parts[0] ?? '', args: parts.slice(1), raw: line };
   });
   return {
-    metrics, sessions, transactions, exercises, milestones, valuationRates,
+    health, metrics, sessions, transactions, exercises, milestones, valuationRates,
     stoicism: { score, notes }, adminEvents,
     mealInspection: inspectMeals(db, formBody, thresholds),
   };
@@ -691,6 +695,7 @@ function inspectionFor(
       valuation_rate_count: parsed.valuationRates.length,
     },
     preview: {
+      health: parsed.health,
       daily_metrics: {
         ...Object.fromEntries(METRIC_FIELDS.map((field) => [field, parsed.metrics[field] ?? null])),
         notes: parsed.metrics.notes ?? null,
@@ -820,8 +825,8 @@ function validateReplacementForm(sourceText: string, date: string): void {
   }
   const body = dailyFormBody(sourceText, date);
   const seen = new Set<string>();
-  const known = new Set(['daily metrics', 'sessions', 'meals', 'transactions', 'exercise details', 'milestones', 'stoicism', 'admin events', 'valuation rates']);
-  const rowSections = new Set(['sessions', 'transactions', 'exercise details', 'milestones', 'admin events', 'valuation rates']);
+  const known = new Set(['daily metrics', 'sessions', 'meals', 'transactions', 'exercise details', 'milestones', 'stoicism', 'admin events', 'valuation rates', 'medication', 'symptoms']);
+  const rowSections = new Set(['sessions', 'transactions', 'exercise details', 'milestones', 'admin events', 'valuation rates', 'medication', 'symptoms']);
   for (const match of body.matchAll(/^#####(?!#)[ \t]+(.+?)[ \t]*$/gm)) {
     const name = match[1].trim().toLowerCase();
     if (!known.has(name)) throw new Error(`Reimport has an unrecognized section '${match[1]}'. Correct its heading so entries are not silently discarded.`);
@@ -917,6 +922,8 @@ function writeDailyNote(db: Database, input: DailyNoteInput): DailyImportResult 
     metrics.studied ?? 0, metrics.worked ?? 0, metrics.exercised ?? 0,
     typeof metrics.notes === 'string' ? metrics.notes : null,
   ] as SqlValue[]);
+
+  if (parsed.health) writeDailyHealth(db, input.noteDate, parsed.health);
 
   if (parsed.stoicism.score || parsed.stoicism.notes) {
     db.run('INSERT INTO stoicism_entries (date, score, notes) VALUES (?, ?, ?)', [

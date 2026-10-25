@@ -1,3 +1,5 @@
+import { RecordsView, RECORDS_VIEW_TYPE } from './RecordsView.ts';
+import { importMedicalActiveFile, openHealthCatalog, upgradeMedicalDatabase } from './MedicalForms.ts';
 import { moment, Notice, Plugin, TFile } from 'obsidian';
 import { ExaminedHumanDatabase } from './examined-human-database.ts';
 import { DailyAssessmentView, EXAMINED_HUMAN_DAILY_ASSESSMENT_VIEW_TYPE } from './DailyAssessmentView.ts';
@@ -86,6 +88,15 @@ export default class ExaminedHumanPlugin extends Plugin {
     this.registerView(EXAMINED_HUMAN_FINANCIAL_DASHBOARD_VIEW_TYPE, (leaf) => new FinancialDashboardView(leaf, this));
     this.registerView(EXAMINED_HUMAN_NUTRITION_DASHBOARD_VIEW_TYPE, (leaf) => new NutritionDashboardView(leaf, this));
     this.registerView(EXAMINED_HUMAN_EXERCISE_DASHBOARD_VIEW_TYPE, (leaf) => new ExerciseDashboardView(leaf, this));
+    this.registerView(RECORDS_VIEW_TYPE, leaf => new RecordsView(leaf, this));
+    this.addCommand({ id: 'import-medical-form-from-active-file', name: 'Import or reimport Medical Form from Active File', callback: () => { void importMedicalActiveFile(this); } });
+    this.addCommand({ id: 'upgrade-medical-database', name: 'Upgrade medical database', callback: () => { void upgradeMedicalDatabase(this); } });
+    this.addCommand({ id: 'manage-health-catalogs', name: 'Manage health catalogs', callback: () => openHealthCatalog(this) });
+    this.addCommand({ id: 'open-records', name: 'Imported forms and health records', callback: () => { void (async () => {
+      let leaf = this.app.workspace.getLeavesOfType(RECORDS_VIEW_TYPE)[0];
+      if (!leaf) { leaf = this.app.workspace.getLeaf('tab'); await leaf.setViewState({ type: RECORDS_VIEW_TYPE, active: true }); }
+      await this.app.workspace.revealLeaf(leaf);
+    })(); } });
     this.addRibbonIcon('calendar-clock', 'Open Examined Human calendar', () => { void this.activateView(); });
     this.addCommand({
       id: 'open-daily-assessment',
@@ -333,15 +344,17 @@ export default class ExaminedHumanPlugin extends Plugin {
     try {
       const sourceText = await this.app.vault.read(file);
       const forms = formsInText(file, sourceText);
-      const [dailyIndex, weeklyIndex] = await Promise.all([
+      const [dailyIndex, weeklyIndex, medicalPaths] = await Promise.all([
         this.database.dailyNoteIndex(this.settings.databasePath),
         this.database.weeklyPlanIndex(this.settings.databasePath),
+        this.database.medicalImportPaths(this.settings.databasePath, file.path),
       ]);
       const complete = fileHasCompletedImportableForms(
         forms,
         file.path,
         dailyIndex.importedNotes,
         weeklyIndex.importedPlans,
+        medicalPaths,
       );
       if (!complete) return false;
 
@@ -370,6 +383,7 @@ export default class ExaminedHumanPlugin extends Plugin {
     kind: EhFormKind,
     importedSourceText: string,
   ): Promise<'disabled' | 'removed' | 'retained'> {
+    if (kind === 'medical') return 'disabled';
     const enabled = kind === 'daily'
       ? this.settings.removeFormAfterDailyImport
       : kind === 'weekly'
@@ -637,7 +651,11 @@ export default class ExaminedHumanPlugin extends Plugin {
       .map(async (leaf) => {
         if (leaf.view instanceof ExerciseDashboardView) await leaf.view.refresh();
       });
+    const recordsRefreshes = this.app.workspace.getLeavesOfType(RECORDS_VIEW_TYPE).map(async leaf => {
+      if (leaf.view instanceof RecordsView) await leaf.view.refresh();
+    });
     await Promise.all([
+      ...recordsRefreshes,
       ...calendarRefreshes,
       ...weeklyRefreshes,
       ...dailyRefreshes,

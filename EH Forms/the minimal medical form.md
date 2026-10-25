@@ -1,17 +1,19 @@
 ---
-EH form: false
+EH form: <% "unimported" %>
 ---
 
 # Examined Human Medical Form
 
-> [!info] Collection design draft
-> This form is for reviewing the proposed collection workflow. Medical discovery, catalog management, validation, and import are not implemented. Keep `EH form: false` while drafting. See the [README health definitions](../README.md#health-collection-drafts) and the [explained Medical Form](the%20medical%20form%20with%20explanations.md).
+> [!info] Importing this form
+> Run **Examined Human: Upgrade medical database** once for an existing database. Define its person, canonical measurements (with units and value types), procedures, and aliases through **Manage health catalogs**. Then run **Import or reimport Medical Form from Active File**, review the entries, and confirm. Reimport replaces only this report's entries after acknowledgement and a backup. The source note is retained. See the [README](../README.md#health-records).
 
 #### EH Medical Form
 report:
 performed:
 reported:
 source:
+person:
+report id:
 
 ##### Measurements
 

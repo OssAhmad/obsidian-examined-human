@@ -1,3 +1,7 @@
+import medicalUpgradeSql from '../../migrations/006_add_medical_forms_schema_v1.sql';
+import { inspectMedicalForm, writeMedicalForm, writeHealthCatalog, type MedicalInput, type CatalogInput } from './medical.ts';
+import { hasMedicalSchema, assertMedicalSchema } from '../read-models/medical.ts';
+import { assertSchemaV1 } from './database-utils.ts';
 import { App, normalizePath, TFile, TFolder } from 'obsidian';
 import type { Database } from 'sql.js';
 import { normalizeVaultDatabasePath } from '../database-path.ts';
@@ -221,6 +225,11 @@ function backupTimestamp(): string {
   return new Date().toISOString().replace(/[-:.TZ]/g, '');
 }
 
+export interface MedicalRequest extends Omit<MedicalInput, 'sourceChecksum' | 'pluginVersion'> {
+  databasePath: string;
+  expectedDatabaseChecksum?: string;
+}
+
 export class LoggerService {
   private writeQueue: Promise<void> = Promise.resolve();
   private activeWrites = 0;
@@ -233,6 +242,54 @@ export class LoggerService {
 
   get isRunning(): boolean {
     return this.activeWrites > 0;
+  }
+
+  inspectMedicalUpgrade(databasePath: string) {
+    return this.inspectDatabase(databasePath, (db, databaseChecksum) => {
+      assertSchemaV1(db);
+      return { needed: !hasMedicalSchema(db), databaseChecksum };
+    });
+  }
+
+  upgradeMedical(databasePath: string, expectedDatabaseChecksum: string) {
+    return this.enqueue(() => this.mutateDatabase(databasePath, 'medical-upgrade', db => {
+      assertSchemaV1(db);
+      if (hasMedicalSchema(db)) throw new Error('Medical Form tables are already enabled.');
+      db.run(medicalUpgradeSql);
+      assertMedicalSchema(db);
+    }, 'durable', true, expectedDatabaseChecksum));
+  }
+
+  inspectHealthCatalog(databasePath: string, input: CatalogInput) {
+    return this.inspectDatabase(databasePath, (db, databaseChecksum) => {
+      // Catalog validation runs against a disposable database, never the vault.
+      writeHealthCatalog(db, input);
+      return { databaseChecksum };
+    });
+  }
+
+  saveHealthCatalog(databasePath: string, input: CatalogInput, expectedDatabaseChecksum: string) {
+    return this.enqueue(() => this.mutateDatabase(databasePath, 'health-catalog', db => writeHealthCatalog(db, input),
+      'durable', true, expectedDatabaseChecksum));
+  }
+
+  async inspectMedical(request: MedicalRequest) {
+    const input = { ...request, sourceChecksum: await sha256Text(request.sourceText), pluginVersion: this.pluginVersion };
+    return this.inspectDatabase(request.databasePath, (db, databaseChecksum) => ({ ...inspectMedicalForm(db, input), databaseChecksum }));
+  }
+
+  importMedical(request: MedicalRequest) {
+    return this.enqueue(async () => {
+      if (!request.expectedDatabaseChecksum) throw new Error('Preview and confirm the complete Medical Form before importing.');
+      const file = this.requireFile(request.filePath, 'Medical Form');
+      const assertSource = async () => {
+        if (await this.app.vault.read(file) !== request.sourceText) throw new Error('The Medical Form changed after preview; review it again.');
+      };
+      await assertSource();
+      const input = { ...request, sourceChecksum: await sha256Text(request.sourceText), pluginVersion: this.pluginVersion };
+      return this.mutateDatabase(request.databasePath, 'medical-import', db => writeMedicalForm(db, input),
+        'durable', true, request.expectedDatabaseChecksum, assertSource);
+    });
   }
 
   createDatabase(databasePathSetting: string): Promise<CreatedDatabaseResult> {
@@ -656,7 +713,7 @@ export class LoggerService {
     const originalBytes = new Uint8Array(await this.app.vault.readBinary(databaseFile));
     const originalChecksum = await sha256Bytes(originalBytes);
     if (expectedDatabaseChecksum && originalChecksum !== expectedDatabaseChecksum) {
-      throw new Error('The database changed after preview. Review and confirm the day again; no data was written.');
+      throw new Error('The database changed after preview. Review and confirm the action again; no data was written.');
     }
     const SQL = await getSqlJs();
     const db = new SQL.Database(originalBytes);

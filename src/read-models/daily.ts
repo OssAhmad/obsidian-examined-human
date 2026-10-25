@@ -1,3 +1,4 @@
+import type { DailyHealth } from '../logger/daily-health.ts';
 import type { SessionQueryResult } from './calendar.ts';
 
 export interface ImportedDailyNoteRecord {
@@ -70,6 +71,7 @@ export interface DailyTransactionRecord {
 }
 
 export interface DailyAssessmentQueryResult {
+  health?: DailyHealth;
   sessionResult: SessionQueryResult;
   metrics: DailyMetricsRecord | null;
   meals: DailyMealRecord[];

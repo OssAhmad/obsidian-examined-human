@@ -98,10 +98,10 @@ EH form: unimported
 The marker tells the plugin that the note is ready to be discovered:
 
 - `unimported` or `true`: inspect this note.
-- `imported`: its importable Daily and Weekly Forms are complete.
+- `imported`: its importable Daily, Weekly, and Medical Forms are complete.
 - `false`: deliberately ignore this note.
 
-After all eligible Daily Forms (past or today) and Weekly Forms in a note have been imported, Examined Human normally changes the marker to `imported`. Budget imports and mutable planning updates do not change it because those plans remain editable.
+After all eligible Daily Forms (past or today), Weekly Forms, and Medical Forms in a note have been imported, Examined Human normally changes the marker to `imported`. Budget imports and mutable planning updates do not change it because those plans remain editable.
 
 ### 5. Put the forms into your note workflow
 
@@ -114,12 +114,12 @@ The repository includes both explained and minimal versions:
 - [Minimal Weekly Form](<EH Forms/the minimal weekly form.md>)
 - [Minimal Budget Form](<EH Forms/the minimal budget form.md>)
 
-Health collection drafts are also available:
+Medical Forms are also available:
 
 - [Medical Form with explanations](<EH Forms/the medical form with explanations.md>)
 - [Minimal Medical Form](<EH Forms/the minimal medical form.md>)
 
-The Daily templates now include proposed Medication and Symptoms sections. These additions and the Medical Forms are **collection design drafts, not supported imports**. Read [Health collection drafts](#health-collection-drafts) before using them with the current plugin.
+The Daily templates include Medication and Symptoms sections. Existing databases need the confirmed **Upgrade medical database** command before importing health entries. Read [Health records](#health-records) for catalog setup, Medical import/reimport, and the plain records dashboard.
 
 Start with the explained forms. Use the minimal forms after the entry formats feel familiar.
 
@@ -127,7 +127,7 @@ Copy the forms into your Obsidian template system or paste them into notes manua
 
 Keep these structural elements unchanged:
 
-- the `#### EH Daily Form`, `#### EH Weekly Form`, or `#### EH Budget Form` heading;
+- the `#### EH Daily Form`, `#### EH Weekly Form`, `#### EH Budget Form`, or `#### EH Medical Form` heading;
 - the date fields inside the form;
 - the section headings and required `ENTRIES:` markers;
 - the closing `#### END` marker.
@@ -206,7 +206,7 @@ Dashboard buttons that say **Stage** do not finish an import. They add reviewabl
 
 ### Daily Forms
 
-A Daily Form can contain observed metrics, a general daily note, sessions, meals, transactions, valuation rates, exercise details, milestones, Stoicism notes, and Admin Events.
+A Daily Form can contain observed metrics, a general daily note, sessions, meals, medication, symptoms, transactions, valuation rates, exercise details, milestones, Stoicism notes, and Admin Events.
 
 Session rows use either `interval | engagement | notes` for a typeless session or `interval | type | engagement | notes` when an explicit session type is needed. The four-field form may also leave the type field blank. Typeless sessions inherit their engagement type for calendar color. If the form contains Exercise Details, exactly one session must use type `exercise`; all of that form's exercises and sets attach to that session.
 
@@ -227,7 +227,7 @@ Edit the **complete EH Daily Form** for the date, then run **Import Daily Form f
 
 > **Reimport deletes all old daily records for the selected date and fills them anew from the new form. This is a complete replacement, not a merge. Anything missing from the form will be removed, including records added through another tool. A database backup is created first.**
 
-Replacement covers daily metrics, sessions and their exercise sets, transactions, meals and nutrition assessments, Stoicism entries, the day's milestones and measurements, valuation rates, and daily import/projection records. Old row IDs are discarded. Blank optional sections remove the corresponding old entries; the normal required form sections and validation rules still apply. Other dates are left alone.
+Replacement covers daily metrics, sessions and their exercise sets, transactions, meals and nutrition assessments, Stoicism entries, the day's milestones and measurements, valuation rates, Medication/Symptoms entries and recording states, and daily import/projection records. Separately imported Medical reports are retained. Old row IDs are discarded. Blank optional sections remove the corresponding old entries; the normal required form sections and validation rules still apply. Other dates are left alone.
 
 Shared foods, engagements, accounts, exercises, aliases, and Weekly/Budget plans are retained. **The Admin Events section must be empty during reimport.** Remove previously executed commands before trying again: deleting those commands from the note does not undo their earlier shared changes. Apply new catalog changes through a separate, not-yet-imported Daily Form. If a milestone belonging to this day has measurements from another or unknown date, or another cross-date link is inconsistent, replacement is blocked until those links are resolved. Changing or removing a dated valuation rate can change financial displays for later dates that carry that rate forward.
 
@@ -259,9 +259,19 @@ The Command Center manages your canonical foods, engagements, exercises, account
 
 The Financial Dashboard uses the same pattern for opening balances and reconciliations: it stages a normal, clearly marked transaction in a Daily Form. The Daily Form import is the step that applies it.
 
-## Health collection drafts
+## Health records
 
-This section defines the proposed user workflow and vocabulary. **Health catalogs, discovery of Medical Forms, health validation, parsing, importing, and dashboard display are not implemented.** The current Daily importer skips Medication and Symptoms contents; full Daily reimport rejects those section headings even when empty. Keep the original notes and disable automatic Daily Form cleanup on notes containing health entries. The Medical templates use `EH form: false` to keep these drafts out of current discovery.
+Medical Forms and Daily Medication/Symptoms are supported by the native guarded importer. For an existing official Schema v1 database, run **Examined Human: Upgrade medical database**, review the upgrade, and confirm. The plugin creates a verified backup, preserves legacy numeric measurements and IDs, and adds typed observations, report provenance, procedures, and canonical health catalogs. New databases already include these tables. The official SQLite schema marker remains v1.
+
+Run **Manage health catalogs** to create people, measurements, procedures, medications, symptoms, and aliases. A measurement has a `number`, `qualitative`, or `text` value type; numeric measurements and medications require a canonical unit. The importer resolves names and aliases; it does not infer units or convert quantities. Each save is previewed and confirmed with a backup. A Medical Form requires a defined person: if there is exactly one person, it is selected automatically; with multiple people, add `person: canonical name` to the header.
+
+Open a source note and run **Import or reimport Medical Form from Active File**. The preview shows its person, dates, section states, measurements, units, notes, and procedures. Confirmation creates a durable import with a backup; the Markdown form is retained. Reimport from the same source note replaces that report after an explicit acknowledgement. Omitted measurements and procedures are deleted; other reports and shared catalogs are retained. The preview counts the old rows being replaced. Changed source text, a stale database snapshot, uncheckpointed WAL, or backup failure blocks persistence.
+
+The source note path identifies an imported report. To move the note, obtain its ID from **Imported forms and health records** and add `report id: ID` to its header before reimporting from the new path. The ID must identify an existing native import, and its person cannot change. Reusing a source document already attached to another native report is refused; reports are never matched merely by title or date.
+
+**Imported forms and health records** opens a spreadsheet-style dashboard: a paginated list of imported Daily, Weekly, Budget, and Medical Forms, links to their source notes, Medical report entry tables, and days with recorded Medication or Symptoms (including explicit `none`). It shows stored canonical Daily health entries, not guesses from unimported notes. Each page contains up to 50 forms and 50 health days. Its Refresh action reloads all EH views; background updates show a notice while the table and scroll position remain intact.
+
+Four fictional [manual-import examples and catalog setup instructions](<docs/examples/health/00 Start here.md>) cover a laboratory report, an imaging report, a Daily Form with medication/symptoms, and a Daily Form with explicit `none`. Use a disposable database for those examples.
 
 The collection workflow has two parts:
 
@@ -272,20 +282,20 @@ The scope is high-quality collection: preserve identities, observations, context
 
 ### Daily Medication and Symptoms
 
-The proposed sections appear in both [Daily Form templates](<EH Forms/the daily form with explanations.md>):
+The sections appear in both [Daily Form templates](<EH Forms/the daily form with explanations.md>):
 
 | Section | Entry format | Meaning |
 | --- | --- | --- |
-| Medication | `time (hh:mm) \| medication \| amount \| notes` | One dose actually taken; its canonical record in the proposed `medications` table supplies the amount's unit. |
+| Medication | `time (hh:mm) \| medication \| amount \| notes` | One dose actually taken; its canonical record in the `medications` table supplies the amount's unit. |
 | Symptoms | `time (hh:mm) \| symptom \| notes` | One symptom occurrence, with its context in the person's own words. |
 
 Every field in these rows is required. Times use 24-hour `HH:mm`; names can be canonical names or aliases. Notes hold context such as route for medication, or onset, duration, severity, and interference with work for symptoms. There is no separate symptom severity field and no optional-column variant. Use `none` in a notes field when there is no additional context. Missing facts must not be filled with guessed times, identities, or amounts.
 
-Medication must be defined in a **canonical `medications` table with units**. This is a collection requirement for the future schema, not a table created by this documentation change. Each canonical record requires a name and one dose unit, such as `tablet`, `mL`, or `mg`, and identifies the product's strength and formulation where relevant. Aliases point to the same canonical medication record. A bare medication name without a defined unit is insufficient for recording an amount.
+Medication must be defined in a **canonical `medications` table with units**. Each canonical record requires a name and one dose unit, such as `tablet`, `mL`, or `mg`, and identifies the product's strength and formulation where relevant. Aliases point to the same canonical medication record. A bare medication name without a defined unit is insufficient for recording an amount.
 
-For a product named `Example medicine 10 mg tablet` with dose unit `tablet`, an amount of `1` means one tablet, not one mg. An alias must identify the same product, not silently combine different strengths or formulations. The entering person or agent checks the canonical unit, converts only when the conversion is established, and retains the original amount and unit in notes when converted. Resolve missing catalog records or units instead of guessing. The intended intake record retains the unit used at entry so a later catalog edit cannot relabel historical doses. Prescriptions, planned doses, and skipped doses do not belong in Medication.
+For a product named `Example medicine 10 mg tablet` with dose unit `tablet`, an amount of `1` means one tablet, not one mg. An alias must identify the same product, not silently combine different strengths or formulations. The entering person or agent checks the canonical unit, converts only when the conversion is established, and retains the original amount and unit in notes when converted. Resolve missing catalog records or units instead of guessing. The stored intake record retains the unit used at entry so a later catalog edit cannot relabel historical doses. Prescriptions, planned doses, and skipped doses do not belong in Medication.
 
-The proposed symptom catalog groups equivalent symptom names while retaining each entry's original notes. Headaches, runny nose, abdominal pain, drowsiness, brain fog, and everyday allergic symptoms or reactions belong here. A clinician's documented finding belongs in the Medical Form for that report. Repeated occurrences can have separate timestamped rows. Health catalogs and their alias-management workflow remain to be implemented; existing Admin Events do not yet create these records.
+The symptom catalog groups equivalent symptom names while retaining each entry's original notes. Headaches, runny nose, abdominal pain, drowsiness, brain fog, and everyday allergic symptoms or reactions belong here. A clinician's documented finding belongs in the Medical Form for that report. Repeated occurrences can have separate timestamped rows. Use **Manage health catalogs** for canonical health records and aliases; health catalog changes do not use Daily Admin Events.
 
 For example, these are symptom rows:
 
@@ -316,13 +326,15 @@ The header records shared context once:
 | `report` | A descriptive title for this source report or consultation record. |
 | `performed` | Sample collection, examination, or treatment date; use `YYYY-MM-DD`, optionally followed by `HH:mm`. A report covering several days can use `YYYY-MM-DD to YYYY-MM-DD`. |
 | `reported` | Date the report was issued or the clinician documented the findings, optionally followed by `HH:mm`; distinct from when it was received or entered. |
+| `person` | Canonical person name; required when the database contains more than one person. |
+| `report id` | Blank on initial import; use the stored report ID when reimporting a moved source note. |
 | `source` | Vault-relative path to the original report or consultation note. |
 
 Unknown header dates or an unavailable source path stay blank. A filename is not evidence of when a sample was collected. When a hospital summary or another complex report contains entries from different dates, preserve each known date, time, page, or location in the relevant row's notes. Do not assign the report's issue or discharge date to every measurement or procedure. Keep the source document available for details that are not extracted.
 
 ### Measurements, values, and units
 
-Measurements use `measurement | value | notes`. A measurement is the thing observed; its proposed catalog definition supplies a canonical name, aliases, accepted value type, and a unit when applicable. A value is the result recorded for this observation. The word **value** includes qualitative and textual results as well as amounts.
+Measurements use `measurement | value | notes`. A measurement is the thing observed; its catalog definition supplies a canonical name, aliases, accepted value type, and a unit when applicable. A value is the result recorded for this observation. The word **value** includes qualitative and textual results as well as amounts.
 
 | Example measurement | Example value | Intended value type |
 | --- | --- | --- |
@@ -335,11 +347,11 @@ Measurements use `measurement | value | notes`. A measurement is the thing obser
 
 The examples describe entry shapes, not facts about a user. Accepted values depend on the measurement. `No`, `negative`, `trace`, `indeterminate`, and `not performed` must retain their distinct meanings where applicable; do not force them into numeric zero or infer them from a missing result.
 
-For numeric measurements, the entering person or agent converts the source value into the catalog's unit when the conversion is established. Preserve the original value and unit in notes when converting, and retain the source report's reference range and flag when supplied. Resolve uncertain conversions instead of guessing. The intended database record must snapshot the unit used at import so later catalog edits cannot relabel historical values. A bare number alone cannot prove that a conversion was correct.
+For numeric measurements, the entering person or agent converts the source value into the catalog's unit when the conversion is established. Preserve the original value and unit in notes when converting, and retain the source report's reference range and flag when supplied. Resolve uncertain conversions instead of guessing. The database record snapshots the unit used at import so later catalog edits cannot relabel historical values. A bare number alone cannot prove that a conversion was correct.
 
 Use separate rows for each component result of a panel such as a CBC. Preserve distinctions such as left/right or specimen when they identify different measurements; aliases must not collapse different measurements. Multiple observations of the same measurement in one report remain separate rows, with their dates and context in notes.
 
-X-ray, ultrasound, endoscopy, and other narrative findings fit the same format: extract clearly identifiable measurements and preserve useful written findings or the report's impression as text-valued rows. Do not force every sentence into a number or yes/no answer. Long text may wrap visually in the editor; retain the original report for the full narrative. Exact escaping and multiline parser rules are implementation details, not new entry fields in this collection draft.
+X-ray, ultrasound, endoscopy, and other narrative findings fit the same format: extract clearly identifiable measurements and preserve useful written findings or the report's impression as text-valued rows. Do not force every sentence into a number or yes/no answer. Long text may wrap visually in the editor; retain the original report for the full narrative. Keep each row on one physical line. Encode a literal pipe as `\|`, a line break inside a field as `\n`, and a literal backslash as `\\`. All row fields must be nonempty; `none` in a notes field means no additional context.
 
 ### Procedures
 
@@ -485,9 +497,9 @@ Keep independent vault backups, especially before connecting or upgrading an exi
 
 ## Current boundaries
 
-Examined Human does not provide reminders, notifications, automatic exchange rates, market-price fetching, recurring transactions, medical records, recurrence rules, calendar synchronization, or automatic repair of ambiguous old data. Sessions that cross midnight must be split across two dates.
+Examined Human does not provide reminders, notifications, automatic exchange rates, market-price fetching, recurring transactions, recurrence rules, calendar synchronization, or automatic repair of ambiguous old data. Sessions that cross midnight must be split across two dates.
 
-The [health collection drafts](#health-collection-drafts) document proposed forms and Daily sections; they do not add medical-record support to the current release.
+Medical import supports recorded findings and procedures; it does not provide clinical interpretation, automated unit conversion, OCR, or image analysis.
 
 These limits keep the system focused on deliberate recording, reviewable plans, and evidence you control.
 

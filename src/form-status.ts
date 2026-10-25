@@ -26,7 +26,7 @@ export function shouldDiscoverEhFormFile(
 }
 
 export interface EhFormImportIdentity {
-  kind: 'daily' | 'weekly' | 'budget';
+  kind: 'daily' | 'weekly' | 'budget' | 'medical';
   date: string | null;
   startDate: string | null;
 }
@@ -36,10 +36,11 @@ export function fileHasCompletedImportableForms(
   filePath: string,
   importedDailyNotes: Array<{ date: string; filePath: string }>,
   importedWeeklyPlans: Array<{ weekStartDate: string; sourceFilePath: string }>,
+  medicalPaths: string[] = [],
 ): boolean {
   const tracked = forms.filter((form) => form.kind !== 'budget');
   return tracked.length > 0 && tracked.every((form) => (
-    form.kind === 'daily'
+    form.kind === 'medical' ? medicalPaths.includes(filePath) : form.kind === 'daily'
       ? importedDailyNotes.some((note) => note.date === form.date && note.filePath === filePath)
       : importedWeeklyPlans.some((plan) => plan.weekStartDate === form.startDate && plan.sourceFilePath === filePath)
   ));

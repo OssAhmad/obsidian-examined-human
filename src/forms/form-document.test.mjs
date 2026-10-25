@@ -69,6 +69,8 @@ test('repository EH Form templates retain the current public grammar', async () 
     ['weekly', 'the minimal weekly form.md'],
     ['budget', 'the budget form with explanantions.md'],
     ['budget', 'the minimal budget form.md'],
+    ['medical', 'the minimal medical form.md'],
+    ['medical', 'the medical form with explanations.md'],
   ];
 
   for (const [kind, fileName] of templates) {

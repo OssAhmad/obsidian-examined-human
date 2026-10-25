@@ -4,6 +4,7 @@ const RECORD_LABELS: Record<string, string> = {
   sessions: 'Sessions', transactions: 'Transactions', daily_metrics: 'Daily metrics',
   daily_meals: 'Food entries', meal_events: 'Meals', daily_meal_assessments: 'Nutrition assessments',
   session_exercises: 'Exercise entries', exercise_sets: 'Exercise sets',
+  medication_intakes: 'Medication intakes', symptom_entries: 'Symptom entries', daily_health: 'Health recording states',
   engagement_milestones: 'Milestones', engagement_measurements: 'Milestone measurements',
   stoicism_entries: 'Stoicism entries', valuation_rate_sets: 'Valuation rate sets',
   valuation_rates: 'Valuation rates', imported_notes: 'Import receipts',

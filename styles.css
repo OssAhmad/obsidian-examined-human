@@ -2880,3 +2880,12 @@
     flex-direction: column;
   }
 }
+
+/* Plain record tables retain their own horizontal scroll on shared refresh. */
+.examined-human-records-scroll { overflow-x: auto; }
+.examined-human-records-table { border-collapse: collapse; width: 100%; }
+.examined-human-records-table th, .examined-human-records-table td {
+  border: 1px solid var(--background-modifier-border); padding: 6px 10px;
+  text-align: start; vertical-align: top; white-space: pre-wrap; min-width: 100px;
+}
+.examined-human-records-toolbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; }

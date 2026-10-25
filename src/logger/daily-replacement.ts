@@ -1,4 +1,5 @@
 import type { Database } from 'sql.js';
+import { hasMedicalSchema } from '../read-models/medical.ts';
 import { queryRows } from '../read-models/sql.ts';
 
 export interface DailyReplacementPreview {
@@ -13,6 +14,9 @@ const milestones = `SELECT id FROM engagement_milestones WHERE date = ?1 OR sess
 // Child rows precede their owners. The same predicates drive the preview and
 // deletion so the warning describes exactly the records being replaced.
 const REPLACEMENT_RECORDS = {
+  medication_intakes: 'date = ?1',
+  symptom_entries: 'date = ?1',
+  daily_health: 'date = ?1',
   exercise_sets: `session_exercise_id IN (SELECT id FROM session_exercises WHERE session_id IN (${sessions}))`,
   session_exercises: `session_id IN (${sessions})`,
   engagement_measurements: `measurement_date = ?1 OR milestone_id IN (${milestones})`,
@@ -35,7 +39,7 @@ const REPLACEMENT_RECORDS = {
 export function previewDailyReplacement(db: Database, date: string): DailyReplacementPreview {
   return {
     date,
-    records: Object.fromEntries(Object.entries(REPLACEMENT_RECORDS).map(([table, predicate]) => [
+    records: Object.fromEntries(Object.entries(REPLACEMENT_RECORDS).filter(([table]) => !['medication_intakes', 'symptom_entries', 'daily_health'].includes(table) || hasMedicalSchema(db)).map(([table, predicate]) => [
       table,
       Number(queryRows(db, `SELECT COUNT(*) AS count FROM ${table} WHERE ${predicate}`, [date])[0].count),
     ])),
@@ -65,6 +69,7 @@ export function deleteDailyRecords(db: Database, date: string): void {
     throw new Error('Replacement blocked: this day owns a planning projection for another date. Resolve that link first.');
   }
   for (const [table, predicate] of Object.entries(REPLACEMENT_RECORDS)) {
+    if (['medication_intakes', 'symptom_entries', 'daily_health'].includes(table) && !hasMedicalSchema(db)) continue;
     db.run(`DELETE FROM ${table} WHERE ${predicate}`, [date]);
   }
 }

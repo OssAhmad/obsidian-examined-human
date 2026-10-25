@@ -10,7 +10,7 @@ test('native database creation SQL builds official Data Schema v1', () => {
     assert.equal(db.exec('PRAGMA quick_check')[0].values[0][0], 'ok');
     assert.equal(db.exec('PRAGMA foreign_key_check').length, 0);
     assert.equal(db.exec('PRAGMA user_version')[0].values[0][0], 1);
-    assert.equal(db.exec('SELECT COUNT(*) FROM schema_migrations')[0].values[0][0], 1);
+    assert.equal(db.exec('SELECT COUNT(*) FROM schema_migrations')[0].values[0][0], 2);
     assert.equal(db.exec('SELECT COUNT(*) FROM session_types')[0].values[0][0], 13);
     assert.equal(db.exec('SELECT COUNT(*) FROM sessions')[0].values[0][0], 0);
     const sessionColumns = db.exec("PRAGMA table_info('sessions')")[0];

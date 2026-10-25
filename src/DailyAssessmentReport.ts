@@ -1,3 +1,4 @@
+import type { DailyHealth } from './logger/daily-health.ts';
 import { App, Notice } from 'obsidian';
 import type { DailyAssessmentQueryResult, DailyMealRecord, DailyMetricsRecord } from './read-models/daily.ts';
 import type {
@@ -23,6 +24,7 @@ export interface DailyReportExercise {
 }
 
 export interface DailyAssessmentReport {
+  health?: DailyHealth;
   date: string;
   imported: boolean;
   ready: boolean;
@@ -140,6 +142,7 @@ export function reportFromInspection(inspection: DailyInspection): DailyAssessme
     errors: [...inspection.errors],
     warnings: [...inspection.warnings],
     completeness: inspection.completeness,
+    health: inspection.preview.health,
     metrics: metricsFromInspection(inspection),
     events: inspectionEvents(inspection),
     foods: inspection.preview.meals.map((food, index) => ({
@@ -170,6 +173,7 @@ export function reportFromAssessment(date: string, assessment: DailyAssessmentQu
   return {
     date,
     imported: assessment.imported,
+    health: assessment.health,
     ready: false,
     errors: [],
     warnings: assessment.sessionResult.issues.map((issue) => issue.message),
@@ -485,6 +489,13 @@ export function renderDailyAssessmentReport(
   renderFoods(container, report.foods);
   renderFinance(container, report.transactions, options.valuationLabel);
   renderExercises(container, report.exercises);
+  if (report.health) {
+    const panel = container.createEl('section', { cls: 'examined-human-daily-panel' });
+    panel.createEl('h3', { text: 'Medication and symptoms' });
+    panel.createEl('p', { text: `Medication: ${report.health.medicationState}; Symptoms: ${report.health.symptomsState}` });
+    for (const i of report.health.intakes) panel.createEl('p', { text: `${i.time} | ${i.name} | ${i.amount} ${i.unit} | ${i.notes}` });
+    for (const s of report.health.occurrences) panel.createEl('p', { text: `${s.time} | ${s.name} | ${s.notes}` });
+  }
   renderNotes(container, report);
   return true;
 }

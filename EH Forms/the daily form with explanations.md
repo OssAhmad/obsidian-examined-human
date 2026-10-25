@@ -7,8 +7,8 @@ EH form: <% "unimported" %>
 > [!info] Using this template
 > Create the note through Templater so `EH form` becomes `unimported`. The date must be an ISO date (`YYYY-MM-DD`); the default below expects the note title to be that date. Keep the `#### EH Daily Form`, section headings, `ENTRIES:` markers, and final `#### END` unchanged. Daily Assessment can review today or a past day and import it after confirmation. A future form can be reviewed but not imported until its date arrives. If source cleanup is enabled in Settings, a successful import removes only this bounded form block and preserves the rest of the note.
 
-> [!info] Health collection design draft
-> Medication and Symptoms below define a proposed collection workflow. Their catalogs, validation, preview, import, and display are not implemented. The current Daily importer skips their contents, and full Daily reimport rejects these headings even when empty. Retain your source notes and disable automatic Daily Form cleanup while using these sections. See the [README health definitions](../README.md#health-collection-drafts).
+> [!info] Medication and Symptoms
+> These sections are included in full Daily import and reimport. Existing databases need **Upgrade medical database** first. Define canonical medications with dose units, symptoms, and aliases through **Manage health catalogs**. Blank means unrecorded; standalone `none` means explicitly none. See the [README](../README.md#health-records).
 
 #### EH Daily Form
 date: <% tp.file.title %>
@@ -92,14 +92,14 @@ ENTRIES:
 FORMAT:
 `time (hh:mm) | medication | amount | notes`
 
-Record doses actually taken, one row per intake. All four fields are required. Use a 24-hour `HH:mm` time and the medication's canonical name or an alias. Each medication must have a canonical record in the proposed `medications` table, with a required dose unit, such as `tablet`, `mL`, or `mg`. Aliases point to that same record. Its identity also distinguishes the product's strength and formulation. Product strength is distinct from the amount taken. The example below assumes `Example medicine 10 mg tablet` has a dose unit of `tablet`; an amount of `1` means one tablet, not one mg. The table, catalog management, and resolution are not implemented yet.
+Record doses actually taken, one row per intake. All four fields are required. Use a 24-hour `HH:mm` time and the medication's canonical name or an alias. Each medication must have a canonical record in the `medications` table, with a required dose unit, such as `tablet`, `mL`, or `mg`. Aliases point to that same record. Its identity also distinguishes the product's strength and formulation. Product strength is distinct from the amount taken. The example below assumes `Example medicine 10 mg tablet` has a dose unit of `tablet`; an amount of `1` means one tablet, not one mg. Use **Manage health catalogs** to define medications and aliases before importing.
 
 EXAMPLE (illustrative only; do not copy below `ENTRIES:` unless it is real):
 `08:30 | Example medicine 10 mg tablet | 1 | Taken with breakfast; oral.`
 
 Record the route and other context in notes when useful. This section does not contain prescriptions, scheduled doses, or skipped doses. If the actual time, medication identity, or amount is unknown, resolve the gap with the user rather than inventing a value. Use `none` in the notes field if there is no additional context.
 
-Before recording an amount, the person or agent must check the canonical medication's unit and convert only when the conversion is established. Preserve the original amount and unit in notes if converted. If the medication or its unit is not defined, resolve that catalog gap instead of guessing. The intended intake record retains the unit used at entry so a later catalog edit cannot relabel historical doses.
+Before recording an amount, the person or agent must check the canonical medication's unit and convert only when the conversion is established. Preserve the original amount and unit in notes if converted. If the medication or its unit is not defined, resolve that catalog gap instead of guessing. The stored intake record retains the unit used at entry so a later catalog edit cannot relabel historical doses.
 
 Leave the section blank when medication use has not been recorded. To explicitly record that no medication was taken that day, enter the single line `none` below `ENTRIES:`. Do not mix a standalone `none` with intake rows. A missing intake row does not establish that a medication was not taken.
 
@@ -111,7 +111,7 @@ ENTRIES:
 FORMAT:
 `time (hh:mm) | symptom | notes`
 
-All three fields are required. Use a 24-hour `HH:mm` time and a canonical symptom name or alias. The proposed symptom catalog keeps equivalent names together; catalog management and resolution are not available yet. Preserve the person's own description in notes, including onset, duration, severity, interference with activities, or context when known. There is no separate severity field. Do not guess a time or infer a symptom from an unrelated observation.
+All three fields are required. Use a 24-hour `HH:mm` time and a canonical symptom name or alias. The symptom catalog keeps equivalent names together; use **Manage health catalogs** to define symptoms and aliases before importing. Preserve the person's own description in notes, including onset, duration, severity, interference with activities, or context when known. There is no separate severity field. Do not guess a time or infer a symptom from an unrelated observation.
 
 EXAMPLES (do not copy these below `ENTRIES:` unless they are real):
 `10:30 | Headache | Started while working; distracting, but I continued.`

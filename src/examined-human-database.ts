@@ -1,3 +1,4 @@
+import { queryDailyHealth, queryHealthCatalog, queryRecordsPage, queryMedicalReport, medicalImportPaths, type HealthCatalogKind } from './read-models/medical.ts';
 import { App } from 'obsidian';
 import type { Database } from 'sql.js';
 import { normalizeVaultDatabasePath } from './database-path.ts';
@@ -33,6 +34,19 @@ export class ExaminedHumanDatabase {
 
   normalizeVaultPath(databasePath: string): string {
     return normalizeVaultDatabasePath(databasePath);
+  }
+
+  healthCatalog(databasePath: string, kind: HealthCatalogKind) {
+    return this.withDatabase(databasePath, db => queryHealthCatalog(db, kind));
+  }
+  recordsPage(databasePath: string, page: number) {
+    return this.withDatabase(databasePath, db => queryRecordsPage(db, page));
+  }
+  medicalReport(databasePath: string, id: number) {
+    return this.withDatabase(databasePath, db => queryMedicalReport(db, id));
+  }
+  medicalImportPaths(databasePath: string, filePath: string) {
+    return this.withDatabase(databasePath, db => medicalImportPaths(db, filePath));
   }
 
   async inspect(databasePath: string): Promise<DatabaseInspection> {
@@ -73,7 +87,7 @@ export class ExaminedHumanDatabase {
   ): Promise<DailyAssessmentQueryResult> {
     return this.withDatabase(
       databasePath,
-      (db) => queryDailyAssessment(db, date, todayDate, valuationOptions, sleepDayBoundaryHour),
+      (db) => ({ ...queryDailyAssessment(db, date, todayDate, valuationOptions, sleepDayBoundaryHour), health: queryDailyHealth(db, date) }),
     );
   }
 

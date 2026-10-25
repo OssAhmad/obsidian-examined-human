@@ -1,4 +1,4 @@
-export type EhFormKind = 'daily' | 'weekly' | 'budget';
+export type EhFormKind = 'daily' | 'weekly' | 'budget' | 'medical';
 
 export interface EhFormBlock {
   kind: EhFormKind;
@@ -22,9 +22,10 @@ const FORM_LABELS: Record<EhFormKind, string> = {
   daily: 'Daily',
   weekly: 'Weekly',
   budget: 'Budget',
+  medical: 'Medical',
 };
 
-const ANY_FORM_HEADING = /^####[ \t]+EH[ \t]+(Daily|Weekly|Budget)[ \t]+Form[ \t]*$/gmi;
+const ANY_FORM_HEADING = /^####[ \t]+EH[ \t]+(Daily|Weekly|Budget|Medical)[ \t]+Form[ \t]*$/gmi;
 
 function blockFromHeading(sourceText: string, kind: EhFormKind, heading: RegExpExecArray): EhFormBlock {
   const bodyStart = (heading.index ?? 0) + heading[0].length;
