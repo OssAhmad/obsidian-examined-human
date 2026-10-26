@@ -29,12 +29,13 @@ export class TestElement {
   setText(value) { this.textContent = value; }
   appendText(value) { this.textContent += value; }
   setAttribute(name, value) { this.attributes[name] = value; }
+  removeAttribute(name) { delete this.attributes[name]; }
   appendChild(child) { child.parent = this; this.children.push(child); }
   empty() { for (const element of this.children.flatMap((child) => child.all())) element.isConnected = false; this.children = []; this.scrollTop = 0; this.scrollLeft = 0; }
   remove() { this.isConnected = false; if (this.parent) this.parent.children = this.parent.children.filter((child) => child !== this); }
   querySelectorAll() { return this.children.flatMap((child) => child.all()); }
   addEventListener(name, listener) { (this.listeners[name] ??= []).push(listener); }
-  trigger(name) { for (const listener of this.listeners[name] ?? []) listener({}); }
+  trigger(name, event = {}) { for (const listener of this.listeners[name] ?? []) listener(event); }
   all() { return [this, ...this.children.flatMap((child) => child.all())]; }
   text() { return this.all().map((element) => element.textContent).join('\n'); }
 }

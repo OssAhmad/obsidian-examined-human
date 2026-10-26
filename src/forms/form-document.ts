@@ -88,8 +88,8 @@ export function requireEhForm(
   throw new Error(missingHeadingMessage ?? `The note does not contain an EH ${FORM_LABELS[kind]} Form heading.`);
 }
 
-export function formSections(body: string): Map<string, FormSection> {
-  const headings = [...body.matchAll(/^#####(?!#)[ \t]+(.+?)[ \t]*$/gm)];
+export function formSections(body: string, level = 5): Map<string, FormSection> {
+  const headings = [...body.matchAll(new RegExp(`^#{${level}}(?!#)[ \\t]+(.+?)[ \\t]*$`, 'gm'))];
   const sections = new Map<string, FormSection>();
   headings.forEach((heading, index) => {
     const headingStart = heading.index ?? 0;
@@ -105,6 +105,35 @@ export function formSections(body: string): Map<string, FormSection> {
     });
   });
   return sections;
+}
+
+/** Resolve current grouped Daily sections and older flat forms to the same
+ * leaf names, keeping absolute offsets for safe note staging. */
+export function dailyFormSections(body: string): Map<string, FormSection> {
+  const roots = formSections(body);
+  const headings = [...body.matchAll(/^#####(?!#)[ \t]+(.+?)[ \t]*$/gm)].map(h => h[1].trim().toLowerCase());
+  if (new Set(headings).size !== headings.length) throw new Error('Daily Form has duplicate sections. Keep each section once.');
+  const result = new Map(roots);
+  const groups = { medical: ['medication', 'symptoms'], financial: ['transactions', 'valuation rates'] };
+  for (const [name, allowed] of Object.entries(groups)) {
+    const parent = roots.get(name);
+    if (!parent) continue;
+    const childHeadings = [...parent.content.matchAll(/^######(?!#)[ \t]+(.+?)[ \t]*$/gm)].map(h => h[1].trim().toLowerCase());
+    if (new Set(childHeadings).size !== childHeadings.length) throw new Error(`${parent.name} has duplicate subsections.`);
+    const preface = parent.content.split(/^######(?!#)[ \t]+/m)[0];
+    if (findEntriesMarker(preface)) throw new Error(`${parent.name} entries belong under its named subsections, not the parent heading.`);
+    for (const [key, child] of formSections(parent.content, 6)) {
+      if (!allowed.includes(key)) throw new Error(`Unknown ${parent.name} subsection '${child.name}'.`);
+      if (result.has(key)) throw new Error(`Duplicate Daily section '${child.name}': use either the grouped subsection or its older flat heading.`);
+      result.set(key, { ...child, headingStart: child.headingStart + parent.contentStart,
+        contentStart: child.contentStart + parent.contentStart, contentEnd: child.contentEnd + parent.contentStart });
+    }
+  }
+  return result;
+}
+
+export function findDailyFormSection(formText: string, name: string): FormSection | null {
+  return dailyFormSections(formText).get(name.trim().toLowerCase()) ?? null;
 }
 
 export function findFormSection(formText: string, name: string): FormSection | null {

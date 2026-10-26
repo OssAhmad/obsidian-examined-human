@@ -67,6 +67,19 @@ export const DEFAULT_SESSION_COLORS: Record<string, string> = {
 
 export const UNKNOWN_TYPE_COLOR = '#6b7280';
 
+/** Sidebar accents stay independent of user-defined session colors. */
+export const DASHBOARD_COLORS: Record<string, string> = {
+  calendar: '#60a5fa',
+  daily: '#eab308',
+  weekly: '#818cf8',
+  engagements: '#c084fc',
+  finance: '#4ade80',
+  nutrition: '#2dd4bf',
+  exercise: '#fb923c',
+  medical: '#fb7185',
+  commands: '#94a3b8',
+};
+
 export interface ExerciseSetDetails {
   setNumber: number | null;
   weight: number | null;
@@ -161,6 +174,29 @@ export const SESSION_TYPE_FOOTER_MIN_HEIGHT_PX = 44;
 
 export function titleForEngagement(engagementName: string): string {
   return engagementName;
+}
+
+const DAILY_TIME_TYPE_LABELS: Record<string, string> = {
+  study: 'Study', academia: 'Study', academic: 'Study', course: 'Study', certification: 'Study', exam: 'Study',
+  work: 'Work', career: 'Work', startup: 'Work',
+  exercise: 'Exercise', fitness: 'Exercise',
+  social: 'Social', relationship: 'Social',
+  writing: 'Writing', authorship: 'Writing', article: 'Writing', book: 'Writing', speech: 'Writing',
+  maintenance: 'Maintenance', chore: 'Maintenance',
+  reading: 'Reading', research: 'Research', thinking: 'Thinking', practice: 'Practice',
+  sleep: 'Sleep', leisure: 'Leisure', meditation: 'Meditation',
+};
+
+/** Display-only grouping for the Daily report; never changes stored taxonomy. */
+export function dailyTimeTypeLabel(event: Pick<CalendarEvent, 'sessionType' | 'engagementType' | 'engagementName'>): string {
+  const sessionType = event.sessionType.trim().toLowerCase();
+  // Sleep is deliberately separated from its usual Maintenance engagement type.
+  if (event.engagementName.trim().toLowerCase() === 'sleep') return 'Sleep';
+  const type = sessionType || event.engagementType.trim().toLowerCase();
+  if (!type) return 'Unspecified';
+  return Object.prototype.hasOwnProperty.call(DAILY_TIME_TYPE_LABELS, type)
+    ? DAILY_TIME_TYPE_LABELS[type]
+    : type.charAt(0).toUpperCase() + type.slice(1);
 }
 
 export function shouldShowSessionTypeFooter(renderedHeightPx: number, stacked: boolean): boolean {

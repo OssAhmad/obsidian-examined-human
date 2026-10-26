@@ -2197,9 +2197,6 @@ __export(main_exports, {
 });
 module.exports = __toCommonJS(main_exports);
 
-// src/RecordsView.ts
-var import_obsidian4 = require("obsidian");
-
 // src/refresh/reading-view.ts
 var import_obsidian = require("obsidian");
 
@@ -2462,7 +2459,7 @@ async function upgradeMedicalDatabase(plugin) {
       return;
     }
     if (!await confirmWeeklyAction(plugin.app, {
-      title: "Upgrade medical database",
+      title: "Medical database migration",
       confirmLabel: "Back up and upgrade",
       explanation: "Enable Medical Forms, typed measurements, procedures, canonical health catalogs, and Daily Medication/Symptoms.",
       dryRunOutput: "Existing numeric measurement IDs, values, report links, notes, and source ranges are preserved. Other domains are retained. The SQLite schema marker stays at official v1.",
@@ -2556,90 +2553,177 @@ Aliases: ${input.aliases.join(", ") || "none"}`,
   }
 };
 
-// src/RecordsView.ts
-var RECORDS_VIEW_TYPE = "examined-human-records";
-var RecordsView = class extends ReadingView {
+// src/MedicalDashboardView.ts
+var MEDICAL_DASHBOARD_VIEW_TYPE = "examined-human-records";
+var MedicalDashboardView = class extends ReadingView {
   constructor(leaf, plugin) {
     super(leaf, plugin);
     this.plugin = plugin;
     this.page = 0;
+    this.selectedKey = null;
+    this.selectedItem = null;
+    this.generation = 0;
   }
   getViewType() {
-    return RECORDS_VIEW_TYPE;
+    return MEDICAL_DASHBOARD_VIEW_TYPE;
   }
   getDisplayText() {
-    return "Imported forms and health records";
+    return "Medical Dashboard";
   }
   getIcon() {
-    return "table";
+    return "clipboard-list";
   }
   scrollContext() {
-    return `${RECORDS_VIEW_TYPE}:${this.page}`;
+    var _a;
+    return `${this.page}:${(_a = this.selectedKey) != null ? _a : ""}`;
+  }
+  sourceNotePath() {
+    var _a, _b;
+    return (_b = (_a = this.selectedItem) == null ? void 0 : _a.sourcePath) != null ? _b : null;
   }
   async onOpen() {
     this.startReadingUpdates();
+    this.contentEl.addClass("examined-human-medical-view");
     await this.refresh();
   }
   async onClose() {
+    this.generation++;
     this.stopReadingUpdates();
+    this.contentEl.empty();
   }
   async refreshContent() {
-    const page2 = this.page;
+    var _a, _b, _c, _d, _e, _f, _g;
+    const generation = ++this.generation;
     try {
-      const result = await this.plugin.database.recordsPage(this.plugin.settings.databasePath, page2);
-      if (this.page !== page2) return;
+      let index = await this.plugin.database.medicalDashboardPage(this.plugin.settings.databasePath, this.page);
+      if (generation !== this.generation) return;
+      if (!index.items.length && this.page > 0 && index.total > 0) {
+        this.page = Math.floor((index.total - 1) / 50);
+        index = await this.plugin.database.medicalDashboardPage(this.plugin.settings.databasePath, this.page);
+        if (generation !== this.generation) return;
+      }
+      this.selectedItem = (_b = (_a = index.items.find((item2) => item2.key === this.selectedKey)) != null ? _a : index.items[0]) != null ? _b : null;
+      this.selectedKey = (_d = (_c = this.selectedItem) == null ? void 0 : _c.key) != null ? _d : null;
+      const item = this.selectedItem;
+      const report = (item == null ? void 0 : item.kind) === "report" && item.reportId != null ? await this.plugin.database.medicalReport(this.plugin.settings.databasePath, item.reportId) : null;
+      const health = (item == null ? void 0 : item.kind) === "daily" ? await this.plugin.database.dailyHealth(this.plugin.settings.databasePath, item.date) : void 0;
+      if (generation !== this.generation || ((_e = item == null ? void 0 : item.key) != null ? _e : null) !== this.selectedKey) return;
       this.contentEl.empty();
-      this.contentEl.createEl("h2", { text: "Imported forms and health records" });
-      const toolbar = this.contentEl.createDiv({ cls: "examined-human-records-toolbar" });
-      toolbar.createEl("button", { text: "Refresh" }).addEventListener("click", () => {
+      const toolbar = this.contentEl.createDiv({ cls: "examined-human-medical-toolbar" });
+      toolbar.createEl("h2", { text: "Medical Dashboard" });
+      toolbar.createEl("button", { text: "Refresh", cls: "examined-human-toolbar-button" }).addEventListener("click", () => {
         void this.plugin.refreshViews();
       });
-      const previous = toolbar.createEl("button", { text: "Previous page" });
-      previous.disabled = page2 === 0;
-      previous.addEventListener("click", () => {
-        this.page--;
-        void this.refresh();
-      });
-      const next = toolbar.createEl("button", { text: "Next page" });
-      next.disabled = result.forms.length < 50 && result.days.length < 50;
-      next.addEventListener("click", () => {
-        this.page++;
-        void this.refresh();
-      });
-      toolbar.createSpan({ text: `Page ${page2 + 1} \xB7 up to 50 forms and 50 days per page` });
-      this.contentEl.createEl("h3", { text: "Imported forms" });
-      recordsTable(this.contentEl, ["Type", "ID", "Date", "Title", "Source note", "Imported / updated"], result.forms.map((r) => [String(r.kind), String(r.id), String(r.date || "unknown"), String(r.title || ""), String(r.path), String(r.updated)]));
-      const actions = this.contentEl.createDiv();
-      result.forms.forEach((r) => {
-        if (r.kind === "Medical") actions.createEl("button", { text: `View medical report ${r.id}` }).addEventListener("click", () => {
-          void this.plugin.database.medicalReport(this.plugin.settings.databasePath, Number(r.id)).then((data) => {
-            const modal = new import_obsidian4.Modal(this.app);
-            modal.contentEl.createEl("h2", { text: String(data.report.title) });
-            modal.contentEl.createEl("p", { text: `Report ID: ${r.id}; Measurements: ${String(data.report.measurements_state)}; Procedures: ${String(data.report.procedures_state)}` });
-            recordsTable(modal.contentEl, ["Measurement", "Value", "Unit", "Notes"], data.measurements.map((m) => {
-              var _a, _b;
-              return [String(m.name), String(m.value_text), String((_a = m.unit_at_time) != null ? _a : "\u2014"), String((_b = m.notes) != null ? _b : "")];
-            }));
-            recordsTable(modal.contentEl, ["Procedure", "Notes"], data.procedures.map((p) => [String(p.name), String(p.notes)]));
-            modal.open();
-          }).catch((error) => new import_obsidian4.Notice(String(error)));
+      if (index.needsMigration) {
+        this.contentEl.createEl("p", { text: "Enable medical records in Settings \u2192 Examined Human \u2192 General \u2192 Tools and maintenance \u2192 Medical database migration." });
+        return;
+      }
+      const layout = this.contentEl.createDiv({ cls: "examined-human-medical-layout" });
+      const main = layout.createEl("main", { cls: "examined-human-medical-report", attr: { "aria-label": "Selected medical record" } });
+      main.dataset.ehScrollKey = "medical-report";
+      if (!item) {
+        main.createEl("p", { text: "No imported medical records yet. Import a Medical Form or a Daily Form with Medical entries to begin." });
+      } else {
+        main.createEl("h3", { text: item.title });
+        main.createEl("p", { cls: "examined-human-medical-meta", text: `${item.date || "Unknown date"}${item.person ? ` \xB7 ${item.person}` : ""}` });
+        main.createEl("button", { text: "Open source note", cls: "examined-human-toolbar-button" }).addEventListener("click", () => {
+          void this.app.workspace.openLinkText(item.sourcePath, "");
         });
-        actions.createEl("button", { text: `Open ${r.kind} source (${r.id})` }).addEventListener("click", () => {
-          void this.app.workspace.openLinkText(String(r.path), "");
+        if (report) {
+          main.createEl("p", { cls: "examined-human-medical-meta", text: `Report ID: ${String(report.report.report_id)} \xB7 Performed: ${String((_f = report.report.performed) != null ? _f : "unknown")} \xB7 Reported: ${String((_g = report.report.reported) != null ? _g : "unknown")}` });
+          main.createEl("h4", { text: "Measurements" });
+          main.createEl("p", { text: `Recording state: ${String(report.report.measurements_state)}` });
+          recordsTable(main, ["Measurement", "Value", "Unit", "Notes"], report.measurements.map((m) => {
+            var _a2, _b2;
+            return [String(m.name), String(m.value_text), String((_a2 = m.unit_at_time) != null ? _a2 : "\u2014"), String((_b2 = m.notes) != null ? _b2 : "")];
+          }));
+          main.createEl("h4", { text: "Procedures" });
+          main.createEl("p", { text: `Recording state: ${String(report.report.procedures_state)}` });
+          recordsTable(main, ["Procedure", "Notes"], report.procedures.map((p) => [String(p.name), String(p.notes)]));
+        } else if (health) {
+          main.createEl("h4", { text: "Medication" });
+          main.createEl("p", { text: `Recording state: ${health.medicationState}` });
+          recordsTable(main, ["Time", "Medication", "Amount", "Unit", "Notes"], health.intakes.map((i) => [i.time, i.name, String(i.amount), i.unit, i.notes]));
+          main.createEl("h4", { text: "Symptoms" });
+          main.createEl("p", { text: `Recording state: ${health.symptomsState}` });
+          recordsTable(main, ["Time", "Symptom", "Notes"], health.occurrences.map((s) => [s.time, s.name, s.notes]));
+        }
+      }
+      const sidebar = layout.createEl("aside", { cls: "examined-human-medical-sidebar", attr: { "aria-label": "Imported medical records, newest first" } });
+      sidebar.dataset.ehScrollKey = "medical-list";
+      sidebar.createEl("h3", { text: "Imported records" });
+      sidebar.createEl("p", { text: `${index.total} records` });
+      for (const entry of index.items) {
+        const button = sidebar.createEl("button", {
+          cls: `examined-human-daily-date-button${entry.key === this.selectedKey ? " is-selected" : ""}`,
+          attr: { "aria-pressed": String(entry.key === this.selectedKey) }
         });
-      });
-      this.contentEl.createEl("h3", { text: "Medication and symptoms by day" });
-      this.contentEl.createEl("p", { text: "Canonical Daily imports only. Explicit none and unrecorded are shown separately. Standalone Medical reports appear above." });
-      recordsTable(this.contentEl, ["Date", "Medication state", "Medication entries", "Symptoms state", "Symptom entries"], result.days.map((d) => [d.date, d.medicationState, d.medication.join("\n"), d.symptomsState, d.symptoms.join("\n")]));
+        button.createSpan({ cls: "examined-human-daily-date-primary", text: entry.title });
+        button.createSpan({ cls: "examined-human-daily-date-secondary", text: `${entry.date || "Unknown date"} \xB7 ${entry.kind === "report" ? "Medical report" : "Daily medical"}` });
+        button.addEventListener("click", () => {
+          if (entry.key === this.selectedKey) return;
+          this.selectedKey = entry.key;
+          void this.refresh();
+        });
+      }
+      if (index.total > 50) {
+        const paging = sidebar.createDiv({ cls: "examined-human-medical-paging" });
+        const previous = paging.createEl("button", { text: "Newer" });
+        previous.disabled = this.page === 0;
+        previous.addEventListener("click", () => {
+          this.page--;
+          this.selectedKey = null;
+          void this.refresh();
+        });
+        const next = paging.createEl("button", { text: "Older" });
+        next.disabled = (this.page + 1) * 50 >= index.total;
+        next.addEventListener("click", () => {
+          this.page++;
+          this.selectedKey = null;
+          void this.refresh();
+        });
+      }
     } catch (error) {
+      if (generation !== this.generation) return;
       this.contentEl.empty();
       this.contentEl.createEl("p", { text: error instanceof Error ? error.message : String(error) });
     }
   }
 };
 
+// src/ReleaseNotesModal.ts
+var import_obsidian4 = require("obsidian");
+var RELEASE_NOTES_ID = "medical-dashboard-review-2026-10-26";
+var RELEASE_NOTES = [
+  "Medical Dashboard: select an imported report or Daily medical log from the list on the right. Entries retain their imported order.",
+  "Medical Forms support measurements, written findings, procedures, and confirmed report replacement with backups.",
+  "Daily Forms now group Medication and Symptoms under Medical, and Transactions and Valuation Rates under Financial. Older flat forms remain supported.",
+  "Medical database migration is in Settings \u2192 Examined Human \u2192 General \u2192 Tools and maintenance. It is no longer a command-palette action.",
+  "Canonical health catalogs retain measurement and medication units; blank and explicit none remain distinct."
+];
+var ReleaseNotesModal = class extends import_obsidian4.Modal {
+  constructor(app, dismissed) {
+    super(app);
+    this.dismissed = dismissed;
+  }
+  onOpen() {
+    this.contentEl.createEl("h2", { text: "What\u2019s new in Examined Human" });
+    this.contentEl.createEl("p", { text: "Medical Dashboard review build \u2014 awaiting owner review before release." });
+    const list = this.contentEl.createEl("ul");
+    RELEASE_NOTES.forEach((text) => {
+      list.createEl("li", { text });
+    });
+    this.contentEl.createEl("button", { text: "Close", cls: "mod-cta" }).addEventListener("click", () => this.close());
+  }
+  onClose() {
+    var _a;
+    this.contentEl.empty();
+    (_a = this.dismissed) == null ? void 0 : _a.call(this);
+  }
+};
+
 // src/main.ts
-var import_obsidian25 = require("obsidian");
+var import_obsidian26 = require("obsidian");
 
 // src/read-models/sql.ts
 function queryRows(db, sql, params = []) {
@@ -2694,7 +2778,31 @@ function hasMedicalSchema(db) {
   return Object.entries(HEALTH_SCHEMA).every(([table, columns]) => hasTableColumns(db, table, columns));
 }
 function assertMedicalSchema(db) {
-  if (!hasMedicalSchema(db)) throw new Error("Enable Medical Forms using the Upgrade medical database command before importing health entries.");
+  if (!hasMedicalSchema(db)) throw new Error("Go to Settings \u2192 Examined Human \u2192 General \u2192 Tools and maintenance \u2192 Medical database migration before importing health entries.");
+}
+function queryMedicalDashboardPage(db, page2) {
+  if (!hasMedicalSchema(db)) return { needsMigration: true, total: 0, items: [] };
+  const sources = `SELECT 'report:' || r.id AS key, 'report' AS kind, r.id AS report_id,
+      COALESCE(i.reported, i.performed, NULLIF(r.report_timestamp, ''), '') AS date,
+      COALESCE(r.title, 'Medical report') AS title, i.source_file_path AS path, p.name AS person
+    FROM medical_report_imports i JOIN reports r ON r.id=i.report_id JOIN people p ON p.id=r.person_id
+    UNION ALL
+    SELECT 'daily:' || h.date, 'daily', NULL, h.date, 'Daily medical log',
+      (SELECT n.file_path FROM imported_notes n WHERE n.note_date=h.date ORDER BY n.id DESC LIMIT 1), NULL
+    FROM daily_health h WHERE (h.medication_state<>'unrecorded' OR h.symptoms_state<>'unrecorded')
+      AND EXISTS (SELECT 1 FROM imported_notes n WHERE n.note_date=h.date)`;
+  const total = Number(queryRows(db, `SELECT COUNT(*) AS n FROM (${sources})`)[0].n);
+  const offset = Math.max(0, Math.floor(page2)) * 50;
+  const items = queryRows(db, `SELECT * FROM (${sources}) ORDER BY date DESC, kind, key LIMIT 50 OFFSET ?`, [offset]).map((r) => ({
+    key: String(r.key),
+    kind: String(r.kind),
+    reportId: r.report_id == null ? null : Number(r.report_id),
+    date: String(r.date),
+    title: String(r.title),
+    sourcePath: String(r.path),
+    person: r.person == null ? null : String(r.person)
+  }));
+  return { needsMigration: false, total, items };
 }
 var HEALTH_CATALOGS = {
   measurement: { table: "markers", aliasTable: "marker_aliases", owner: "marker_id" },
@@ -3002,6 +3110,17 @@ var DEFAULT_SESSION_COLORS = {
   writing: "#d946ef"
 };
 var UNKNOWN_TYPE_COLOR = "#6b7280";
+var DASHBOARD_COLORS = {
+  calendar: "#60a5fa",
+  daily: "#eab308",
+  weekly: "#818cf8",
+  engagements: "#c084fc",
+  finance: "#4ade80",
+  nutrition: "#2dd4bf",
+  exercise: "#fb923c",
+  medical: "#fb7185",
+  commands: "#94a3b8"
+};
 function parseDatabaseTime(value) {
   const match = /^(\d{1,2}):(\d{2})(?::\d{2})?$/.exec(value.trim());
   if (!match) return null;
@@ -3029,6 +3148,42 @@ function formatExerciseNumber(value) {
 var SESSION_TYPE_FOOTER_MIN_HEIGHT_PX = 44;
 function titleForEngagement(engagementName) {
   return engagementName;
+}
+var DAILY_TIME_TYPE_LABELS = {
+  study: "Study",
+  academia: "Study",
+  academic: "Study",
+  course: "Study",
+  certification: "Study",
+  exam: "Study",
+  work: "Work",
+  career: "Work",
+  startup: "Work",
+  exercise: "Exercise",
+  fitness: "Exercise",
+  social: "Social",
+  relationship: "Social",
+  writing: "Writing",
+  authorship: "Writing",
+  article: "Writing",
+  book: "Writing",
+  speech: "Writing",
+  maintenance: "Maintenance",
+  chore: "Maintenance",
+  reading: "Reading",
+  research: "Research",
+  thinking: "Thinking",
+  practice: "Practice",
+  sleep: "Sleep",
+  leisure: "Leisure",
+  meditation: "Meditation"
+};
+function dailyTimeTypeLabel(event) {
+  const sessionType = event.sessionType.trim().toLowerCase();
+  if (event.engagementName.trim().toLowerCase() === "sleep") return "Sleep";
+  const type = sessionType || event.engagementType.trim().toLowerCase();
+  if (!type) return "Unspecified";
+  return Object.prototype.hasOwnProperty.call(DAILY_TIME_TYPE_LABELS, type) ? DAILY_TIME_TYPE_LABELS[type] : type.charAt(0).toUpperCase() + type.slice(1);
 }
 function shouldShowSessionTypeFooter(renderedHeightPx, stacked) {
   return !stacked && renderedHeightPx >= SESSION_TYPE_FOOTER_MIN_HEIGHT_PX;
@@ -5039,6 +5194,25 @@ function getSqlJs() {
   return sqlPromise;
 }
 
+// src/read-models/dashboard-overview.ts
+function queryDashboardOverview(db, todayDate) {
+  validateSchema(db);
+  const row = queryRows(db, `
+    SELECT COALESCE(SUM(CASE WHEN duration_minutes >= 0 THEN duration_minutes ELSE 0 END), 0) AS total_minutes,
+           COUNT(*) AS session_count,
+           COUNT(DISTINCT engagement_id) AS engagement_count,
+           COUNT(DISTINCT date) AS recorded_days
+    FROM sessions
+    WHERE date <= ?
+  `, [todayDate])[0];
+  return {
+    totalMinutes: Number(row.total_minutes),
+    sessionCount: Number(row.session_count),
+    engagementCount: Number(row.engagement_count),
+    recordedDays: Number(row.recorded_days)
+  };
+}
+
 // src/examined-human-database.ts
 var ExaminedHumanDatabase = class {
   constructor(app) {
@@ -5049,6 +5223,12 @@ var ExaminedHumanDatabase = class {
   }
   healthCatalog(databasePath, kind) {
     return this.withDatabase(databasePath, (db) => queryHealthCatalog(db, kind));
+  }
+  medicalDashboardPage(databasePath, page2) {
+    return this.withDatabase(databasePath, (db) => queryMedicalDashboardPage(db, page2));
+  }
+  dailyHealth(databasePath, date) {
+    return this.withDatabase(databasePath, (db) => queryDailyHealth(db, date));
   }
   recordsPage(databasePath, page2) {
     return this.withDatabase(databasePath, (db) => queryRecordsPage(db, page2));
@@ -5061,6 +5241,9 @@ var ExaminedHumanDatabase = class {
   }
   async inspect(databasePath) {
     return this.withDatabase(databasePath, inspectDatabase);
+  }
+  async dashboardOverview(databasePath, todayDate) {
+    return this.withDatabase(databasePath, (db) => queryDashboardOverview(db, todayDate));
   }
   async sessionsBetween(databasePath, startDate, endDate, todayDate, includePlanning = true) {
     return this.withDatabase(
@@ -5257,6 +5440,17 @@ var import_obsidian8 = require("obsidian");
 
 // src/DailyAssessmentReport.ts
 var import_obsidian7 = require("obsidian");
+
+// src/daily-time.ts
+function dailyTimeTotals(events, grouping) {
+  var _a;
+  const totals = /* @__PURE__ */ new Map();
+  for (const event of events) {
+    const label = grouping === "session-type" ? dailyTimeTypeLabel(event) : event.engagementName;
+    totals.set(label, ((_a = totals.get(label)) != null ? _a : 0) + event.durationMinutes);
+  }
+  return [...totals].map(([label, minutes]) => ({ label, minutes })).sort((left, right) => right.minutes - left.minutes || left.label.localeCompare(right.label));
+}
 
 // src/overlap.ts
 function layoutOverlappingEvents(events) {
@@ -5979,28 +6173,42 @@ function renderTimeline(app, container, events, options) {
     scroll.scrollTop = options.initialScrollHour * 60 * DAY_PX_PER_MINUTE;
   });
 }
-function renderEngagementTime(container, events) {
+function renderTimeBreakdown(container, events, options) {
   var _a;
-  const totals = /* @__PURE__ */ new Map();
-  for (const event of events) totals.set(event.engagementName, ((_a = totals.get(event.engagementName)) != null ? _a : 0) + event.durationMinutes);
-  const rows3 = [...totals.entries()].sort((left, right) => right[1] - left[1]);
   const section = container.createEl("section", { cls: "examined-human-daily-panel" });
-  section.createEl("h3", { text: "Time by engagement" });
-  if (rows3.length === 0) {
-    section.createDiv({ cls: "examined-human-daily-empty-inline", text: "No engagement time is available." });
-    return;
-  }
-  const maximum = Math.max(...rows3.map(([, minutes]) => minutes));
+  const heading = section.createDiv({ cls: "examined-human-daily-section-heading" });
+  const title = heading.createEl("h3");
+  const selector = heading.createEl("select", { cls: "dropdown", attr: { "aria-label": "Group daily time by" } });
+  selector.createEl("option", { value: "engagement", text: "Engagement" });
+  selector.createEl("option", { value: "session-type", text: "Session type" });
+  selector.value = (_a = options.timeGrouping) != null ? _a : "engagement";
   const chart = section.createDiv({ cls: "examined-human-daily-engagement-chart" });
-  for (const [engagement, minutes] of rows3) {
-    const row = chart.createDiv({ cls: "examined-human-daily-engagement-row" });
-    const labels = row.createDiv({ cls: "examined-human-daily-engagement-labels" });
-    labels.createSpan({ text: engagement });
-    labels.createEl("strong", { text: duration(minutes) });
-    const track = row.createDiv({ cls: "examined-human-daily-engagement-track" });
-    const bar = track.createDiv({ cls: "examined-human-daily-engagement-bar" });
-    bar.style.width = `${minutes / maximum * 100}%`;
-  }
+  const render = () => {
+    const grouping = selector.value === "session-type" ? "session-type" : "engagement";
+    title.setText(grouping === "session-type" ? "Time by session type" : "Time by engagement");
+    chart.empty();
+    const rows3 = dailyTimeTotals(events, grouping);
+    if (rows3.length === 0) {
+      chart.createDiv({ cls: "examined-human-daily-empty-inline", text: "No session time is available." });
+      return;
+    }
+    const maximum = Math.max(...rows3.map((row) => row.minutes));
+    for (const { label, minutes } of rows3) {
+      const row = chart.createDiv({ cls: "examined-human-daily-engagement-row" });
+      const labels = row.createDiv({ cls: "examined-human-daily-engagement-labels" });
+      labels.createSpan({ text: label });
+      labels.createEl("strong", { text: formatMinutesAsClock(minutes) });
+      const track = row.createDiv({ cls: "examined-human-daily-engagement-track" });
+      const bar = track.createDiv({ cls: "examined-human-daily-engagement-bar" });
+      bar.style.width = `${maximum > 0 ? minutes / maximum * 100 : 0}%`;
+    }
+  };
+  selector.addEventListener("change", () => {
+    var _a2;
+    render();
+    (_a2 = options.onTimeGroupingChange) == null ? void 0 : _a2.call(options, selector.value === "session-type" ? "session-type" : "engagement");
+  });
+  render();
 }
 function renderFoods(container, foods) {
   var _a;
@@ -6145,19 +6353,25 @@ function renderDailyAssessmentReport(app, container, report, options) {
   }
   renderMessages(container, "Assessment warnings", report.warnings, "is-warning");
   renderMetrics(container, report.metrics);
-  renderTimeline(app, container, report.events, options);
-  renderEngagementTime(container, report.events);
-  renderFoods(container, report.foods);
-  renderFinance(container, report.transactions, options.valuationLabel);
-  renderExercises(container, report.exercises);
+  const reportLayout = container.createDiv({ cls: "examined-human-daily-report-layout" });
+  if (options.dayColumnWidth != null) {
+    reportLayout.style.setProperty("--examined-human-daily-day-width", `${options.dayColumnWidth}px`);
+  }
+  const columns = reportLayout.createDiv({ cls: "examined-human-daily-report-columns" });
+  renderTimeline(app, columns, report.events, options);
+  const details = columns.createDiv({ cls: "examined-human-daily-report-details" });
+  renderTimeBreakdown(details, report.events, options);
+  renderFoods(details, report.foods);
+  renderFinance(details, report.transactions, options.valuationLabel);
+  renderExercises(details, report.exercises);
   if (report.health) {
-    const panel = container.createEl("section", { cls: "examined-human-daily-panel" });
+    const panel = details.createEl("section", { cls: "examined-human-daily-panel" });
     panel.createEl("h3", { text: "Medication and symptoms" });
     panel.createEl("p", { text: `Medication: ${report.health.medicationState}; Symptoms: ${report.health.symptomsState}` });
     for (const i of report.health.intakes) panel.createEl("p", { text: `${i.time} | ${i.name} | ${i.amount} ${i.unit} | ${i.notes}` });
     for (const s of report.health.occurrences) panel.createEl("p", { text: `${s.time} | ${s.name} | ${s.notes}` });
   }
-  renderNotes(container, report);
+  renderNotes(details, report);
   return true;
 }
 
@@ -6229,6 +6443,7 @@ var DailyImportConfirmationModal = class extends import_obsidian8.Modal {
     if (replacement) renderDailyReplacementWarning(this.contentEl, replacement);
     const report = reportFromInspection(this.options.inspection);
     const rendered = renderDailyAssessmentReport(this.app, this.contentEl, report, {
+      dayColumnWidth: this.options.dayColumnWidth,
       sessionColors: this.options.sessionColors,
       initialScrollHour: this.options.initialScrollHour,
       valuationLabel: this.options.valuationLabel,
@@ -6347,8 +6562,8 @@ function requireEhForm(sourceText, kind, missingHeadingMessage, missingEndMessag
   }
   throw new Error(missingHeadingMessage != null ? missingHeadingMessage : `The note does not contain an EH ${FORM_LABELS[kind]} Form heading.`);
 }
-function formSections(body) {
-  const headings = [...body.matchAll(/^#####(?!#)[ \t]+(.+?)[ \t]*$/gm)];
+function formSections(body, level = 5) {
+  const headings = [...body.matchAll(new RegExp(`^#{${level}}(?!#)[ \\t]+(.+?)[ \\t]*$`, "gm"))];
   const sections2 = /* @__PURE__ */ new Map();
   headings.forEach((heading, index) => {
     var _a, _b;
@@ -6365,6 +6580,36 @@ function formSections(body) {
     });
   });
   return sections2;
+}
+function dailyFormSections(body) {
+  const roots = formSections(body);
+  const headings = [...body.matchAll(/^#####(?!#)[ \t]+(.+?)[ \t]*$/gm)].map((h) => h[1].trim().toLowerCase());
+  if (new Set(headings).size !== headings.length) throw new Error("Daily Form has duplicate sections. Keep each section once.");
+  const result = new Map(roots);
+  const groups = { medical: ["medication", "symptoms"], financial: ["transactions", "valuation rates"] };
+  for (const [name, allowed] of Object.entries(groups)) {
+    const parent = roots.get(name);
+    if (!parent) continue;
+    const childHeadings = [...parent.content.matchAll(/^######(?!#)[ \t]+(.+?)[ \t]*$/gm)].map((h) => h[1].trim().toLowerCase());
+    if (new Set(childHeadings).size !== childHeadings.length) throw new Error(`${parent.name} has duplicate subsections.`);
+    const preface = parent.content.split(/^######(?!#)[ \t]+/m)[0];
+    if (findEntriesMarker(preface)) throw new Error(`${parent.name} entries belong under its named subsections, not the parent heading.`);
+    for (const [key, child] of formSections(parent.content, 6)) {
+      if (!allowed.includes(key)) throw new Error(`Unknown ${parent.name} subsection '${child.name}'.`);
+      if (result.has(key)) throw new Error(`Duplicate Daily section '${child.name}': use either the grouped subsection or its older flat heading.`);
+      result.set(key, {
+        ...child,
+        headingStart: child.headingStart + parent.contentStart,
+        contentStart: child.contentStart + parent.contentStart,
+        contentEnd: child.contentEnd + parent.contentStart
+      });
+    }
+  }
+  return result;
+}
+function findDailyFormSection(formText, name) {
+  var _a;
+  return (_a = dailyFormSections(formText).get(name.trim().toLowerCase())) != null ? _a : null;
 }
 function findFormSection(formText, name) {
   var _a;
@@ -7335,10 +7580,8 @@ function inspectMeals(db, content, thresholds) {
 // src/logger/daily-health.ts
 function inspectDailyHealth(db, body) {
   var _a, _b;
-  const headings = [...body.matchAll(/^#####(?!#)[ \t]+(Medication|Symptoms)[ \t]*$/gmi)].map((m) => m[1].toLowerCase());
-  if (new Set(headings).size !== headings.length) throw new Error("Keep one Medication and one Symptoms section per Daily Form.");
-  if (headings.length) assertMedicalSchema(db);
-  const sections2 = formSections(body);
+  const sections2 = dailyFormSections(body);
+  if (sections2.has("medication") || sections2.has("symptoms")) assertMedicalSchema(db);
   const medication = healthSection((_a = sections2.get("medication")) == null ? void 0 : _a.content);
   const symptoms = healthSection((_b = sections2.get("symptoms")) == null ? void 0 : _b.content);
   function time(value) {
@@ -7891,7 +8134,7 @@ function dailyFormBody(sourceText, expectedDate) {
 function sectionsFromForm(sourceText, expectedDate) {
   const body = dailyFormBody(sourceText, expectedDate);
   const result = /* @__PURE__ */ new Map();
-  for (const [name, section] of formSections(body)) result.set(name, section.content.trim());
+  for (const [name, section] of dailyFormSections(body)) result.set(name, section.content.trim());
   return result;
 }
 function entries(section) {
@@ -8474,7 +8717,7 @@ function validateReplacementForm(sourceText, date) {
   }
   const body = dailyFormBody(sourceText, date);
   const seen = /* @__PURE__ */ new Set();
-  const known = /* @__PURE__ */ new Set(["daily metrics", "sessions", "meals", "transactions", "exercise details", "milestones", "stoicism", "admin events", "valuation rates", "medication", "symptoms"]);
+  const known = /* @__PURE__ */ new Set(["daily metrics", "sessions", "meals", "transactions", "exercise details", "milestones", "stoicism", "admin events", "valuation rates", "medication", "symptoms", "medical", "financial"]);
   const rowSections = /* @__PURE__ */ new Set(["sessions", "transactions", "exercise details", "milestones", "admin events", "valuation rates", "medication", "symptoms"]);
   for (const match of body.matchAll(/^#####(?!#)[ \t]+(.+?)[ \t]*$/gm)) {
     const name = match[1].trim().toLowerCase();
@@ -8482,7 +8725,7 @@ function validateReplacementForm(sourceText, date) {
     if (seen.has(name)) throw new Error(`Reimport has duplicate '${match[1]}' sections. Keep exactly one section to avoid losing entries.`);
     seen.add(name);
   }
-  for (const [name, section] of formSections(body)) {
+  for (const [name, section] of dailyFormSections(body)) {
     if (rowSections.has(name) && !findEntriesMarker(section.content)) {
       throw new Error(`Reimport section '${section.name}' requires an ENTRIES: marker, even when it is empty.`);
     }
@@ -9452,14 +9695,22 @@ function stageDailyFormSection(options) {
   const formText = options.sourceText.slice(form.headingStart, form.endStart);
   const afterForm = options.sourceText.slice(form.endStart);
   const lineEnding = lineEndingFor(options.sourceText);
-  const sectionInfo = findFormSection(formText, options.sectionName);
+  const sectionInfo = findDailyFormSection(formText, options.sectionName);
   let updatedForm;
   if (!sectionInfo) {
     if (!options.createSectionIfMissing) {
       throw new Error((_a = options.missingSectionMessage) != null ? _a : `This EH Daily Form has no ${options.sectionName} section.`);
     }
-    const separator = formText.endsWith(lineEnding.repeat(2)) ? "" : lineEnding;
-    updatedForm = `${formText}${separator}${lineEnding}##### ${options.sectionName}${lineEnding}ENTRIES:${lineEnding}${options.lines.join(lineEnding)}${lineEnding}`;
+    const parent = options.parentSectionName ? findDailyFormSection(formText, options.parentSectionName) : null;
+    if (parent) {
+      const insertAt = parent.contentEnd;
+      const newSection = `${lineEnding}###### ${options.sectionName}${lineEnding}ENTRIES:${lineEnding}${options.lines.join(lineEnding)}${lineEnding}`;
+      updatedForm = `${formText.slice(0, insertAt)}${newSection}${formText.slice(insertAt)}`;
+    } else {
+      const separator = formText.endsWith(lineEnding.repeat(2)) ? "" : lineEnding;
+      const heading = options.parentSectionName ? `##### ${options.parentSectionName}${lineEnding}${lineEnding}###### ${options.sectionName}` : `##### ${options.sectionName}`;
+      updatedForm = `${formText}${separator}${lineEnding}${heading}${lineEnding}ENTRIES:${lineEnding}${options.lines.join(lineEnding)}${lineEnding}`;
+    }
   } else {
     const section = formText.slice(sectionInfo.contentStart, sectionInfo.contentEnd);
     const marker = findEntriesMarker(section);
@@ -9810,6 +10061,7 @@ async function prepareFinanceEntryStage(input) {
   const updatedText = stageDailyFormSection({
     sourceText: input.sourceText,
     sectionName: "Transactions",
+    parentSectionName: "Financial",
     lines: [line],
     missingFormMessage: "This note has no #### EH Daily Form block to receive a financial entry.",
     missingFormEndMessage: "This note has an EH Daily Form but no matching #### END marker.",
@@ -9835,6 +10087,7 @@ async function prepareValuationRateStage(input) {
   const updatedText = stageDailyFormSection({
     sourceText: input.sourceText,
     sectionName: "Valuation Rates",
+    parentSectionName: "Financial",
     lines,
     missingFormMessage: "This note has no #### EH Daily Form block to receive Valuation Rates.",
     missingFormEndMessage: "This note has an EH Daily Form but no matching #### END marker.",
@@ -11136,6 +11389,7 @@ var DailyAssessmentView = class extends ReadingView {
     super(leaf, plugin);
     this.plugin = plugin;
     this.selectedDate = null;
+    this.timeGrouping = "engagement";
     this.items = [];
     this.selectedItem = null;
     this.assessment = null;
@@ -11261,6 +11515,11 @@ var DailyAssessmentView = class extends ReadingView {
     const report = this.inspection ? reportFromInspection(this.inspection) : reportFromAssessment(this.selectedItem.date, this.assessment);
     if (this.inspection) report.warnings = [];
     renderDailyAssessmentReport(this.app, main, report, {
+      timeGrouping: this.timeGrouping,
+      onTimeGroupingChange: (grouping) => {
+        this.timeGrouping = grouping;
+      },
+      dayColumnWidth: this.plugin.settings.dayColumnWidth,
       sessionColors: this.plugin.settings.sessionColors,
       initialScrollHour: this.plugin.settings.initialScrollHour,
       valuationLabel: this.plugin.settings.valuationUnitLabel
@@ -11648,6 +11907,7 @@ var DailyAssessmentView = class extends ReadingView {
         explanation: `Review the complete assessment. Confirmation writes the day with a database backup.${this.plugin.settings.removeFormAfterDailyImport ? " The exact imported Daily Form will then be removed from the note." : ""}`,
         confirmLabel: "Import daily assessment",
         inspection,
+        dayColumnWidth: this.plugin.settings.dayColumnWidth,
         sessionColors: this.plugin.settings.sessionColors,
         initialScrollHour: this.plugin.settings.initialScrollHour,
         valuationLabel: this.plugin.settings.valuationUnitLabel
@@ -15117,7 +15377,8 @@ var DEFAULT_SETTINGS = {
   sessionColors: { ...DEFAULT_SESSION_COLORS },
   removeFormAfterDailyImport: false,
   removeFormAfterWeeklyImport: false,
-  removeFormAfterBudgetImport: false
+  removeFormAfterBudgetImport: false,
+  lastSeenReleaseNotes: ""
 };
 function definition(id, name, description, details = {}) {
   return { id, name, description, desc: description, ...details };
@@ -15267,6 +15528,33 @@ var ExaminedHumanSettingTab = class extends import_obsidian24.PluginSettingTab {
           )
         ]),
         group("general-tools", "Tools and maintenance", "Open administrative tools and maintain the official database schema.", [
+          definition(
+            "medical-schema-upgrade",
+            "Medical database migration",
+            "Enable Medical Forms and Daily health records. Review the migration and confirm a verified backup before it changes the database.",
+            { render: (setting) => {
+              setting.addButton((button) => button.setButtonText("Review medical migration").onClick(async () => {
+                button.setDisabled(true);
+                try {
+                  await upgradeMedicalDatabase(this.plugin);
+                } finally {
+                  button.setDisabled(false);
+                }
+              }));
+            } }
+          ),
+          definition(
+            "medical-dashboard",
+            "Open Medical Dashboard",
+            "Browse imported reports and Daily medical logs.",
+            { action: () => this.plugin.activateMedicalDashboardView() }
+          ),
+          definition(
+            "release-notes",
+            "What\u2019s new",
+            "Read the notes for this build.",
+            { action: () => new ReleaseNotesModal(this.app).open() }
+          ),
           definition(
             "command-center",
             "Open Command Center",
@@ -15665,6 +15953,167 @@ var SourceMonitor = class {
   }
 };
 
+// src/DashboardSidebarView.ts
+var import_obsidian25 = require("obsidian");
+
+// src/dashboard-navigation.ts
+var DASHBOARD_SIDEBAR_VIEW_TYPE = "examined-human-dashboard-sidebar";
+var STOA_ICON = "examined-human-stoa";
+var STOA_ICON_SVG = '<path d="M12 32 50 12 88 32H12ZM17 39h66M12 88h76M17 79h66M24 43v30m17-30v30m18-30v30m17-30v30" fill="none" stroke="currentColor" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>';
+var DASHBOARDS = [
+  { viewType: "examined-human", label: "Calendar", icon: "calendar-clock", color: "calendar" },
+  { viewType: "examined-human-daily-assessment", label: "Daily Assessment", icon: "sun", color: "daily" },
+  { viewType: "examined-human-weekly-assessment", label: "Weekly Assessment", icon: "calendar-range", color: "weekly" },
+  { viewType: "examined-human-engagement-dashboard", label: "Engagements", icon: "target", color: "engagements" },
+  { viewType: "examined-human-financial-dashboard", label: "Finance", icon: "wallet", color: "finance" },
+  { viewType: "examined-human-nutrition-dashboard", label: "Nutrition", icon: "utensils", color: "nutrition" },
+  { viewType: "examined-human-exercise-dashboard", label: "Exercise", icon: "dumbbell", color: "exercise" },
+  { viewType: "examined-human-records", label: "Medical", icon: "heart-pulse", color: "medical" },
+  { viewType: "examined-human-command-center", label: "Command Center", icon: "sliders-horizontal", color: "commands" }
+];
+function isDashboardViewType(type) {
+  return DASHBOARDS.some((dashboard) => dashboard.viewType === type);
+}
+function opensDashboardInNewTab(event) {
+  return event.ctrlKey || event.metaKey || event.button === 1;
+}
+async function navigateToDashboard(workspace, type, newTab = false) {
+  if (!isDashboardViewType(type)) throw new Error(`Unknown Examined Human dashboard: ${String(type)}`);
+  const recent = workspace.getMostRecentLeaf();
+  const state = recent == null ? void 0 : recent.getViewState();
+  const reusable = recent && state && isDashboardViewType(state.type) && (!state.pinned || state.type === type);
+  const leaf = !newTab && reusable ? recent : workspace.getLeaf("tab");
+  if (leaf.getViewState().type !== type) {
+    await leaf.setViewState({ type, active: true });
+  }
+  await workspace.revealLeaf(leaf);
+  return leaf;
+}
+
+// src/DashboardSidebarView.ts
+var DashboardSidebarView = class extends ReadingView {
+  constructor(leaf, plugin) {
+    super(leaf, plugin);
+    this.plugin = plugin;
+    this.generation = 0;
+    this.dashboardButtons = /* @__PURE__ */ new Map();
+  }
+  getViewType() {
+    return DASHBOARD_SIDEBAR_VIEW_TYPE;
+  }
+  getDisplayText() {
+    return "Examined Human";
+  }
+  getIcon() {
+    return STOA_ICON;
+  }
+  async onOpen() {
+    this.startReadingUpdates();
+    this.registerEvent(this.app.workspace.on("active-leaf-change", () => this.updateActiveDashboard()));
+    this.registerEvent(this.app.workspace.on("layout-change", () => this.updateActiveDashboard()));
+    await this.refresh();
+  }
+  async onClose() {
+    this.generation++;
+    this.stopReadingUpdates();
+    this.dashboardButtons.clear();
+    this.contentEl.empty();
+  }
+  async refreshContent() {
+    const generation = ++this.generation;
+    this.contentEl.empty();
+    this.contentEl.addClass("examined-human-dashboard-sidebar");
+    this.dashboardButtons.clear();
+    const header = this.contentEl.createDiv({ cls: "eh-navigation-header" });
+    (0, import_obsidian25.setIcon)(header.createSpan({ cls: "eh-navigation-emblem", attr: { "aria-hidden": "true" } }), STOA_ICON);
+    header.createEl("h2", { text: "Examined Human" });
+    const refresh = header.createEl("button", {
+      cls: "clickable-icon eh-navigation-refresh",
+      attr: { "aria-label": "Refresh all EH dashboards", title: "Refresh all EH dashboards" }
+    });
+    (0, import_obsidian25.setIcon)(refresh, "refresh-cw");
+    refresh.addEventListener("click", () => {
+      refresh.disabled = true;
+      void this.plugin.refreshViews().catch((error) => new import_obsidian25.Notice(String(error))).finally(() => {
+        refresh.disabled = false;
+      });
+    });
+    const summary = this.contentEl.createEl("section", {
+      cls: "eh-navigation-summary",
+      attr: { "aria-label": "Recorded activity through today", "aria-live": "polite" }
+    });
+    summary.createDiv({ text: "Loading recorded activity\u2026", cls: "eh-navigation-muted" });
+    const nav = this.contentEl.createEl("nav", { cls: "eh-navigation-list", attr: { "aria-label": "EH dashboards" } });
+    for (const dashboard of DASHBOARDS) {
+      const row = nav.createDiv({ cls: "eh-navigation-row" });
+      row.style.setProperty("--eh-dashboard-color", DASHBOARD_COLORS[dashboard.color]);
+      const button = row.createEl("button", {
+        cls: "eh-navigation-dashboard",
+        attr: { title: `${dashboard.label} \xB7 Ctrl/Cmd-click to open a new tab` }
+      });
+      (0, import_obsidian25.setIcon)(button.createSpan({ cls: "eh-navigation-icon", attr: { "aria-hidden": "true" } }), dashboard.icon);
+      button.createSpan({ text: dashboard.label, cls: "eh-navigation-label" });
+      button.addEventListener("click", (event) => this.openDashboard(dashboard.viewType, opensDashboardInNewTab(event)));
+      button.addEventListener("auxclick", (event) => {
+        if (event.button !== 1) return;
+        event.preventDefault();
+        this.openDashboard(dashboard.viewType, true);
+      });
+      this.dashboardButtons.set(dashboard.viewType, button);
+      const newTab = row.createEl("button", {
+        cls: "eh-navigation-new-tab",
+        attr: { "aria-label": `Open ${dashboard.label} in a new tab`, title: `Open ${dashboard.label} in a new tab` }
+      });
+      (0, import_obsidian25.setIcon)(newTab, "arrow-up-right");
+      newTab.addEventListener("click", () => this.openDashboard(dashboard.viewType, true));
+    }
+    this.contentEl.createEl("p", {
+      cls: "eh-navigation-hint",
+      text: "Select a dashboard to switch in the current EH tab. Use \u2197 to open a separate tab."
+    });
+    this.updateActiveDashboard();
+    try {
+      const result = await this.plugin.database.dashboardOverview(this.plugin.settings.databasePath, (0, import_obsidian25.moment)().format("YYYY-MM-DD"));
+      if (generation !== this.generation) return;
+      const count = (value) => new Intl.NumberFormat().format(value);
+      summary.empty();
+      const time = summary.createDiv({ cls: "eh-navigation-time" });
+      time.createEl("strong", { text: formatMinutesAsClock(result.totalMinutes) });
+      time.createSpan({ text: " time logged", cls: "eh-navigation-muted" });
+      summary.createDiv({
+        cls: "eh-navigation-counts",
+        text: `${count(result.sessionCount)} session${result.sessionCount === 1 ? "" : "s"} across ${count(result.engagementCount)} engagement${result.engagementCount === 1 ? "" : "s"}`
+      });
+      summary.createDiv({
+        cls: "eh-navigation-muted",
+        text: `${count(result.recordedDays)} recorded day${result.recordedDays === 1 ? "" : "s"} \xB7 All time through today`
+      });
+      summary.setAttribute("title", "Imported sessions only; planned sessions are excluded. Time is shown as hours:minutes and sums recorded non-negative durations.");
+    } catch (error) {
+      if (generation !== this.generation) return;
+      summary.empty();
+      summary.createDiv({ cls: "eh-navigation-muted", text: "Activity summary unavailable. Check the database in EH Settings." });
+      summary.setAttribute("title", error instanceof Error ? error.message : String(error));
+    }
+  }
+  updateActiveDashboard() {
+    var _a;
+    const type = (_a = this.app.workspace.getMostRecentLeaf()) == null ? void 0 : _a.getViewState().type;
+    for (const [viewType, button] of this.dashboardButtons) {
+      if (viewType === type) {
+        button.addClass("is-active");
+        button.setAttribute("aria-current", "page");
+      } else {
+        button.removeClass("is-active");
+        button.removeAttribute("aria-current");
+      }
+    }
+  }
+  openDashboard(type, newTab) {
+    void this.plugin.openDashboard(type, newTab).catch((error) => new import_obsidian25.Notice(`Could not open dashboard: ${String(error)}`));
+  }
+};
+
 // src/main.ts
 var AUTHORITATIVE_DATABASE_RELOAD_INTERVAL_MS = 10 * 60 * 1e3;
 var DATABASE_FINGERPRINT_INTERVAL_MS = 1e4;
@@ -15685,7 +16134,7 @@ function storedJournalFolder(value) {
 function storedText(value, fallback) {
   return typeof value === "string" && value.trim() ? value.trim() : fallback;
 }
-var ExaminedHumanPlugin = class extends import_obsidian25.Plugin {
+var ExaminedHumanPlugin = class extends import_obsidian26.Plugin {
   constructor() {
     super(...arguments);
     this.settings = DEFAULT_SETTINGS;
@@ -15695,13 +16144,17 @@ var ExaminedHumanPlugin = class extends import_obsidian25.Plugin {
     this.sourceMonitor = null;
     this.sourceCheckTimer = null;
     this.sourceListeners = /* @__PURE__ */ new Set();
+    this.dashboardNavigation = Promise.resolve();
+    this.sidebarCreation = null;
   }
   /** @deprecated Use logger. Retained temporarily for integration compatibility. */
   get nativeLogger() {
     return this.logger;
   }
   async onload() {
+    var _a, _b, _c, _d;
     await this.loadSettings();
+    (0, import_obsidian26.addIcon)(STOA_ICON, STOA_ICON_SVG);
     this.database = new ExaminedHumanDatabase(this.app);
     this.logger = new LoggerService(
       this.app,
@@ -15716,26 +16169,24 @@ var ExaminedHumanPlugin = class extends import_obsidian25.Plugin {
     this.registerView(EXAMINED_HUMAN_FINANCIAL_DASHBOARD_VIEW_TYPE, (leaf) => new FinancialDashboardView(leaf, this));
     this.registerView(EXAMINED_HUMAN_NUTRITION_DASHBOARD_VIEW_TYPE, (leaf) => new NutritionDashboardView(leaf, this));
     this.registerView(EXAMINED_HUMAN_EXERCISE_DASHBOARD_VIEW_TYPE, (leaf) => new ExerciseDashboardView(leaf, this));
-    this.registerView(RECORDS_VIEW_TYPE, (leaf) => new RecordsView(leaf, this));
+    this.registerView(MEDICAL_DASHBOARD_VIEW_TYPE, (leaf) => new MedicalDashboardView(leaf, this));
+    this.registerView(DASHBOARD_SIDEBAR_VIEW_TYPE, (leaf) => new DashboardSidebarView(leaf, this));
     this.addCommand({ id: "import-medical-form-from-active-file", name: "Import or reimport Medical Form from Active File", callback: () => {
       void importMedicalActiveFile(this);
     } });
-    this.addCommand({ id: "upgrade-medical-database", name: "Upgrade medical database", callback: () => {
-      void upgradeMedicalDatabase(this);
-    } });
     this.addCommand({ id: "manage-health-catalogs", name: "Manage health catalogs", callback: () => openHealthCatalog(this) });
-    this.addCommand({ id: "open-records", name: "Imported forms and health records", callback: () => {
-      void (async () => {
-        let leaf = this.app.workspace.getLeavesOfType(RECORDS_VIEW_TYPE)[0];
-        if (!leaf) {
-          leaf = this.app.workspace.getLeaf("tab");
-          await leaf.setViewState({ type: RECORDS_VIEW_TYPE, active: true });
-        }
-        await this.app.workspace.revealLeaf(leaf);
-      })();
+    this.addCommand({ id: "open-medical-dashboard", name: "Medical Dashboard", callback: () => {
+      void this.activateMedicalDashboardView();
     } });
-    this.addRibbonIcon("calendar-clock", "Open Examined Human calendar", () => {
-      void this.activateView();
+    this.addRibbonIcon(STOA_ICON, "Open Examined Human dashboards", () => {
+      void this.activateDashboardSidebar();
+    });
+    this.addCommand({
+      id: "open-dashboard-sidebar",
+      name: "Open dashboard navigator",
+      callback: () => {
+        void this.activateDashboardSidebar();
+      }
     });
     this.addCommand({
       id: "open-daily-assessment",
@@ -15822,23 +16273,33 @@ var ExaminedHumanPlugin = class extends import_obsidian25.Plugin {
       }
     });
     this.addSettingTab(new ExaminedHumanSettingTab(this.app, this));
+    (_b = (_a = this.app.workspace).onLayoutReady) == null ? void 0 : _b.call(_a, () => {
+      void this.ensureDashboardSidebar().catch((error) => new import_obsidian26.Notice(`Could not create EH sidebar: ${String(error)}`));
+    });
+    (_d = (_c = this.app.workspace).onLayoutReady) == null ? void 0 : _d.call(_c, () => {
+      if (this.settings.lastSeenReleaseNotes === RELEASE_NOTES_ID) return;
+      new ReleaseNotesModal(this.app, () => {
+        this.settings.lastSeenReleaseNotes = RELEASE_NOTES_ID;
+        void this.saveSettings().catch((error) => new import_obsidian26.Notice(`Could not save release-note preference: ${String(error)}`));
+      }).open();
+    });
     this.sourceMonitor = new SourceMonitor({
       fingerprint: async () => `${this.settings.databasePath}:${await this.database.fingerprint(this.settings.databasePath)}`,
       signature: async (authoritative) => {
         if (authoritative) this.database = new ExaminedHumanDatabase(this.app);
         return this.database.contentSignature(this.settings.databasePath);
       },
-      day: () => (0, import_obsidian25.moment)().format("YYYY-MM-DD"),
+      day: () => (0, import_obsidian26.moment)().format("YYYY-MM-DD"),
       changed: (message) => this.notifySourceUpdates(message)
     });
     void this.sourceMonitor.check(true);
     this.registerInterval(window.setInterval(() => {
-      var _a;
-      if (!this.logger.isRunning && !this.refreshPromise) void ((_a = this.sourceMonitor) == null ? void 0 : _a.check());
+      var _a2;
+      if (!this.logger.isRunning && !this.refreshPromise) void ((_a2 = this.sourceMonitor) == null ? void 0 : _a2.check());
     }, DATABASE_FINGERPRINT_INTERVAL_MS));
     this.registerInterval(window.setInterval(() => {
-      var _a;
-      if (!this.logger.isRunning && !this.refreshPromise) void ((_a = this.sourceMonitor) == null ? void 0 : _a.check(true));
+      var _a2;
+      if (!this.logger.isRunning && !this.refreshPromise) void ((_a2 = this.sourceMonitor) == null ? void 0 : _a2.check(true));
     }, AUTHORITATIVE_DATABASE_RELOAD_INTERVAL_MS));
     const changedFile = (path) => {
       if (this.logger.isRunning) return;
@@ -15847,9 +16308,9 @@ var ExaminedHumanPlugin = class extends import_obsidian25.Plugin {
         if (path === databasePath || path === `${databasePath}-wal`) {
           if (this.sourceCheckTimer != null) window.clearTimeout(this.sourceCheckTimer);
           this.sourceCheckTimer = window.setTimeout(() => {
-            var _a;
+            var _a2;
             this.sourceCheckTimer = null;
-            if (!this.logger.isRunning && !this.refreshPromise) void ((_a = this.sourceMonitor) == null ? void 0 : _a.check(true));
+            if (!this.logger.isRunning && !this.refreshPromise) void ((_a2 = this.sourceMonitor) == null ? void 0 : _a2.check(true));
           }, 200);
         }
       } catch (e) {
@@ -15920,9 +16381,13 @@ var ExaminedHumanPlugin = class extends import_obsidian25.Plugin {
       dismissedWarningKeys: sanitizeDismissedWarningKeys(stored == null ? void 0 : stored.dismissedWarningKeys),
       removeFormAfterDailyImport: (stored == null ? void 0 : stored.removeFormAfterDailyImport) === true,
       removeFormAfterWeeklyImport: (stored == null ? void 0 : stored.removeFormAfterWeeklyImport) === true,
-      removeFormAfterBudgetImport: (stored == null ? void 0 : stored.removeFormAfterBudgetImport) === true
+      removeFormAfterBudgetImport: (stored == null ? void 0 : stored.removeFormAfterBudgetImport) === true,
+      lastSeenReleaseNotes: typeof (stored == null ? void 0 : stored.lastSeenReleaseNotes) === "string" ? stored.lastSeenReleaseNotes : ""
     };
     if (hadLegacyPythonSetting) await this.saveData(this.settings);
+  }
+  async activateMedicalDashboardView() {
+    await this.openDashboard(MEDICAL_DASHBOARD_VIEW_TYPE, true);
   }
   async saveSettings() {
     await this.saveData(this.settings);
@@ -15944,10 +16409,10 @@ var ExaminedHumanPlugin = class extends import_obsidian25.Plugin {
   async discoverFormsWithNotice() {
     try {
       const result = await this.discoverForms();
-      new import_obsidian25.Notice(`Found ${result.forms.length} EH Form${result.forms.length === 1 ? "" : "s"}; scanned ${result.scannedFileCount} changed file${result.scannedFileCount === 1 ? "" : "s"} and reused ${result.reusedFileCount} cached file${result.reusedFileCount === 1 ? "" : "s"}.`, 8e3);
+      new import_obsidian26.Notice(`Found ${result.forms.length} EH Form${result.forms.length === 1 ? "" : "s"}; scanned ${result.scannedFileCount} changed file${result.scannedFileCount === 1 ? "" : "s"} and reused ${result.reusedFileCount} cached file${result.reusedFileCount === 1 ? "" : "s"}.`, 8e3);
       await this.refreshViews();
     } catch (error) {
-      new import_obsidian25.Notice(`EH Form discovery stopped: ${error instanceof Error ? error.message : String(error)}`, 12e3);
+      new import_obsidian26.Notice(`EH Form discovery stopped: ${error instanceof Error ? error.message : String(error)}`, 12e3);
     }
   }
   async syncTodayPlanningFromDailyForm() {
@@ -15960,7 +16425,7 @@ var ExaminedHumanPlugin = class extends import_obsidian25.Plugin {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       if (message !== this.lastTodayPlanningSyncError) {
-        new import_obsidian25.Notice(`Today's Daily Form could not be projected: ${message}`, 12e3);
+        new import_obsidian26.Notice(`Today's Daily Form could not be projected: ${message}`, 12e3);
         this.lastTodayPlanningSyncError = message;
       }
     } finally {
@@ -15968,7 +16433,7 @@ var ExaminedHumanPlugin = class extends import_obsidian25.Plugin {
     }
   }
   async performTodayPlanningSync() {
-    const today = (0, import_obsidian25.moment)().format("YYYY-MM-DD");
+    const today = (0, import_obsidian26.moment)().format("YYYY-MM-DD");
     const discovery = await this.discoverForms();
     const matches = discovery.forms.filter((form) => form.kind === "daily" && form.date === today);
     if (matches.length > 1) {
@@ -15978,7 +16443,7 @@ var ExaminedHumanPlugin = class extends import_obsidian25.Plugin {
     if (matches.length === 1) {
       const discovered = matches[0];
       const file = this.app.vault.getAbstractFileByPath(discovered.filePath);
-      if (!(file instanceof import_obsidian25.TFile)) throw new Error(`Daily Form was not found: ${discovered.filePath}`);
+      if (!(file instanceof import_obsidian26.TFile)) throw new Error(`Daily Form was not found: ${discovered.filePath}`);
       const sourceText = await this.app.vault.read(file);
       const dailyForms = formsInText(file, sourceText).filter((form) => form.kind === "daily");
       if (dailyForms.length !== 1 || dailyForms[0].date !== today) {
@@ -16023,7 +16488,7 @@ var ExaminedHumanPlugin = class extends import_obsidian25.Plugin {
       await this.saveSettings();
       return true;
     } catch (error) {
-      new import_obsidian25.Notice(
+      new import_obsidian26.Notice(
         `The form import succeeded, but its EH form status could not be updated: ${error instanceof Error ? error.message : String(error)}`,
         12e3
       );
@@ -16046,7 +16511,7 @@ var ExaminedHumanPlugin = class extends import_obsidian25.Plugin {
       await this.saveSettings();
       return "removed";
     } catch (error) {
-      new import_obsidian25.Notice(
+      new import_obsidian26.Notice(
         `The form was imported successfully, but its source block was retained: ${error instanceof Error ? error.message : String(error)}`,
         12e3
       );
@@ -16055,7 +16520,7 @@ var ExaminedHumanPlugin = class extends import_obsidian25.Plugin {
   }
   async activeForm(kind) {
     const file = this.app.workspace.getActiveFile();
-    if (!(file instanceof import_obsidian25.TFile)) throw new Error("Open a Markdown note that contains the form you want to import.");
+    if (!(file instanceof import_obsidian26.TFile)) throw new Error("Open a Markdown note that contains the form you want to import.");
     const sourceText = await this.app.vault.read(file);
     const matches = formsInText(file, sourceText).filter((form) => form.kind === kind);
     if (matches.length === 0) throw new Error(`The active note contains no EH ${kind === "daily" ? "Daily" : kind === "weekly" ? "Weekly" : "Budget"} Form.`);
@@ -16088,7 +16553,7 @@ Planned time: ${preview.plannedMinutes} minutes`,
         await this.logger.importWeekly({ databasePath: this.settings.databasePath, weekStartDate: form.startDate, fileName: file.name, filePath: file.path, sourceText });
         await this.markImportedEhFormFileIfComplete(file);
         const cleanup = await this.removeImportedFormAfterImport(file, "weekly", sourceText);
-        new import_obsidian25.Notice(`Imported Weekly Form starting ${preview.weekStart}.${cleanup === "removed" ? " Source form removed." : ""}`, 8e3);
+        new import_obsidian26.Notice(`Imported Weekly Form starting ${preview.weekStart}.${cleanup === "removed" ? " Source form removed." : ""}`, 8e3);
       } else if (kind === "budget") {
         const preview = await this.logger.inspectBudget({ databasePath: this.settings.databasePath, fileName: file.name, filePath: file.path, sourceText });
         const confirmed = await confirmWeeklyAction(this.app, {
@@ -16104,9 +16569,9 @@ Expected movements: ${preview.expectedMovementCount}`,
         if (!confirmed) return;
         await this.logger.importBudget({ databasePath: this.settings.databasePath, fileName: file.name, filePath: file.path, sourceText });
         const cleanup = await this.removeImportedFormAfterImport(file, "budget", sourceText);
-        new import_obsidian25.Notice(`Imported Budget Form for ${preview.periodStart} through ${preview.periodEnd}.${cleanup === "removed" ? " Source form removed." : ""}`, 8e3);
+        new import_obsidian26.Notice(`Imported Budget Form for ${preview.periodStart} through ${preview.periodEnd}.${cleanup === "removed" ? " Source form removed." : ""}`, 8e3);
       } else {
-        const today = (0, import_obsidian25.moment)().format("YYYY-MM-DD");
+        const today = (0, import_obsidian26.moment)().format("YYYY-MM-DD");
         const noteDate = form.date;
         const request = {
           databasePath: this.settings.databasePath,
@@ -16142,6 +16607,7 @@ Expected movements: ${preview.expectedMovementCount}`,
           explanation: future ? "Review the future form below. It cannot become a canonical Daily receipt until its date arrives." : `Review the complete assessment below. Confirmation writes a durable canonical Daily receipt with a backup.${this.settings.removeFormAfterDailyImport ? " The exact imported Daily Form will then be removed from this note." : ""}`,
           confirmLabel: "Import daily assessment",
           inspection,
+          dayColumnWidth: this.settings.dayColumnWidth,
           sessionColors: this.settings.sessionColors,
           initialScrollHour: this.settings.initialScrollHour,
           valuationLabel: this.settings.valuationUnitLabel,
@@ -16156,82 +16622,74 @@ Expected movements: ${preview.expectedMovementCount}`,
                 preferredTarget,
                 onStaged: async () => this.importActiveForm("daily")
               });
-            }).catch((error) => new import_obsidian25.Notice(error instanceof Error ? error.message : String(error), 1e4));
+            }).catch((error) => new import_obsidian26.Notice(error instanceof Error ? error.message : String(error), 1e4));
           }
         });
         if (!confirmed) return;
         const result = await this.logger.importHistoricalDaily({ ...request, expectedDatabaseChecksum: inspection.databaseChecksum });
         await this.markImportedEhFormFileIfComplete(file);
         const cleanup = await this.removeImportedFormAfterImport(file, "daily", sourceText);
-        new import_obsidian25.Notice(`${result.replaced ? "Day replaced successfully." : "Imported successfully."}${cleanup === "removed" ? " Source form removed." : ""}`, 8e3);
+        new import_obsidian26.Notice(`${result.replaced ? "Day replaced successfully." : "Imported successfully."}${cleanup === "removed" ? " Source form removed." : ""}`, 8e3);
       }
       await this.refreshViews();
     } catch (error) {
-      new import_obsidian25.Notice(`EH Form import did not complete: ${error instanceof Error ? error.message : String(error)}`, 12e3);
+      new import_obsidian26.Notice(`EH Form import did not complete: ${error instanceof Error ? error.message : String(error)}`, 12e3);
     }
   }
   async activateView() {
-    const { workspace } = this.app;
-    let leaf = workspace.getLeavesOfType(EXAMINED_HUMAN_CALENDAR_VIEW_TYPE)[0];
-    if (!leaf) {
-      leaf = workspace.getLeaf("tab");
-      await leaf.setViewState({ type: EXAMINED_HUMAN_CALENDAR_VIEW_TYPE, active: true });
-    }
-    await workspace.revealLeaf(leaf);
+    await this.openDashboard(EXAMINED_HUMAN_CALENDAR_VIEW_TYPE, true);
   }
   async activateWeeklyAssessmentView() {
-    const { workspace } = this.app;
-    let leaf = workspace.getLeavesOfType(EXAMINED_HUMAN_WEEKLY_ASSESSMENT_VIEW_TYPE)[0];
-    if (!leaf) {
-      leaf = workspace.getLeaf("tab");
-      await leaf.setViewState({ type: EXAMINED_HUMAN_WEEKLY_ASSESSMENT_VIEW_TYPE, active: true });
-    }
-    await workspace.revealLeaf(leaf);
+    await this.openDashboard(EXAMINED_HUMAN_WEEKLY_ASSESSMENT_VIEW_TYPE, true);
   }
   async activateDailyAssessmentView() {
-    const { workspace } = this.app;
-    let leaf = workspace.getLeavesOfType(EXAMINED_HUMAN_DAILY_ASSESSMENT_VIEW_TYPE)[0];
-    if (!leaf) {
-      leaf = workspace.getLeaf("tab");
-      await leaf.setViewState({ type: EXAMINED_HUMAN_DAILY_ASSESSMENT_VIEW_TYPE, active: true });
-    }
-    await workspace.revealLeaf(leaf);
+    await this.openDashboard(EXAMINED_HUMAN_DAILY_ASSESSMENT_VIEW_TYPE, true);
   }
   async activateCommandCenterView() {
-    const { workspace } = this.app;
-    let leaf = workspace.getLeavesOfType(EXAMINED_HUMAN_COMMAND_CENTER_VIEW_TYPE)[0];
-    if (!leaf) {
-      leaf = workspace.getLeaf("tab");
-      await leaf.setViewState({ type: EXAMINED_HUMAN_COMMAND_CENTER_VIEW_TYPE, active: true });
-    }
-    await workspace.revealLeaf(leaf);
+    await this.openDashboard(EXAMINED_HUMAN_COMMAND_CENTER_VIEW_TYPE, true);
   }
   async activateEngagementDashboardView() {
-    const { workspace } = this.app;
-    let leaf = workspace.getLeavesOfType(EXAMINED_HUMAN_ENGAGEMENT_DASHBOARD_VIEW_TYPE)[0];
-    if (!leaf) {
-      leaf = workspace.getLeaf("tab");
-      await leaf.setViewState({ type: EXAMINED_HUMAN_ENGAGEMENT_DASHBOARD_VIEW_TYPE, active: true });
-    }
-    await workspace.revealLeaf(leaf);
+    await this.openDashboard(EXAMINED_HUMAN_ENGAGEMENT_DASHBOARD_VIEW_TYPE, true);
   }
   async activateFinancialDashboardView() {
-    await this.activateDashboardView(EXAMINED_HUMAN_FINANCIAL_DASHBOARD_VIEW_TYPE);
+    await this.openDashboard(EXAMINED_HUMAN_FINANCIAL_DASHBOARD_VIEW_TYPE, true);
   }
   async activateNutritionDashboardView() {
-    await this.activateDashboardView(EXAMINED_HUMAN_NUTRITION_DASHBOARD_VIEW_TYPE);
+    await this.openDashboard(EXAMINED_HUMAN_NUTRITION_DASHBOARD_VIEW_TYPE, true);
   }
   async activateExerciseDashboardView() {
-    await this.activateDashboardView(EXAMINED_HUMAN_EXERCISE_DASHBOARD_VIEW_TYPE);
+    await this.openDashboard(EXAMINED_HUMAN_EXERCISE_DASHBOARD_VIEW_TYPE, true);
   }
-  async activateDashboardView(viewType) {
+  openDashboard(type, newTab = false) {
+    const navigation = this.dashboardNavigation.then(async () => {
+      await navigateToDashboard(this.app.workspace, type, newTab);
+      if (import_obsidian26.Platform.isMobile) this.app.workspace.rightSplit.collapse();
+    });
+    this.dashboardNavigation = navigation.catch(() => {
+    });
+    return navigation;
+  }
+  ensureDashboardSidebar() {
     const { workspace } = this.app;
-    let leaf = workspace.getLeavesOfType(viewType)[0];
-    if (!leaf) {
-      leaf = workspace.getLeaf("tab");
-      await leaf.setViewState({ type: viewType, active: true });
+    const existing = workspace.getLeavesOfType(DASHBOARD_SIDEBAR_VIEW_TYPE)[0];
+    if (existing) return Promise.resolve(existing);
+    if (this.sidebarCreation) return this.sidebarCreation;
+    this.sidebarCreation = (async () => {
+      const leaf = workspace.getRightLeaf(false);
+      if (leaf) await leaf.setViewState({ type: DASHBOARD_SIDEBAR_VIEW_TYPE, active: false });
+      return leaf;
+    })().finally(() => {
+      this.sidebarCreation = null;
+    });
+    return this.sidebarCreation;
+  }
+  async activateDashboardSidebar() {
+    try {
+      const leaf = await this.ensureDashboardSidebar();
+      if (leaf) await this.app.workspace.revealLeaf(leaf);
+    } catch (error) {
+      new import_obsidian26.Notice(`Could not open EH sidebar: ${String(error)}`);
     }
-    await workspace.revealLeaf(leaf);
   }
   async refreshViews() {
     if (this.refreshPromise) return this.refreshPromise;
@@ -16274,10 +16732,14 @@ Expected movements: ${preview.expectedMovementCount}`,
     const exerciseRefreshes = this.app.workspace.getLeavesOfType(EXAMINED_HUMAN_EXERCISE_DASHBOARD_VIEW_TYPE).map(async (leaf) => {
       if (leaf.view instanceof ExerciseDashboardView) await leaf.view.refresh();
     });
-    const recordsRefreshes = this.app.workspace.getLeavesOfType(RECORDS_VIEW_TYPE).map(async (leaf) => {
-      if (leaf.view instanceof RecordsView) await leaf.view.refresh();
+    const recordsRefreshes = this.app.workspace.getLeavesOfType(MEDICAL_DASHBOARD_VIEW_TYPE).map(async (leaf) => {
+      if (leaf.view instanceof MedicalDashboardView) await leaf.view.refresh();
+    });
+    const navigationRefreshes = this.app.workspace.getLeavesOfType(DASHBOARD_SIDEBAR_VIEW_TYPE).map(async (leaf) => {
+      if (leaf.view instanceof DashboardSidebarView) await leaf.view.refresh();
     });
     await Promise.all([
+      ...navigationRefreshes,
       ...recordsRefreshes,
       ...calendarRefreshes,
       ...weeklyRefreshes,

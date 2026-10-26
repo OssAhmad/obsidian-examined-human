@@ -8,6 +8,7 @@ import { renderDailyReplacementWarning } from './DailyReplacementWarning.ts';
 import type { DailyAssessmentQueryResult } from './read-models/daily.ts';
 import type { DailyInspection } from './logger/daily-note.ts';
 import type { MealInspection } from './logger/meals.ts';
+import type { DailyTimeGrouping } from './daily-time.ts';
 import { backupMutationOutput } from './logger/service.ts';
 import { openReferenceRepair } from './CommandForms.ts';
 import { unresolvedReferencesFromErrors } from './unresolved-references.ts';
@@ -26,6 +27,7 @@ function formatDecimal(value: number): string {
 
 export class DailyAssessmentView extends ReadingView {
   private selectedDate: string | null = null;
+  private timeGrouping: DailyTimeGrouping = 'engagement';
   private items: DailyNoteListItem[] = [];
   private selectedItem: DailyNoteListItem | null = null;
   private assessment: DailyAssessmentQueryResult | null = null;
@@ -163,6 +165,9 @@ export class DailyAssessmentView extends ReadingView {
       : reportFromAssessment(this.selectedItem.date, this.assessment);
     if (this.inspection) report.warnings = [];
     renderDailyAssessmentReport(this.app, main, report, {
+      timeGrouping: this.timeGrouping,
+      onTimeGroupingChange: (grouping) => { this.timeGrouping = grouping; },
+      dayColumnWidth: this.plugin.settings.dayColumnWidth,
       sessionColors: this.plugin.settings.sessionColors,
       initialScrollHour: this.plugin.settings.initialScrollHour,
       valuationLabel: this.plugin.settings.valuationUnitLabel,
@@ -561,6 +566,7 @@ export class DailyAssessmentView extends ReadingView {
         explanation: `Review the complete assessment. Confirmation writes the day with a database backup.${this.plugin.settings.removeFormAfterDailyImport ? ' The exact imported Daily Form will then be removed from the note.' : ''}`,
         confirmLabel: 'Import daily assessment',
         inspection,
+        dayColumnWidth: this.plugin.settings.dayColumnWidth,
         sessionColors: this.plugin.settings.sessionColors,
         initialScrollHour: this.plugin.settings.initialScrollHour,
         valuationLabel: this.plugin.settings.valuationUnitLabel,

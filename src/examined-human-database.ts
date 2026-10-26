@@ -1,4 +1,4 @@
-import { queryDailyHealth, queryHealthCatalog, queryRecordsPage, queryMedicalReport, medicalImportPaths, type HealthCatalogKind } from './read-models/medical.ts';
+import { queryMedicalDashboardPage, queryDailyHealth, queryHealthCatalog, queryRecordsPage, queryMedicalReport, medicalImportPaths, type HealthCatalogKind } from './read-models/medical.ts';
 import { App } from 'obsidian';
 import type { Database } from 'sql.js';
 import { normalizeVaultDatabasePath } from './database-path.ts';
@@ -28,6 +28,7 @@ import {
   queryWeeklyPlanIndex,
 } from './read-models/weekly.ts';
 import { getSqlJs } from './sql-runtime.ts';
+import { queryDashboardOverview, type DashboardOverview } from './read-models/dashboard-overview.ts';
 
 export class ExaminedHumanDatabase {
   constructor(private app: App) {}
@@ -38,6 +39,12 @@ export class ExaminedHumanDatabase {
 
   healthCatalog(databasePath: string, kind: HealthCatalogKind) {
     return this.withDatabase(databasePath, db => queryHealthCatalog(db, kind));
+  }
+  medicalDashboardPage(databasePath: string, page: number) {
+    return this.withDatabase(databasePath, db => queryMedicalDashboardPage(db, page));
+  }
+  dailyHealth(databasePath: string, date: string) {
+    return this.withDatabase(databasePath, db => queryDailyHealth(db, date));
   }
   recordsPage(databasePath: string, page: number) {
     return this.withDatabase(databasePath, db => queryRecordsPage(db, page));
@@ -51,6 +58,10 @@ export class ExaminedHumanDatabase {
 
   async inspect(databasePath: string): Promise<DatabaseInspection> {
     return this.withDatabase(databasePath, inspectDatabase);
+  }
+
+  async dashboardOverview(databasePath: string, todayDate: string): Promise<DashboardOverview> {
+    return this.withDatabase(databasePath, db => queryDashboardOverview(db, todayDate));
   }
 
   async sessionsBetween(

@@ -1,7 +1,7 @@
 import {
   entryLines,
   findEntriesMarker,
-  findFormSection,
+  findDailyFormSection,
   lineEndingFor,
   requireEhForm,
 } from '../forms/form-document.ts';
@@ -14,6 +14,7 @@ export interface StageDailyFormSectionOptions {
   missingFormEndMessage: string;
   createSectionIfMissing: boolean;
   createEntriesIfMissing: boolean;
+  parentSectionName?: string;
   missingSectionMessage?: string;
   missingEntriesMessage?: string;
   extraLineEndingAfterLines?: boolean;
@@ -35,15 +36,25 @@ export function stageDailyFormSection(options: StageDailyFormSectionOptions): st
   const formText = options.sourceText.slice(form.headingStart, form.endStart);
   const afterForm = options.sourceText.slice(form.endStart);
   const lineEnding = lineEndingFor(options.sourceText);
-  const sectionInfo = findFormSection(formText, options.sectionName);
+  const sectionInfo = findDailyFormSection(formText, options.sectionName);
   let updatedForm: string;
 
   if (!sectionInfo) {
     if (!options.createSectionIfMissing) {
       throw new Error(options.missingSectionMessage ?? `This EH Daily Form has no ${options.sectionName} section.`);
     }
-    const separator = formText.endsWith(lineEnding.repeat(2)) ? '' : lineEnding;
-    updatedForm = `${formText}${separator}${lineEnding}##### ${options.sectionName}${lineEnding}ENTRIES:${lineEnding}${options.lines.join(lineEnding)}${lineEnding}`;
+    const parent = options.parentSectionName ? findDailyFormSection(formText, options.parentSectionName) : null;
+    if (parent) {
+      const insertAt = parent.contentEnd;
+      const newSection = `${lineEnding}###### ${options.sectionName}${lineEnding}ENTRIES:${lineEnding}${options.lines.join(lineEnding)}${lineEnding}`;
+      updatedForm = `${formText.slice(0, insertAt)}${newSection}${formText.slice(insertAt)}`;
+    } else {
+      const separator = formText.endsWith(lineEnding.repeat(2)) ? '' : lineEnding;
+      const heading = options.parentSectionName
+        ? `##### ${options.parentSectionName}${lineEnding}${lineEnding}###### ${options.sectionName}`
+        : `##### ${options.sectionName}`;
+      updatedForm = `${formText}${separator}${lineEnding}${heading}${lineEnding}ENTRIES:${lineEnding}${options.lines.join(lineEnding)}${lineEnding}`;
+    }
   } else {
     const section = formText.slice(sectionInfo.contentStart, sectionInfo.contentEnd);
     const marker = findEntriesMarker(section);

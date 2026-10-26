@@ -20,6 +20,7 @@ export async function prepareFinanceEntryStage(input: FinanceEntryStageInput): P
   const updatedText = stageDailyFormSection({
     sourceText: input.sourceText,
     sectionName: 'Transactions',
+    parentSectionName: 'Financial',
     lines: [line],
     missingFormMessage: 'This note has no #### EH Daily Form block to receive a financial entry.',
     missingFormEndMessage: 'This note has an EH Daily Form but no matching #### END marker.',

@@ -2,6 +2,27 @@
 
 ## [Unreleased]
 
+### Added
+
+- Stoic-portico sidebar tab with colored links for every EH dashboard, active-dashboard highlighting, and a compact recorded-time/session/engagement summary
+- In-place dashboard switching, Ctrl/Cmd-click and middle-click new tabs, and an always-visible new-tab button for desktop and mobile; dashboard commands open separate tabs
+- Medical Dashboard with imported reports and Daily medical logs in a right-hand navigator; selected entries retain their imported order in plain tables
+- Medical Form import and confirmed report-scoped reimport, supporting numeric limits, qualitative results, written findings, procedures, and canonical health catalogs with unit snapshots
+- Daily Medication and Symptoms import, explicit `none` recording states, and full-day replacement support
+- In-app “What’s new” notes after an update, also available from Settings
+
+### Changed
+
+- Moved medical database migration into Settings → Examined Human → General → Tools and maintenance; removed its command-palette action
+- Grouped Medication and Symptoms under Medical, and Transactions and Valuation Rates under Financial in Daily Forms; older flat headings remain supported
+- Replaced the former all-forms records grid with selection-based medical report browsing; no charts or automatic laboratory grouping
+
+### Fixed
+
+- Kept grouped health and finance entries bounded to their own subsection during parsing, staging, and reimport; duplicate flat/grouped entries are rejected
+
+> Review build only. Wax Vault testing and owner approval precede the version bump, tag, and public release.
+
 ## [0.9.6] - 2026-09-12
 
 ### Added

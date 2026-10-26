@@ -8,7 +8,7 @@ EH form: <% "unimported" %>
 > Create the note through Templater so `EH form` becomes `unimported`. The date must be an ISO date (`YYYY-MM-DD`); the default below expects the note title to be that date. Keep the `#### EH Daily Form`, section headings, `ENTRIES:` markers, and final `#### END` unchanged. Daily Assessment can review today or a past day and import it after confirmation. A future form can be reviewed but not imported until its date arrives. If source cleanup is enabled in Settings, a successful import removes only this bounded form block and preserves the rest of the note.
 
 > [!info] Medication and Symptoms
-> These sections are included in full Daily import and reimport. Existing databases need **Upgrade medical database** first. Define canonical medications with dose units, symptoms, and aliases through **Manage health catalogs**. Blank means unrecorded; standalone `none` means explicitly none. See the [README](../README.md#health-records).
+> These sections are included in full Daily import and reimport. Existing databases need **Settings → Examined Human → General → Tools and maintenance → Medical database migration** first. Define canonical medications with dose units, symptoms, and aliases through **Manage health catalogs**. Blank means unrecorded; standalone `none` means explicitly none. See the [README](../README.md#health-records).
 
 #### EH Daily Form
 date: <% tp.file.title %>
@@ -87,7 +87,9 @@ ENTRIES:
 ENTRIES:
 
 
-##### Medication
+##### Medical
+
+###### Medication
 
 FORMAT:
 `time (hh:mm) | medication | amount | notes`
@@ -106,7 +108,7 @@ Leave the section blank when medication use has not been recorded. To explicitly
 ENTRIES:
 
 
-##### Symptoms
+###### Symptoms
 
 FORMAT:
 `time (hh:mm) | symptom | notes`
@@ -125,7 +127,9 @@ Leave the section blank when symptoms have not been recorded. To explicitly reco
 ENTRIES:
 
 
-##### Transactions
+##### Financial
+
+###### Transactions
 
 FORMAT:
 `signed amount | account | engagement | description`
@@ -139,7 +143,7 @@ Use a positive amount for inflow and a negative amount for outflow. The account 
 ENTRIES:
 
 
-##### Valuation Rates
+###### Valuation Rates
 
 FORMAT:
 `unit | positive value in the configured reference asset class`

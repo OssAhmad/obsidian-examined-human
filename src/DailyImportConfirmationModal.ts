@@ -9,6 +9,7 @@ export interface DailyImportConfirmationOptions {
   explanation: string;
   confirmLabel: string;
   inspection: DailyInspection;
+  dayColumnWidth?: number;
   sessionColors: Record<string, string>;
   initialScrollHour: number;
   valuationLabel: string;
@@ -42,6 +43,7 @@ class DailyImportConfirmationModal extends Modal {
     if (replacement) renderDailyReplacementWarning(this.contentEl, replacement);
     const report = reportFromInspection(this.options.inspection);
     const rendered = renderDailyAssessmentReport(this.app, this.contentEl, report, {
+      dayColumnWidth: this.options.dayColumnWidth,
       sessionColors: this.options.sessionColors,
       initialScrollHour: this.options.initialScrollHour,
       valuationLabel: this.options.valuationLabel,

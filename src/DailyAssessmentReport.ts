@@ -8,7 +8,8 @@ import type {
   DailyInspection,
 } from './logger/daily-note.ts';
 import type { CalendarEvent, ExerciseSetDetails } from './events.ts';
-import { formatExerciseNumber, parseDatabaseTime, titleForEngagement } from './events.ts';
+import { formatExerciseNumber, formatMinutesAsClock, parseDatabaseTime, titleForEngagement } from './events.ts';
+import { dailyTimeTotals, type DailyTimeGrouping } from './daily-time.ts';
 import { layoutOverlappingEvents } from './overlap.ts';
 import { layoutVisualStack } from './visual-stack.ts';
 import { createSessionElement } from './session-element.ts';
@@ -47,6 +48,9 @@ export interface DailyAssessmentReport {
 }
 
 export interface DailyAssessmentReportRenderOptions {
+  dayColumnWidth?: number;
+  timeGrouping?: DailyTimeGrouping;
+  onTimeGroupingChange?: (grouping: DailyTimeGrouping) => void;
   sessionColors: Record<string, string>;
   initialScrollHour: number;
   valuationLabel: string;
@@ -318,27 +322,40 @@ function renderTimeline(
   });
 }
 
-function renderEngagementTime(container: HTMLElement, events: CalendarEvent[]): void {
-  const totals = new Map<string, number>();
-  for (const event of events) totals.set(event.engagementName, (totals.get(event.engagementName) ?? 0) + event.durationMinutes);
-  const rows = [...totals.entries()].sort((left, right) => right[1] - left[1]);
+function renderTimeBreakdown(container: HTMLElement, events: CalendarEvent[], options: DailyAssessmentReportRenderOptions): void {
   const section = container.createEl('section', { cls: 'examined-human-daily-panel' });
-  section.createEl('h3', { text: 'Time by engagement' });
-  if (rows.length === 0) {
-    section.createDiv({ cls: 'examined-human-daily-empty-inline', text: 'No engagement time is available.' });
-    return;
-  }
-  const maximum = Math.max(...rows.map(([, minutes]) => minutes));
+  const heading = section.createDiv({ cls: 'examined-human-daily-section-heading' });
+  const title = heading.createEl('h3');
+  const selector = heading.createEl('select', { cls: 'dropdown', attr: { 'aria-label': 'Group daily time by' } });
+  selector.createEl('option', { value: 'engagement', text: 'Engagement' });
+  selector.createEl('option', { value: 'session-type', text: 'Session type' });
+  selector.value = options.timeGrouping ?? 'engagement';
   const chart = section.createDiv({ cls: 'examined-human-daily-engagement-chart' });
-  for (const [engagement, minutes] of rows) {
-    const row = chart.createDiv({ cls: 'examined-human-daily-engagement-row' });
-    const labels = row.createDiv({ cls: 'examined-human-daily-engagement-labels' });
-    labels.createSpan({ text: engagement });
-    labels.createEl('strong', { text: duration(minutes) });
-    const track = row.createDiv({ cls: 'examined-human-daily-engagement-track' });
-    const bar = track.createDiv({ cls: 'examined-human-daily-engagement-bar' });
-    bar.style.width = `${minutes / maximum * 100}%`;
-  }
+  const render = (): void => {
+    const grouping: DailyTimeGrouping = selector.value === 'session-type' ? 'session-type' : 'engagement';
+    title.setText(grouping === 'session-type' ? 'Time by session type' : 'Time by engagement');
+    chart.empty();
+    const rows = dailyTimeTotals(events, grouping);
+    if (rows.length === 0) {
+      chart.createDiv({ cls: 'examined-human-daily-empty-inline', text: 'No session time is available.' });
+      return;
+    }
+    const maximum = Math.max(...rows.map((row) => row.minutes));
+    for (const { label, minutes } of rows) {
+      const row = chart.createDiv({ cls: 'examined-human-daily-engagement-row' });
+      const labels = row.createDiv({ cls: 'examined-human-daily-engagement-labels' });
+      labels.createSpan({ text: label });
+      labels.createEl('strong', { text: formatMinutesAsClock(minutes) });
+      const track = row.createDiv({ cls: 'examined-human-daily-engagement-track' });
+      const bar = track.createDiv({ cls: 'examined-human-daily-engagement-bar' });
+      bar.style.width = `${maximum > 0 ? minutes / maximum * 100 : 0}%`;
+    }
+  };
+  selector.addEventListener('change', () => {
+    render();
+    options.onTimeGroupingChange?.(selector.value === 'session-type' ? 'session-type' : 'engagement');
+  });
+  render();
 }
 
 function renderFoods(container: HTMLElement, foods: DailyMealRecord[]): void {
@@ -484,18 +501,24 @@ export function renderDailyAssessmentReport(
   }
   renderMessages(container, 'Assessment warnings', report.warnings, 'is-warning');
   renderMetrics(container, report.metrics);
-  renderTimeline(app, container, report.events, options);
-  renderEngagementTime(container, report.events);
-  renderFoods(container, report.foods);
-  renderFinance(container, report.transactions, options.valuationLabel);
-  renderExercises(container, report.exercises);
+  const reportLayout = container.createDiv({ cls: 'examined-human-daily-report-layout' });
+  if (options.dayColumnWidth != null) {
+    reportLayout.style.setProperty('--examined-human-daily-day-width', `${options.dayColumnWidth}px`);
+  }
+  const columns = reportLayout.createDiv({ cls: 'examined-human-daily-report-columns' });
+  renderTimeline(app, columns, report.events, options);
+  const details = columns.createDiv({ cls: 'examined-human-daily-report-details' });
+  renderTimeBreakdown(details, report.events, options);
+  renderFoods(details, report.foods);
+  renderFinance(details, report.transactions, options.valuationLabel);
+  renderExercises(details, report.exercises);
   if (report.health) {
-    const panel = container.createEl('section', { cls: 'examined-human-daily-panel' });
+    const panel = details.createEl('section', { cls: 'examined-human-daily-panel' });
     panel.createEl('h3', { text: 'Medication and symptoms' });
     panel.createEl('p', { text: `Medication: ${report.health.medicationState}; Symptoms: ${report.health.symptomsState}` });
     for (const i of report.health.intakes) panel.createEl('p', { text: `${i.time} | ${i.name} | ${i.amount} ${i.unit} | ${i.notes}` });
     for (const s of report.health.occurrences) panel.createEl('p', { text: `${s.time} | ${s.name} | ${s.notes}` });
   }
-  renderNotes(container, report);
+  renderNotes(details, report);
   return true;
 }

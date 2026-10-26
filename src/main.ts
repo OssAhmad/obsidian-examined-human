@@ -1,6 +1,7 @@
-import { RecordsView, RECORDS_VIEW_TYPE } from './RecordsView.ts';
-import { importMedicalActiveFile, openHealthCatalog, upgradeMedicalDatabase } from './MedicalForms.ts';
-import { moment, Notice, Plugin, TFile } from 'obsidian';
+import { MedicalDashboardView, MEDICAL_DASHBOARD_VIEW_TYPE } from './MedicalDashboardView.ts';
+import { ReleaseNotesModal, RELEASE_NOTES_ID } from './ReleaseNotesModal.ts';
+import { importMedicalActiveFile, openHealthCatalog } from './MedicalForms.ts';
+import { addIcon, moment, Notice, Platform, Plugin, TFile, type WorkspaceLeaf } from 'obsidian';
 import { ExaminedHumanDatabase } from './examined-human-database.ts';
 import { DailyAssessmentView, EXAMINED_HUMAN_DAILY_ASSESSMENT_VIEW_TYPE } from './DailyAssessmentView.ts';
 import { CommandCenterView, EXAMINED_HUMAN_COMMAND_CENTER_VIEW_TYPE } from './CommandCenterView.ts';
@@ -34,6 +35,8 @@ import { dailyAssessmentTitle } from './DailyAssessmentReport.ts';
 import { openReferenceRepair } from './CommandForms.ts';
 import type { DailyNoteListItem } from './daily-note-index.ts';
 import { SourceMonitor } from './refresh/source-monitor.ts';
+import { DashboardSidebarView } from './DashboardSidebarView.ts';
+import { DASHBOARD_SIDEBAR_VIEW_TYPE, STOA_ICON, STOA_ICON_SVG, navigateToDashboard, type DashboardViewType } from './dashboard-navigation.ts';
 
 const AUTHORITATIVE_DATABASE_RELOAD_INTERVAL_MS = 10 * 60 * 1000;
 const DATABASE_FINGERPRINT_INTERVAL_MS = 10_000;
@@ -70,9 +73,12 @@ export default class ExaminedHumanPlugin extends Plugin {
   private sourceMonitor: SourceMonitor | null = null;
   private sourceCheckTimer: number | null = null;
   private sourceListeners = new Set<{ listener: (message: string) => void; notePath: () => string | null }>();
+  private dashboardNavigation: Promise<void> = Promise.resolve();
+  private sidebarCreation: Promise<WorkspaceLeaf | null> | null = null;
 
   async onload(): Promise<void> {
     await this.loadSettings();
+    addIcon(STOA_ICON, STOA_ICON_SVG);
     this.database = new ExaminedHumanDatabase(this.app);
     this.logger = new LoggerService(
       this.app,
@@ -88,16 +94,16 @@ export default class ExaminedHumanPlugin extends Plugin {
     this.registerView(EXAMINED_HUMAN_FINANCIAL_DASHBOARD_VIEW_TYPE, (leaf) => new FinancialDashboardView(leaf, this));
     this.registerView(EXAMINED_HUMAN_NUTRITION_DASHBOARD_VIEW_TYPE, (leaf) => new NutritionDashboardView(leaf, this));
     this.registerView(EXAMINED_HUMAN_EXERCISE_DASHBOARD_VIEW_TYPE, (leaf) => new ExerciseDashboardView(leaf, this));
-    this.registerView(RECORDS_VIEW_TYPE, leaf => new RecordsView(leaf, this));
+    this.registerView(MEDICAL_DASHBOARD_VIEW_TYPE, leaf => new MedicalDashboardView(leaf, this));
+    this.registerView(DASHBOARD_SIDEBAR_VIEW_TYPE, leaf => new DashboardSidebarView(leaf, this));
     this.addCommand({ id: 'import-medical-form-from-active-file', name: 'Import or reimport Medical Form from Active File', callback: () => { void importMedicalActiveFile(this); } });
-    this.addCommand({ id: 'upgrade-medical-database', name: 'Upgrade medical database', callback: () => { void upgradeMedicalDatabase(this); } });
     this.addCommand({ id: 'manage-health-catalogs', name: 'Manage health catalogs', callback: () => openHealthCatalog(this) });
-    this.addCommand({ id: 'open-records', name: 'Imported forms and health records', callback: () => { void (async () => {
-      let leaf = this.app.workspace.getLeavesOfType(RECORDS_VIEW_TYPE)[0];
-      if (!leaf) { leaf = this.app.workspace.getLeaf('tab'); await leaf.setViewState({ type: RECORDS_VIEW_TYPE, active: true }); }
-      await this.app.workspace.revealLeaf(leaf);
-    })(); } });
-    this.addRibbonIcon('calendar-clock', 'Open Examined Human calendar', () => { void this.activateView(); });
+    this.addCommand({ id: 'open-medical-dashboard', name: 'Medical Dashboard', callback: () => { void this.activateMedicalDashboardView(); } });
+    this.addRibbonIcon(STOA_ICON, 'Open Examined Human dashboards', () => { void this.activateDashboardSidebar(); });
+    this.addCommand({
+      id: 'open-dashboard-sidebar', name: 'Open dashboard navigator',
+      callback: () => { void this.activateDashboardSidebar(); },
+    });
     this.addCommand({
       id: 'open-daily-assessment',
       name: 'Daily Assessment',
@@ -159,6 +165,16 @@ export default class ExaminedHumanPlugin extends Plugin {
       callback: () => { void this.refreshViews(); },
     });
     this.addSettingTab(new ExaminedHumanSettingTab(this.app, this));
+    this.app.workspace.onLayoutReady?.(() => {
+      void this.ensureDashboardSidebar().catch(error => new Notice(`Could not create EH sidebar: ${String(error)}`));
+    });
+    this.app.workspace.onLayoutReady?.(() => {
+      if (this.settings.lastSeenReleaseNotes === RELEASE_NOTES_ID) return;
+      new ReleaseNotesModal(this.app, () => {
+        this.settings.lastSeenReleaseNotes = RELEASE_NOTES_ID;
+        void this.saveSettings().catch(error => new Notice(`Could not save release-note preference: ${String(error)}`));
+      }).open();
+    });
     this.sourceMonitor = new SourceMonitor({
       fingerprint: async () => `${this.settings.databasePath}:${await this.database.fingerprint(this.settings.databasePath)}`,
       signature: async (authoritative) => {
@@ -254,8 +270,13 @@ export default class ExaminedHumanPlugin extends Plugin {
       removeFormAfterDailyImport: stored?.removeFormAfterDailyImport === true,
       removeFormAfterWeeklyImport: stored?.removeFormAfterWeeklyImport === true,
       removeFormAfterBudgetImport: stored?.removeFormAfterBudgetImport === true,
+      lastSeenReleaseNotes: typeof stored?.lastSeenReleaseNotes === 'string' ? stored.lastSeenReleaseNotes : '',
     };
     if (hadLegacyPythonSetting) await this.saveData(this.settings);
+  }
+
+  async activateMedicalDashboardView(): Promise<void> {
+    await this.openDashboard(MEDICAL_DASHBOARD_VIEW_TYPE, true);
   }
 
   async saveSettings(): Promise<void> {
@@ -493,6 +514,7 @@ export default class ExaminedHumanPlugin extends Plugin {
             : `Review the complete assessment below. Confirmation writes a durable canonical Daily receipt with a backup.${this.settings.removeFormAfterDailyImport ? ' The exact imported Daily Form will then be removed from this note.' : ''}`,
           confirmLabel: 'Import daily assessment',
           inspection,
+          dayColumnWidth: this.settings.dayColumnWidth,
           sessionColors: this.settings.sessionColors,
           initialScrollHour: this.settings.initialScrollHour,
           valuationLabel: this.settings.valuationUnitLabel,
@@ -525,75 +547,66 @@ export default class ExaminedHumanPlugin extends Plugin {
   }
 
   async activateView(): Promise<void> {
-    const { workspace } = this.app;
-    let leaf = workspace.getLeavesOfType(EXAMINED_HUMAN_CALENDAR_VIEW_TYPE)[0];
-    if (!leaf) {
-      leaf = workspace.getLeaf('tab');
-      await leaf.setViewState({ type: EXAMINED_HUMAN_CALENDAR_VIEW_TYPE, active: true });
-    }
-    await workspace.revealLeaf(leaf);
+    await this.openDashboard(EXAMINED_HUMAN_CALENDAR_VIEW_TYPE, true);
   }
 
   async activateWeeklyAssessmentView(): Promise<void> {
-    const { workspace } = this.app;
-    let leaf = workspace.getLeavesOfType(EXAMINED_HUMAN_WEEKLY_ASSESSMENT_VIEW_TYPE)[0];
-    if (!leaf) {
-      leaf = workspace.getLeaf('tab');
-      await leaf.setViewState({ type: EXAMINED_HUMAN_WEEKLY_ASSESSMENT_VIEW_TYPE, active: true });
-    }
-    await workspace.revealLeaf(leaf);
+    await this.openDashboard(EXAMINED_HUMAN_WEEKLY_ASSESSMENT_VIEW_TYPE, true);
   }
 
   async activateDailyAssessmentView(): Promise<void> {
-    const { workspace } = this.app;
-    let leaf = workspace.getLeavesOfType(EXAMINED_HUMAN_DAILY_ASSESSMENT_VIEW_TYPE)[0];
-    if (!leaf) {
-      leaf = workspace.getLeaf('tab');
-      await leaf.setViewState({ type: EXAMINED_HUMAN_DAILY_ASSESSMENT_VIEW_TYPE, active: true });
-    }
-    await workspace.revealLeaf(leaf);
+    await this.openDashboard(EXAMINED_HUMAN_DAILY_ASSESSMENT_VIEW_TYPE, true);
   }
 
   async activateCommandCenterView(): Promise<void> {
-    const { workspace } = this.app;
-    let leaf = workspace.getLeavesOfType(EXAMINED_HUMAN_COMMAND_CENTER_VIEW_TYPE)[0];
-    if (!leaf) {
-      leaf = workspace.getLeaf('tab');
-      await leaf.setViewState({ type: EXAMINED_HUMAN_COMMAND_CENTER_VIEW_TYPE, active: true });
-    }
-    await workspace.revealLeaf(leaf);
+    await this.openDashboard(EXAMINED_HUMAN_COMMAND_CENTER_VIEW_TYPE, true);
   }
 
   async activateEngagementDashboardView(): Promise<void> {
-    const { workspace } = this.app;
-    let leaf = workspace.getLeavesOfType(EXAMINED_HUMAN_ENGAGEMENT_DASHBOARD_VIEW_TYPE)[0];
-    if (!leaf) {
-      leaf = workspace.getLeaf('tab');
-      await leaf.setViewState({ type: EXAMINED_HUMAN_ENGAGEMENT_DASHBOARD_VIEW_TYPE, active: true });
-    }
-    await workspace.revealLeaf(leaf);
+    await this.openDashboard(EXAMINED_HUMAN_ENGAGEMENT_DASHBOARD_VIEW_TYPE, true);
   }
 
   async activateFinancialDashboardView(): Promise<void> {
-    await this.activateDashboardView(EXAMINED_HUMAN_FINANCIAL_DASHBOARD_VIEW_TYPE);
+    await this.openDashboard(EXAMINED_HUMAN_FINANCIAL_DASHBOARD_VIEW_TYPE, true);
   }
 
   async activateNutritionDashboardView(): Promise<void> {
-    await this.activateDashboardView(EXAMINED_HUMAN_NUTRITION_DASHBOARD_VIEW_TYPE);
+    await this.openDashboard(EXAMINED_HUMAN_NUTRITION_DASHBOARD_VIEW_TYPE, true);
   }
 
   async activateExerciseDashboardView(): Promise<void> {
-    await this.activateDashboardView(EXAMINED_HUMAN_EXERCISE_DASHBOARD_VIEW_TYPE);
+    await this.openDashboard(EXAMINED_HUMAN_EXERCISE_DASHBOARD_VIEW_TYPE, true);
   }
 
-  private async activateDashboardView(viewType: string): Promise<void> {
+  openDashboard(type: DashboardViewType, newTab = false): Promise<void> {
+    const navigation = this.dashboardNavigation.then(async () => {
+      await navigateToDashboard(this.app.workspace, type, newTab);
+      if (Platform.isMobile) this.app.workspace.rightSplit.collapse();
+    });
+    this.dashboardNavigation = navigation.catch(() => {});
+    return navigation;
+  }
+
+  private ensureDashboardSidebar(): Promise<WorkspaceLeaf | null> {
     const { workspace } = this.app;
-    let leaf = workspace.getLeavesOfType(viewType)[0];
-    if (!leaf) {
-      leaf = workspace.getLeaf('tab');
-      await leaf.setViewState({ type: viewType, active: true });
+    const existing = workspace.getLeavesOfType(DASHBOARD_SIDEBAR_VIEW_TYPE)[0];
+    if (existing) return Promise.resolve(existing);
+    if (this.sidebarCreation) return this.sidebarCreation;
+    this.sidebarCreation = (async () => {
+      const leaf = workspace.getRightLeaf(false);
+      if (leaf) await leaf.setViewState({ type: DASHBOARD_SIDEBAR_VIEW_TYPE, active: false });
+      return leaf;
+    })().finally(() => { this.sidebarCreation = null; });
+    return this.sidebarCreation;
+  }
+
+  async activateDashboardSidebar(): Promise<void> {
+    try {
+      const leaf = await this.ensureDashboardSidebar();
+      if (leaf) await this.app.workspace.revealLeaf(leaf);
+    } catch (error) {
+      new Notice(`Could not open EH sidebar: ${String(error)}`);
     }
-    await workspace.revealLeaf(leaf);
   }
 
   async refreshViews(): Promise<void> {
@@ -651,10 +664,14 @@ export default class ExaminedHumanPlugin extends Plugin {
       .map(async (leaf) => {
         if (leaf.view instanceof ExerciseDashboardView) await leaf.view.refresh();
       });
-    const recordsRefreshes = this.app.workspace.getLeavesOfType(RECORDS_VIEW_TYPE).map(async leaf => {
-      if (leaf.view instanceof RecordsView) await leaf.view.refresh();
+    const recordsRefreshes = this.app.workspace.getLeavesOfType(MEDICAL_DASHBOARD_VIEW_TYPE).map(async leaf => {
+      if (leaf.view instanceof MedicalDashboardView) await leaf.view.refresh();
+    });
+    const navigationRefreshes = this.app.workspace.getLeavesOfType(DASHBOARD_SIDEBAR_VIEW_TYPE).map(async leaf => {
+      if (leaf.view instanceof DashboardSidebarView) await leaf.view.refresh();
     });
     await Promise.all([
+      ...navigationRefreshes,
       ...recordsRefreshes,
       ...calendarRefreshes,
       ...weeklyRefreshes,

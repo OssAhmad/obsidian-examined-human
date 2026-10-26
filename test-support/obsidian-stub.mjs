@@ -46,3 +46,4 @@ export function moment(value) {
   return result;
 }
 export function setIcon() {}
+export function addIcon() {}

@@ -4,6 +4,8 @@ import type { FormDiscoveryCache, FormDiscoveryMode } from './form-discovery.ts'
 import { DEFAULT_JOURNAL_FOLDER, normalizeJournalFolder } from './journal-folder.ts';
 import { confirmWeeklyAction } from './WeeklyActionConfirmationModal.ts';
 import type ExaminedHumanPlugin from './main.ts';
+import { upgradeMedicalDatabase } from './MedicalForms.ts';
+import { ReleaseNotesModal } from './ReleaseNotesModal.ts';
 
 export interface ExaminedHumanSettings {
   databasePath: string;
@@ -26,6 +28,7 @@ export interface ExaminedHumanSettings {
   removeFormAfterDailyImport: boolean;
   removeFormAfterWeeklyImport: boolean;
   removeFormAfterBudgetImport: boolean;
+  lastSeenReleaseNotes: string;
 }
 
 export const DEFAULT_SETTINGS: ExaminedHumanSettings = {
@@ -49,6 +52,7 @@ export const DEFAULT_SETTINGS: ExaminedHumanSettings = {
   removeFormAfterDailyImport: false,
   removeFormAfterWeeklyImport: false,
   removeFormAfterBudgetImport: false,
+  lastSeenReleaseNotes: '',
 };
 
 type DeclarativeControl =
@@ -244,6 +248,22 @@ export class ExaminedHumanSettingTab extends PluginSettingTab {
           ),
         ]),
         group('general-tools', 'Tools and maintenance', 'Open administrative tools and maintain the official database schema.', [
+          definition(
+            'medical-schema-upgrade',
+            'Medical database migration',
+            'Enable Medical Forms and Daily health records. Review the migration and confirm a verified backup before it changes the database.',
+            { render: (setting: Setting) => {
+              setting.addButton(button => button.setButtonText('Review medical migration').onClick(async () => {
+                button.setDisabled(true);
+                try { await upgradeMedicalDatabase(this.plugin); }
+                finally { button.setDisabled(false); }
+              }));
+            } },
+          ),
+          definition('medical-dashboard', 'Open Medical Dashboard', 'Browse imported reports and Daily medical logs.',
+            { action: () => this.plugin.activateMedicalDashboardView() }),
+          definition('release-notes', 'What’s new', 'Read the notes for this build.',
+            { action: () => new ReleaseNotesModal(this.app).open() }),
           definition(
             'command-center',
             'Open Command Center',

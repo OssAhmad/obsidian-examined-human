@@ -3,7 +3,7 @@ import type { Database, SqlValue } from 'sql.js';
 import { inferDailyActivity, inferSleepHours, type DailySessionSignal } from '../daily-inference.ts';
 import { normalizeValuationUnit } from '../domain/valuation.ts';
 import { parseDatabaseTime } from '../events.ts';
-import { entryLines, findEntriesMarker, formSections, requireEhForm } from '../forms/form-document.ts';
+import { entryLines, findEntriesMarker, dailyFormSections, requireEhForm } from '../forms/form-document.ts';
 import { splitDelimitedFields } from '../forms/fields.ts';
 import { parseSessionRowFields, SESSION_ROW_FORMAT } from '../forms/session-row.ts';
 import { applyAdminEvents, type AdminEvent } from './admin/command-handlers.ts';
@@ -253,7 +253,7 @@ function dailyFormBody(sourceText: string, expectedDate: string): string {
 function sectionsFromForm(sourceText: string, expectedDate: string): Map<string, string> {
   const body = dailyFormBody(sourceText, expectedDate);
   const result = new Map<string, string>();
-  for (const [name, section] of formSections(body)) result.set(name, section.content.trim());
+  for (const [name, section] of dailyFormSections(body)) result.set(name, section.content.trim());
   return result;
 }
 
@@ -825,7 +825,7 @@ function validateReplacementForm(sourceText: string, date: string): void {
   }
   const body = dailyFormBody(sourceText, date);
   const seen = new Set<string>();
-  const known = new Set(['daily metrics', 'sessions', 'meals', 'transactions', 'exercise details', 'milestones', 'stoicism', 'admin events', 'valuation rates', 'medication', 'symptoms']);
+  const known = new Set(['daily metrics', 'sessions', 'meals', 'transactions', 'exercise details', 'milestones', 'stoicism', 'admin events', 'valuation rates', 'medication', 'symptoms', 'medical', 'financial']);
   const rowSections = new Set(['sessions', 'transactions', 'exercise details', 'milestones', 'admin events', 'valuation rates', 'medication', 'symptoms']);
   for (const match of body.matchAll(/^#####(?!#)[ \t]+(.+?)[ \t]*$/gm)) {
     const name = match[1].trim().toLowerCase();
@@ -833,7 +833,7 @@ function validateReplacementForm(sourceText: string, date: string): void {
     if (seen.has(name)) throw new Error(`Reimport has duplicate '${match[1]}' sections. Keep exactly one section to avoid losing entries.`);
     seen.add(name);
   }
-  for (const [name, section] of formSections(body)) {
+  for (const [name, section] of dailyFormSections(body)) {
     if (rowSections.has(name) && !findEntriesMarker(section.content)) {
       throw new Error(`Reimport section '${section.name}' requires an ENTRIES: marker, even when it is empty.`);
     }

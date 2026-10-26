@@ -5,7 +5,7 @@ EH form: <% "unimported" %>
 # Examined Human Medical Form
 
 > [!info] Importing this form
-> Run **Examined Human: Upgrade medical database** once for an existing database. Define its person, canonical measurements (with units and value types), procedures, and aliases through **Manage health catalogs**. Then run **Import or reimport Medical Form from Active File**, review the entries, and confirm. Reimport replaces only this report's entries after acknowledgement and a backup. The source note is retained. See the [README](../README.md#health-records).
+> Run **Settings → Examined Human → General → Tools and maintenance → Medical database migration** once for an existing database. Define its person, canonical measurements (with units and value types), procedures, and aliases through **Manage health catalogs**. Then run **Import or reimport Medical Form from Active File**, review the entries, and confirm. Reimport replaces only this report's entries after acknowledgement and a backup. The source note is retained. See the [README](../README.md#health-records).
 
 Use one Medical Form for one source report: a laboratory report with many results, a consultation record, an imaging report, or a hospital discharge summary. A discharge summary containing several days of activity is still one report. Do not assemble a whole medical episode into one continuously updated form, and do not create a separate form for each result. Daily medication intakes and everyday symptoms belong in the Daily Form.
 
@@ -25,7 +25,7 @@ HEADER DEFINITIONS:
 - `performed`: when the sample was collected, examination occurred, or reported treatment took place. Use `YYYY-MM-DD`, add `HH:mm` when known, or use `YYYY-MM-DD to YYYY-MM-DD` when the report covers several days. Leave it blank when unknown; do not substitute the report's issue date.
 - `reported`: when the report was issued or the clinician documented the findings. Use `YYYY-MM-DD`, adding `HH:mm` when known. This is distinct from when you received or entered the report. Leave it blank when unknown.
 - `person`: a canonical person name from **Manage health catalogs**. It may stay blank only when the database has exactly one person; otherwise it is required.
-- `report id`: leave blank for an initial import. Reimport normally finds the report by its source note path. If the note moves, copy its imported report ID from **Imported forms and health records** into this field to preserve its identity. Reimport cannot change the person.
+- `report id`: leave blank for an initial import. Reimport normally finds the report by its source note path. If the note moves, copy its imported report ID from **Medical Dashboard** into this field to preserve its identity. Reimport cannot change the person.
 - `source`: the vault-relative path to the original report or consultation note. Add a page or location in row notes when useful. If the source has not been attached, leave this blank rather than inventing a path.
 
 For a complex report, include each known result or procedure date in its row's notes. The general header must not silently assign the discharge date to earlier measurements. Unknown dates remain unknown.

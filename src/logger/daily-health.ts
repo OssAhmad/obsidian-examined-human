@@ -1,13 +1,11 @@
 import type { Database } from 'sql.js';
-import { formSections } from '../forms/form-document.ts';
+import { dailyFormSections } from '../forms/form-document.ts';
 import { assertMedicalSchema, hasMedicalSchema } from '../read-models/medical.ts';
 import { healthSection, healthFields, resolveHealth } from './medical.ts';
 
 export function inspectDailyHealth(db: Database, body: string) {
-  const headings = [...body.matchAll(/^#####(?!#)[ \t]+(Medication|Symptoms)[ \t]*$/gmi)].map(m => m[1].toLowerCase());
-  if (new Set(headings).size !== headings.length) throw new Error('Keep one Medication and one Symptoms section per Daily Form.');
-  if (headings.length) assertMedicalSchema(db);
-  const sections = formSections(body);
+  const sections = dailyFormSections(body);
+  if (sections.has('medication') || sections.has('symptoms')) assertMedicalSchema(db);
   const medication = healthSection(sections.get('medication')?.content);
   const symptoms = healthSection(sections.get('symptoms')?.content);
   function time(value: string): string {

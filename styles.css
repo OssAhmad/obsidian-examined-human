@@ -1518,6 +1518,28 @@
   white-space: pre;
 }
 
+.examined-human-daily-report-layout {
+  container: examined-human-daily-report / inline-size;
+}
+
+.examined-human-daily-report-details {
+  min-width: 0;
+}
+
+/* Use the available report width, not the window: narrow desktop panes stack too. */
+@container examined-human-daily-report (min-width: 700px) {
+  .examined-human-daily-report-columns {
+    display: grid;
+    grid-template-columns: calc(var(--examined-human-daily-day-width, 180px) + 112px) minmax(0, 1fr);
+    align-items: start;
+    gap: 16px;
+  }
+}
+
+.is-mobile .examined-human-daily-report-columns {
+  display: block;
+}
+
 .examined-human-daily-timeline-scroll {
   height: min(48vh, 520px);
   min-height: 340px;
@@ -2881,6 +2903,94 @@
   }
 }
 
+/* Dashboard navigation lives in a native Obsidian sidebar tab. */
+.examined-human-dashboard-sidebar {
+  padding: 16px 12px;
+  overflow-y: auto;
+}
+
+.eh-navigation-header {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin-bottom: 14px;
+}
+
+.eh-navigation-header h2 {
+  flex: 1;
+  margin: 0;
+  font-size: var(--font-ui-medium);
+  font-weight: 600;
+}
+
+.eh-navigation-emblem { display: flex; color: var(--text-muted); }
+.eh-navigation-emblem svg { width: 23px; height: 23px; }
+.eh-navigation-header .eh-navigation-refresh { flex-shrink: 0; }
+.eh-navigation-summary {
+  padding: 0 5px 14px;
+  margin-bottom: 8px;
+  border-bottom: 1px solid var(--background-modifier-border);
+  font-size: var(--font-ui-small);
+  line-height: 1.65;
+}
+.eh-navigation-time strong { font-size: 20px; font-variant-numeric: tabular-nums; }
+.eh-navigation-muted { color: var(--text-muted); font-size: var(--font-ui-smaller); }
+.eh-navigation-counts { color: var(--text-normal); overflow-wrap: anywhere; }
+.eh-navigation-list { display: flex; flex-direction: column; gap: 5px; }
+.eh-navigation-row { display: flex; align-items: stretch; gap: 3px; min-width: 0; }
+
+.eh-navigation-row button {
+  height: auto;
+  min-height: 42px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-m);
+  box-shadow: none;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.eh-navigation-row .eh-navigation-dashboard {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 12px;
+  flex: 1;
+  min-width: 0;
+  padding: 8px 10px;
+  text-align: start;
+  font-size: var(--font-ui-small);
+  white-space: normal;
+}
+.eh-navigation-icon { display: flex; flex-shrink: 0; color: var(--eh-dashboard-color); }
+.eh-navigation-icon svg { width: 18px; height: 18px; }
+.eh-navigation-label { overflow-wrap: anywhere; }
+.eh-navigation-row .eh-navigation-new-tab {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  flex: 0 0 36px;
+  padding: 6px;
+}
+.eh-navigation-new-tab svg { width: 16px; height: 16px; }
+.eh-navigation-row button:hover {
+  color: var(--text-normal);
+  background: var(--background-modifier-hover);
+}
+.eh-navigation-row .eh-navigation-dashboard.is-active {
+  color: var(--text-normal);
+  font-weight: 600;
+  background: var(--background-modifier-hover);
+  background: color-mix(in srgb, var(--eh-dashboard-color) 12%, transparent);
+  box-shadow: inset 3px 0 var(--eh-dashboard-color);
+}
+.eh-navigation-row button:focus-visible {
+  outline: 2px solid var(--eh-dashboard-color);
+  outline-offset: 1px;
+}
+.eh-navigation-hint { color: var(--text-faint); font-size: var(--font-ui-smaller); line-height: 1.5; margin: 14px 5px 0; }
+.is-mobile .eh-navigation-row button { min-height: 46px; }
+.is-mobile .eh-navigation-row .eh-navigation-new-tab { flex-basis: 44px; }
+
 /* Plain record tables retain their own horizontal scroll on shared refresh. */
 .examined-human-records-scroll { overflow-x: auto; }
 .examined-human-records-table { border-collapse: collapse; width: 100%; }
@@ -2889,3 +2999,18 @@
   text-align: start; vertical-align: top; white-space: pre-wrap; min-width: 100px;
 }
 .examined-human-records-toolbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; }
+
+/* Medical reports use a persistent right-hand navigator, with original entry order. */
+.examined-human-medical-view { padding: 16px; }
+.examined-human-medical-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.examined-human-medical-layout { display: grid; grid-template-columns: minmax(0, 1fr) 260px; gap: 20px; align-items: start; }
+.examined-human-medical-report { min-width: 0; overflow: auto; }
+.examined-human-medical-meta { color: var(--text-muted); }
+.examined-human-medical-sidebar { position: sticky; top: 0; max-height: 80vh; overflow: auto; border-inline-start: 1px solid var(--background-modifier-border); padding-inline-start: 12px; }
+.examined-human-medical-sidebar .examined-human-daily-date-button { width: 100%; text-align: start; margin-bottom: 6px; }
+.examined-human-medical-sidebar .is-selected { background: var(--background-modifier-active-hover); box-shadow: inset 3px 0 var(--interactive-accent); }
+.examined-human-medical-paging { display: flex; gap: 8px; margin-top: 10px; }
+@media (max-width: 600px) {
+  .examined-human-medical-layout { grid-template-columns: minmax(0, 1fr); }
+  .examined-human-medical-sidebar { position: static; grid-row: 1; max-height: 220px; border-inline-start: 0; padding-inline-start: 0; }
+}

@@ -119,7 +119,7 @@ Medical Forms are also available:
 - [Medical Form with explanations](<EH Forms/the medical form with explanations.md>)
 - [Minimal Medical Form](<EH Forms/the minimal medical form.md>)
 
-The Daily templates include Medication and Symptoms sections. Existing databases need the confirmed **Upgrade medical database** command before importing health entries. Read [Health records](#health-records) for catalog setup, Medical import/reimport, and the plain records dashboard.
+The Daily templates group Medication and Symptoms under Medical, and Transactions and Valuation Rates under Financial. Existing databases need the confirmed **Settings → Examined Human → General → Tools and maintenance → Medical database migration** action before importing health entries. Read [Health records](#health-records) for catalog setup, Medical import/reimport, and the plain records dashboard.
 
 Start with the explained forms. Use the minimal forms after the entry formats feel familiar.
 
@@ -261,17 +261,19 @@ The Financial Dashboard uses the same pattern for opening balances and reconcili
 
 ## Health records
 
-Medical Forms and Daily Medication/Symptoms are supported by the native guarded importer. For an existing official Schema v1 database, run **Examined Human: Upgrade medical database**, review the upgrade, and confirm. The plugin creates a verified backup, preserves legacy numeric measurements and IDs, and adds typed observations, report provenance, procedures, and canonical health catalogs. New databases already include these tables. The official SQLite schema marker remains v1.
+Medical Forms and Daily Medication/Symptoms are supported by the native guarded importer. For an existing official Schema v1 database, open **Settings → Examined Human → General → Tools and maintenance → Medical database migration**, review the upgrade, and confirm. The plugin creates a verified backup, preserves legacy numeric measurements and IDs, and adds typed observations, report provenance, procedures, and canonical health catalogs. New databases already include these tables. The official SQLite schema marker remains v1.
 
 Run **Manage health catalogs** to create people, measurements, procedures, medications, symptoms, and aliases. A measurement has a `number`, `qualitative`, or `text` value type; numeric measurements and medications require a canonical unit. The importer resolves names and aliases; it does not infer units or convert quantities. Each save is previewed and confirmed with a backup. A Medical Form requires a defined person: if there is exactly one person, it is selected automatically; with multiple people, add `person: canonical name` to the header.
 
 Open a source note and run **Import or reimport Medical Form from Active File**. The preview shows its person, dates, section states, measurements, units, notes, and procedures. Confirmation creates a durable import with a backup; the Markdown form is retained. Reimport from the same source note replaces that report after an explicit acknowledgement. Omitted measurements and procedures are deleted; other reports and shared catalogs are retained. The preview counts the old rows being replaced. Changed source text, a stale database snapshot, uncheckpointed WAL, or backup failure blocks persistence.
 
-The source note path identifies an imported report. To move the note, obtain its ID from **Imported forms and health records** and add `report id: ID` to its header before reimporting from the new path. The ID must identify an existing native import, and its person cannot change. Reusing a source document already attached to another native report is refused; reports are never matched merely by title or date.
+The source note path identifies an imported report. To move the note, obtain its ID from **Medical Dashboard** and add `report id: ID` to its header before reimporting from the new path. The ID must identify an existing native import, and its person cannot change. Reusing a source document already attached to another native report is refused; reports are never matched merely by title or date.
 
-**Imported forms and health records** opens a spreadsheet-style dashboard: a paginated list of imported Daily, Weekly, Budget, and Medical Forms, links to their source notes, Medical report entry tables, and days with recorded Medication or Symptoms (including explicit `none`). It shows stored canonical Daily health entries, not guesses from unimported notes. Each page contains up to 50 forms and 50 health days. Its Refresh action reloads all EH views; background updates show a notice while the table and scroll position remain intact.
+**Medical Dashboard** has an imported-record navigator on the right. Select a Medical report or a Daily medical log to see its entries in the main pane. Measurements, procedures, medication, and symptoms retain their imported order; there are no charts or laboratory-category groupings. The list is newest first and paginated at 50 entries. Selecting another record changes only the selected view. Refresh rebuilds the shared database boundary and preserves the selected record and scroll positions; background updates show a notice until you refresh.
 
 Four fictional [manual-import examples and catalog setup instructions](<docs/examples/health/00 Start here.md>) cover a laboratory report, an imaging report, a Daily Form with medication/symptoms, and a Daily Form with explicit `none`. Use a disposable database for those examples.
+
+The [Medical Dashboard review set](<docs/examples/medical-dashboard-review/00 Start here.md>) contains five unimported source notes dated October 20–25, 2026. Each note pairs a Daily Form with a Medical Form so both dashboards can be reviewed, including explicit `none`, unrecorded sections, repeated results, and imaging findings.
 
 The collection workflow has two parts:
 
@@ -281,6 +283,24 @@ The collection workflow has two parts:
 The scope is high-quality collection: preserve identities, observations, context, dates, and source material. Report generation and interpretation are outside this collection design.
 
 ### Daily Medication and Symptoms
+
+Current Daily Forms group their entries as follows. Older flat `##### Medication`, `##### Symptoms`, `##### Transactions`, and `##### Valuation Rates` headings remain readable, but do not duplicate a section in both formats.
+
+```markdown
+##### Medical
+###### Medication
+ENTRIES:
+
+###### Symptoms
+ENTRIES:
+
+##### Financial
+###### Transactions
+ENTRIES:
+
+###### Valuation Rates
+ENTRIES:
+```
 
 The sections appear in both [Daily Form templates](<EH Forms/the daily form with explanations.md>):
 
@@ -307,7 +327,9 @@ For example, these are symptom rows:
 To explicitly record a symptom-free day, write:
 
 ```markdown
-##### Symptoms
+##### Medical
+
+###### Symptoms
 
 ENTRIES:
 none
@@ -377,7 +399,15 @@ Remove source material only after confirming that the import succeeded and the i
 
 ## Dashboard guide
 
-Open dashboards from the Obsidian command palette. Obsidian prefixes their commands with `Examined Human:`.
+Select the **Stoic portico icon** in Obsidian's right sidebar to open the **Examined Human** dashboard navigator. It is added when the plugin loads; the matching ribbon icon and **Examined Human: Open dashboard navigator** command also reveal it.
+
+Each dashboard has a colored icon. Select its name to replace the dashboard in the current EH tab. If the main tab contains a note, another plugin, or a pinned dashboard, EH opens a new tab instead. Selecting the dashboard already visible keeps its current display.
+
+To open an additional tab, **Ctrl-click** on Windows/Linux or **Cmd-click** on macOS, middle-click, or use the **↗ button** beside the dashboard name. The same ↗ button is always available on mobile. The mobile sidebar closes after a selection so you can see the dashboard.
+
+The small summary above the list shows recorded time as `hh:mm`, the number of sessions and participating engagements, and recorded days across all history through today. It counts canonical session records; planned sessions are excluded. Background changes show an update notice until you refresh. The refresh button rereads the selected database and refreshes all open EH views.
+
+Dashboard commands remain available in the Obsidian command palette, prefixed with `Examined Human:`. Each dashboard-opening command opens a separate tab, even when that dashboard is already open.
 
 ### Calendar dashboard
 
@@ -386,6 +416,10 @@ The calendar shows sessions on a horizontally scrollable sequence of days and a 
 Use it to answer: **When did I spend time, and what did I spend it on?**
 
 ### Daily Assessment
+
+On wider desktop panes, the day timeline uses the Calendar's configured desktop day width, with the time chart, foods, transactions, and remaining details in a column on the right. Narrow panes and phones retain the full-width stacked report.
+
+The time chart can switch between **Time by engagement** and **Time by session type**, both here and in the active-file import preview. Session-type grouping uses the explicit session type, falling back to the engagement type when blank. Related types are combined: academic/course/certification/exam time becomes Study; career/startup time becomes Work; authorship/article/book/speech time becomes Writing; fitness becomes Exercise; relationship becomes Social; and Chore joins Maintenance. Reading, Research, Thinking, Practice, Meditation, and Leisure stay separate. An engagement named exactly Sleep always has its own Sleep category. This changes only the chart, not stored records or the inferred daily activity flags; totals use `hh:mm`.
 
 Daily Assessment lists discovered forms and imported days, newest first. It previews and validates Daily Forms, imports past dates or today, offers explicit full-day reimport for imported dates, refuses future dates, and displays the same report used by the active-file import command. That report includes manual and inferred metrics, the session calendar, foods with nutrient totals, transactions with unit totals and valued net flow, exercise sets, and notes. Hard validation errors hide the report and expose the available resolution actions first.
 

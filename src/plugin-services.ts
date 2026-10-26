@@ -5,6 +5,7 @@ import type { EhFormKind } from './forms/form-document.ts';
 import type { LoggerService } from './logger/service.ts';
 import type { ExaminedHumanSettings } from './settings.ts';
 import type { ReadingServices } from './refresh/reading-view.ts';
+import type { DashboardViewType } from './dashboard-navigation.ts';
 
 /**
  * Stable service boundary supplied to views and staging workflows.
@@ -35,6 +36,10 @@ export type DashboardServices = Pick<
   ExaminedHumanPluginServices,
   'database' | 'logger' | 'refreshViews' | 'saveSettings' | 'settings' | 'watchSourceUpdates'
 >;
+
+export type DashboardNavigationServices = DashboardServices & {
+  openDashboard(type: DashboardViewType, newTab?: boolean): Promise<void>;
+};
 
 export type NoteStagingServices = Pick<
   ExaminedHumanPluginServices,

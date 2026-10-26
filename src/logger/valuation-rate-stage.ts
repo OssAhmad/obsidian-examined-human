@@ -21,6 +21,7 @@ export async function prepareValuationRateStage(input: ValuationRateStageInput):
   const updatedText = stageDailyFormSection({
     sourceText: input.sourceText,
     sectionName: 'Valuation Rates',
+    parentSectionName: 'Financial',
     lines,
     missingFormMessage: 'This note has no #### EH Daily Form block to receive Valuation Rates.',
     missingFormEndMessage: 'This note has an EH Daily Form but no matching #### END marker.',

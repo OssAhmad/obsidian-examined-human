@@ -5,7 +5,7 @@ EH form: <% "unimported" %>
 # Examined Human Daily Form
 
 > [!info] Medication and Symptoms
-> These sections are included in full Daily import and reimport. Existing databases need **Upgrade medical database** first. Define canonical medications with dose units, symptoms, and aliases through **Manage health catalogs**. Blank means unrecorded; standalone `none` means explicitly none. See the [README](../README.md#health-records).
+> These sections are included in full Daily import and reimport. Existing databases need **Settings → Examined Human → General → Tools and maintenance → Medical database migration** first. Define canonical medications with dose units, symptoms, and aliases through **Manage health catalogs**. Blank means unrecorded; standalone `none` means explicitly none. See the [README](../README.md#health-records).
 
 #### EH Daily Form
 date: <% tp.file.title %>
@@ -58,7 +58,9 @@ ENTRIES:
 ENTRIES:
 
 
-##### Medication
+##### Medical
+
+###### Medication
 
 FORMAT:
 `time (hh:mm) | medication | amount | notes`
@@ -68,7 +70,7 @@ Use a canonical medication name or alias. The `medications` table supplies its r
 ENTRIES:
 
 
-##### Symptoms
+###### Symptoms
 
 FORMAT:
 `time (hh:mm) | symptom | notes`
@@ -78,7 +80,9 @@ Use a canonical name or alias; all three fields are required. Blank means unreco
 ENTRIES:
 
 
-##### Transactions
+##### Financial
+
+###### Transactions
 
 FORMAT:
 `signed amount | account | engagement | description`
@@ -86,7 +90,7 @@ FORMAT:
 ENTRIES:
 
 
-##### Valuation Rates
+###### Valuation Rates
 
 FORMAT:
 `unit | positive value in the configured reference asset class`

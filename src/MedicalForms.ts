@@ -60,7 +60,7 @@ export async function upgradeMedicalDatabase(plugin: ExaminedHumanPlugin): Promi
     const preview = await plugin.logger.inspectMedicalUpgrade(plugin.settings.databasePath);
     if (!preview.needed) { new Notice('Medical and Daily health tables are already enabled.'); return; }
     if (!await confirmWeeklyAction(plugin.app, {
-      title: 'Upgrade medical database', confirmLabel: 'Back up and upgrade',
+      title: 'Medical database migration', confirmLabel: 'Back up and upgrade',
       explanation: 'Enable Medical Forms, typed measurements, procedures, canonical health catalogs, and Daily Medication/Symptoms.',
       dryRunOutput: 'Existing numeric measurement IDs, values, report links, notes, and source ranges are preserved. Other domains are retained. The SQLite schema marker stays at official v1.',
       warning: 'This creates a verified backup and upgrades the configured database after checking its reviewed checksum.',

@@ -130,6 +130,9 @@ The source database is read into memory for each inspection or range query. sql.
 ### Runtime
 
 - `src/main.ts` — plugin lifecycle, settings load/save, view registration, ribbon icon, commands, and refreshing all open dashboard views.
+- `src/DashboardSidebarView.ts` — native right-sidebar dashboard navigation, active-dashboard highlighting, touch-accessible new-tab buttons, and the compact recorded-activity summary.
+- `src/dashboard-navigation.ts` — dashboard registry, custom Stoic portico icon, modifier-click policy, and main-leaf routing shared by the sidebar and dashboard commands.
+- `src/read-models/dashboard-overview.ts` — bounded-result aggregation of canonical session durations, session counts, distinct participating engagements, and recorded days through today.
 - `src/plugin-services.ts` — stable capability contract supplied to views and staging workflows, avoiding dependencies on the complete plugin lifecycle class.
 - `src/refresh/source-monitor.ts` — one serialized fingerprint/content-signature checker shared by file events, ten-second polling, and ten-minute authoritative source checks.
 - `src/refresh/reading-view.ts` — non-disruptive update notices, deduplicated explicit redraws, and scroll preservation shared by all EH reading views.
@@ -279,6 +282,14 @@ The database must be synchronized as part of the vault by the user's chosen syst
 
 The plugin does not send database content over the network. It does not log session titles or notes during normal operation. The validation script outputs only integrity, counts, date bounds, mapping issue counts, and the number of `chor` rows.
 
+## Dashboard sidebar and navigation
+
+On layout readiness the plugin ensures one `examined-human-dashboard-sidebar` leaf in the native right sidebar without revealing it or changing the active main tab. Its custom `examined-human-stoa` icon depicts a classical portico. The ribbon and `open-dashboard-sidebar` command reveal this panel. Saved sidebar leaves are reused, and concurrent creation requests share a promise.
+
+The dashboard registry covers Calendar, Daily/Weekly Assessment, Engagements, Finance, Nutrition, Exercise, Medical, and Command Center. Normal selection uses `workspace.getMostRecentLeaf()` so focusing the sidebar does not lose the main destination. Only an unpinned EH dashboard is replaced; notes, other plugins, and pinned dashboards cause a new main tab. Selecting the same dashboard preserves its live view. Ctrl/Cmd-click, middle-click, each row's visible new-tab button, and existing dashboard commands request a fresh tab. Main navigation is serialized to keep rapid selections ordered. The mobile right drawer collapses after successful navigation.
+
+The sidebar extends `ReadingView`, participates in global explicit refresh and deferred background update notices, and changes only active-button styling when focus/layout changes. Its read model aggregates canonical `sessions` through today without loading session histories into JavaScript. Planned rows and future sessions do not contribute. Time sums recorded non-negative durations and uses the centralized `hh:mm` formatter. Distinct engagements count only those participating in the selected session set. Database failures affect the summary only; dashboard navigation remains available. Accents are centralized in `events.ts` and do not depend on session color settings.
+
 ## Calendar window and scrolling
 
 The view initially loads 45 days before today, today, and 45 days after today: 91 columns total. When horizontal scrolling approaches either edge, the date window shifts by 28 days and rerenders around the captured center date. This gives the experience of continuous scrolling while bounding DOM and query size.
@@ -421,10 +432,18 @@ Preserve both copyright lines in `LICENSE` and keep the upstream attribution in 
 
 ## Medical and Daily health records
 
-Medical Forms reuse the shared bounded-form grammar and one-source-report-per-form model. `src/logger/medical.ts` owns parsing, canonical catalog validation, typed observations, and report-scoped replacement. `src/logger/daily-health.ts` adds actual intakes and symptoms to full Daily inspection/import and replacement. `src/read-models/medical.ts` owns read-only catalog/report queries and bounded, deterministic record-table paging. `MedicalForms.ts` supplies catalog and confirmation modals; `RecordsView.ts` is a plain ReadingView sharing global refresh and scroll preservation.
+Medical Forms reuse the shared bounded-form grammar and one-source-report-per-form model. `src/logger/medical.ts` owns parsing, canonical catalog validation, typed observations, and report-scoped replacement. `src/logger/daily-health.ts` adds actual intakes and symptoms to full Daily inspection/import and replacement. `src/read-models/medical.ts` owns read-only catalog/report queries and bounded, deterministic record-table paging. `MedicalForms.ts` supplies catalog and confirmation modals; `MedicalDashboardView.ts` supplies a right-hand imported-report navigator with in-place selection and imported-order tables, sharing global refresh and scroll preservation. `RecordsView.ts` is a compatibility reexport for older integrations.
 
 Migration 006 upgrades existing Schema v1 databases through a separately previewed and checksum-confirmed LoggerService action. New database creation embeds the same SQL. Legacy numeric measurement IDs, values, notes, ranges, flags, and report links are retained; foreign-key failures roll back the upgrade. Measurements support raw text, nullable numeric values, comparators, and immutable unit/value-type snapshots. Canonical medications have required dose units. Shared aliases are checked against canonical names as well as aliases to prevent ambiguous resolution.
 
 `medical_report_imports` owns exactly one report by source note path. An optional `report id` header allows a moved note to explicitly retain that report identity. Only reports with native receipts can be replaced. Replacement deletes only that report's measurements/procedures, retaining catalogs, person identity, unrelated reports, and original import time. The UI previews old counts and all new entries, requires replacement acknowledgement, and passes the reviewed database checksum to the guarded writer. It verifies the source before mutation and immediately before persistence. Medical source forms are retained regardless of Daily/Weekly/Budget cleanup preferences. Medical receipts participate in mixed-file completion.
 
 Blank health sections are `unrecorded`; standalone `none` is an explicit, mutually exclusive absence; entered rows are `recorded`. These states are stored independently for Medical sections and Daily Medication/Symptoms. Full Daily reimport deletes health children before daily owners and preserves separately imported Medical reports. Unknown dates remain null in provenance; the legacy reports timestamp uses an empty string when neither date is supplied. Per-observation dates and complex source context remain in notes. No clinical interpretation, conversion inference, or automatic health write is performed.
+
+### Grouped Daily sections and medical review build
+
+`dailyFormSections` resolves `##### Medical` / `###### Medication` / `###### Symptoms` and `##### Financial` / `###### Transactions` / `###### Valuation Rates` to the same leaf contracts as older flat forms. Duplicate roots, duplicate leaves, unknown group children, and group-level ENTRIES markers are rejected. Absolute offsets are retained so finance and valuation staging can target the nested subsection while preserving other rows and line endings. Meals keep their existing independent nested grammar.
+
+Medical migration is exposed only by the shared Settings definition tree. Import and read-model failures direct users there. The command palette exposes Medical Dashboard, catalog management, and Medical import, but no migration action. Existing saved records tabs keep their workspace type and open as Medical Dashboard. Its bounded navigator includes native Medical report receipts and canonical Daily medical logs; it omits unrelated Weekly/Budget forms. Selection identity is stable, and detail queries preserve source ordinal order.
+
+Review-build release notes are bundled in `ReleaseNotesModal`, shown once per notes ID after layout readiness and reachable through Settings. Closing records the acknowledged ID through ordinary plugin settings persistence. No release version is bumped or published during owner review.
