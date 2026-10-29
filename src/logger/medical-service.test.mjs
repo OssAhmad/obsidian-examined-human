@@ -9,7 +9,6 @@ const { LoggerService } = await import('./service.ts');
 
 function harness() {
   const db=createSchemaV1Database();
-  writeHealthCatalog(db,{ kind:'person',name:'Example',unit:'',valueType:'',aliases:[] });
   writeHealthCatalog(db,{ kind:'measurement',name:'Finding',unit:'',valueType:'text',aliases:[] });
   const sourceText='#### EH Medical Form\nreport: Example\nperformed:\nreported:\nsource:\n##### Measurements\nENTRIES:\nFinding | Old finding | Original notes\n##### Procedures\nENTRIES:\nnone\n#### END';
   const input={ sourceText,filePath:'Medical/example.md',sourceChecksum:'old',pluginVersion:'test' };
@@ -56,4 +55,26 @@ test('medical service restores database after persisted-byte verification failur
   const {service,state,original,request}=harness();const preview=await service.inspectMedical(request);state.failVerify=true;
   await assert.rejects(service.importMedical({...request,expectedDatabaseChecksum:preview.databaseChecksum}),/original was restored/);
   assert.deepEqual(state.bytes,original);assert.equal(state.backups.size,1);
+});
+
+test('existing review database upgrades to single-owner schema only after checksum confirmation', async () => {
+  const { service, state } = harness();
+  const db = createSchemaV1Database();
+  db.run('DELETE FROM schema_migrations WHERE version=7; CREATE TABLE people(id INTEGER PRIMARY KEY, name TEXT NOT NULL); ALTER TABLE reports ADD COLUMN person_id INTEGER REFERENCES people(id);');
+  state.bytes = db.export(); db.close();
+  const original = state.bytes.slice();
+  const preview = await service.inspectMedicalUpgrade('EH.db');
+  assert.equal(preview.needed, true);
+  assert.deepEqual(state.bytes, original);
+  await assert.rejects(service.upgradeMedical('EH.db', 'stale checksum'), /changed after preview/);
+  await service.upgradeMedical('EH.db', preview.databaseChecksum);
+  assert.deepEqual([...state.backups.values()][0], original);
+  assert.equal(state.writes, 1);
+  const updated = new SQL.Database(state.bytes);
+  try {
+    assert.equal(queryRows(updated, 'PRAGMA table_info(reports)').some(row => row.name === 'person_id'), false);
+    assert.deepEqual(queryRows(updated, "SELECT name FROM sqlite_master WHERE name='people'"), []);
+    assert.deepEqual(queryRows(updated, 'PRAGMA foreign_key_check'), []);
+  } finally { updated.close(); }
+  assert.equal((await service.inspectMedicalUpgrade('EH.db')).needed, false);
 });

@@ -13,6 +13,7 @@ import {
   taxonomyCodes,
 } from '../database-utils.ts';
 import { validateAdminCommandArguments } from './command-registry.ts';
+import { applyHealthAdminCommand } from './health-commands.ts';
 
 export interface AdminEvent {
   command: string;
@@ -96,7 +97,9 @@ export function applyAdminEvents(db: Database, events: AdminEvent[], noteDate: s
     }
     try {
       const args = event.args;
-      if (event.command === 'SESSION_TYPE_ADD') {
+      if (applyHealthAdminCommand(db, event.command, args)) {
+        continue;
+      } else if (event.command === 'SESSION_TYPE_ADD') {
         addType(db, 'session_types', args, event.command);
       } else if (event.command === 'SESSION_TYPE_REMOVE') {
         removeType(db, 'session_types', args[0], event.command);

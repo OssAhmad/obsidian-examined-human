@@ -1,6 +1,7 @@
 import type { Database } from 'sql.js';
 import { queryRows, validateSchemaContract } from './sql.ts';
 import { nullableNumber, nullableText } from './values.ts';
+import { hasMedicalSchema, queryHealthCatalog, type HealthCatalogEntry, type HealthCatalogKind } from './medical.ts';
 
 export interface FoodLibraryRecord {
   id: number;
@@ -20,6 +21,7 @@ export interface FoodLibraryRecord {
 }
 
 export interface CommandCatalog {
+  health: { available: boolean; entries: Record<HealthCatalogKind, HealthCatalogEntry[]> };
   foods: Array<{ id: number; name: string }>;
   engagements: CommandEngagementRecord[];
   exercises: CommandExerciseRecord[];
@@ -136,7 +138,16 @@ export function queryCommandCatalog(db: Database): CommandCatalog {
   const taxonomy = (table: string): string[] => queryRows(db, `
     SELECT code FROM "${table}" WHERE is_active = 1 ORDER BY code COLLATE NOCASE, id
   `).map((row) => String(row.code));
+  const healthAvailable = hasMedicalSchema(db);
+  const healthEntries = (kind: HealthCatalogKind): HealthCatalogEntry[] => healthAvailable ? queryHealthCatalog(db, kind) : [];
   return {
+    health: {
+      available: healthAvailable,
+      entries: {
+        measurement: healthEntries('measurement'), procedure: healthEntries('procedure'),
+        medication: healthEntries('medication'), symptom: healthEntries('symptom'),
+      },
+    },
     foods: queryRows(db, 'SELECT id, name FROM foods ORDER BY name COLLATE NOCASE, id')
       .map((row) => ({ id: Number(row.id), name: String(row.name) })),
     engagements: queryRows(db, `

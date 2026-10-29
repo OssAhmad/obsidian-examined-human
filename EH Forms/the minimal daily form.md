@@ -4,9 +4,6 @@ EH form: <% "unimported" %>
 
 # Examined Human Daily Form
 
-> [!info] Medication and Symptoms
-> These sections are included in full Daily import and reimport. Existing databases need **Settings → Examined Human → General → Tools and maintenance → Medical database migration** first. Define canonical medications with dose units, symptoms, and aliases through **Manage health catalogs**. Blank means unrecorded; standalone `none` means explicitly none. See the [README](../README.md#health-records).
-
 #### EH Daily Form
 date: <% tp.file.title %>
 
@@ -65,7 +62,8 @@ ENTRIES:
 FORMAT:
 `time (hh:mm) | medication | amount | notes`
 
-Use a canonical medication name or alias. The `medications` table supplies its required dose unit. Blank means unrecorded; a standalone `none` explicitly means no medication was taken that day.
+COLLECTION STATES:
+`blank | none | intake rows`
 
 ENTRIES:
 
@@ -75,7 +73,8 @@ ENTRIES:
 FORMAT:
 `time (hh:mm) | symptom | notes`
 
-Use a canonical name or alias; all three fields are required. Blank means unrecorded; a standalone `none` explicitly means no symptoms were experienced that day.
+COLLECTION STATES:
+`blank | none | symptom rows`
 
 ENTRIES:
 
@@ -121,6 +120,22 @@ notes:
 
 
 ##### Admin Events
+
+FORMAT:
+`command | arguments`
+
+HEALTH CATALOG FORMATS:
+`MEASUREMENT_CREATE | name | value_type | unit | [aliases]`
+`MEASUREMENT_UPDATE | measurement | new_name | value_type | unit | [aliases]`
+`MEDICATION_CREATE | name | dose_unit | [aliases]`
+`MEDICATION_UPDATE | medication | new_name | dose_unit | [aliases]`
+`SYMPTOM_CREATE | name | [aliases]`
+`SYMPTOM_UPDATE | symptom | new_name | [aliases]`
+`PROCEDURE_CREATE | name | [aliases]`
+`PROCEDURE_UPDATE | procedure | new_name | [aliases]`
+
+MEASUREMENT VALUE TYPES:
+`number | qualitative | text`
 
 ENTRIES:
 

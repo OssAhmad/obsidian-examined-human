@@ -14,7 +14,6 @@ import { replacementDatabase, replacementInput } from '../../test-support/daily-
 
 export function seedHealth(db) {
   for (const input of [
-    { kind: 'person', name: 'Example person' },
     { kind: 'measurement', name: 'Glucose', unit: 'mg/dL', valueType: 'number', aliases: ['Sugar'] },
     { kind: 'measurement', name: 'Urine blood', valueType: 'qualitative' },
     { kind: 'measurement', name: 'Impression', valueType: 'text' },
@@ -45,7 +44,7 @@ test('medical schema upgrade preserves legacy IDs, results and references with v
   const db = new SQL.Database();
   try {
     db.run(schemaV1Sql.split('-- Run inside LoggerService')[0] + 'COMMIT; PRAGMA foreign_keys=ON;');
-    db.run("INSERT INTO people VALUES (9,'Legacy person'); INSERT INTO reports VALUES (8,9,'2020-01-01','lab',NULL,'Old report','old.pdf'); INSERT INTO markers VALUES (7,'Legacy test','mg/dL','old range'); INSERT INTO measurements VALUES (6,8,7,12.5,'old notes','specific range','H');");
+    db.run("INSERT INTO reports VALUES (8,'2020-01-01','lab',NULL,'Old report','old.pdf'); INSERT INTO markers VALUES (7,'Legacy test','mg/dL','old range'); INSERT INTO measurements VALUES (6,8,7,12.5,'old notes','specific range','H');");
     const sql = await readFile(new URL('../../migrations/006_add_medical_forms_schema_v1.sql', import.meta.url), 'utf8');
     runDatabaseTransaction(db, db => db.run(sql));
     assert.equal(hasMedicalSchema(db), true);
@@ -97,9 +96,6 @@ test('malformed or ambiguous medical entries fail without changing stored report
       assert.throws(() => writeMedicalForm(db, { ...input, replaceExisting:true, sourceText:text }));
       assert.deepEqual(queryRows(db, 'SELECT * FROM measurements'), before);
     }
-    db.run("INSERT INTO people (name) VALUES ('Other person')");
-    assert.throws(() => inspectMedicalForm(db,input), /person:/);
-    assert.throws(() => inspectMedicalForm(db,{ ...input, sourceText:input.sourceText.replace('report: Example report','report: Example report\nperson: Other person') }), /cannot change the person/);
   } finally { db.close(); }
 });
 test('Daily health requires canonical names, exact time and explicit none; replacement removes only that day', () => {
@@ -136,7 +132,6 @@ test('all four shipped example forms import in memory and produce four records a
   const db=createSchemaV1Database();
   try {
     for (const input of [
-      {kind:'person',name:'EH example person'},
       {kind:'measurement',name:'EH example glucose',unit:'mg/dL',valueType:'number'},
       {kind:'measurement',name:'EH example urine result',valueType:'qualitative'},
       {kind:'measurement',name:'EH example imaging impression',valueType:'text'},

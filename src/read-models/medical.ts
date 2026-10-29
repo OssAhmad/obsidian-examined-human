@@ -13,6 +13,9 @@ export const HEALTH_SCHEMA = {
   medication_intakes: ['date', 'amount', 'unit_at_time'], symptom_entries: ['date', 'time'],
 };
 export function hasMedicalSchema(db: Database): boolean {
+  return hasMedicalFoundation(db) && !hasTableColumns(db, 'reports', ['person_id']);
+}
+export function hasMedicalFoundation(db: Database): boolean {
   return Object.entries(HEALTH_SCHEMA).every(([table, columns]) => hasTableColumns(db, table, columns));
 }
 export function assertMedicalSchema(db: Database): void {
@@ -21,35 +24,34 @@ export function assertMedicalSchema(db: Database): void {
 
 export interface MedicalDashboardItem {
   key: string; kind: 'report' | 'daily'; reportId: number | null;
-  date: string; title: string; sourcePath: string; person: string | null;
+  date: string; title: string; sourcePath: string;
 }
 export function queryMedicalDashboardPage(db: Database, page: number) {
   if (!hasMedicalSchema(db)) return { needsMigration: true, total: 0, items: [] as MedicalDashboardItem[] };
   const sources = `SELECT 'report:' || r.id AS key, 'report' AS kind, r.id AS report_id,
       COALESCE(i.reported, i.performed, NULLIF(r.report_timestamp, ''), '') AS date,
-      COALESCE(r.title, 'Medical report') AS title, i.source_file_path AS path, p.name AS person
-    FROM medical_report_imports i JOIN reports r ON r.id=i.report_id JOIN people p ON p.id=r.person_id
+      COALESCE(r.title, 'Medical report') AS title, i.source_file_path AS path
+    FROM medical_report_imports i JOIN reports r ON r.id=i.report_id
     UNION ALL
     SELECT 'daily:' || h.date, 'daily', NULL, h.date, 'Daily medical log',
-      (SELECT n.file_path FROM imported_notes n WHERE n.note_date=h.date ORDER BY n.id DESC LIMIT 1), NULL
+      (SELECT n.file_path FROM imported_notes n WHERE n.note_date=h.date ORDER BY n.id DESC LIMIT 1)
     FROM daily_health h WHERE (h.medication_state<>'unrecorded' OR h.symptoms_state<>'unrecorded')
       AND EXISTS (SELECT 1 FROM imported_notes n WHERE n.note_date=h.date)`;
   const total = Number(queryRows(db, `SELECT COUNT(*) AS n FROM (${sources})`)[0].n);
   const offset = Math.max(0, Math.floor(page)) * 50;
   const items = queryRows(db, `SELECT * FROM (${sources}) ORDER BY date DESC, kind, key LIMIT 50 OFFSET ?`, [offset]).map(r => ({
     key: String(r.key), kind: String(r.kind) as MedicalDashboardItem['kind'], reportId: r.report_id == null ? null : Number(r.report_id),
-    date: String(r.date), title: String(r.title), sourcePath: String(r.path), person: r.person == null ? null : String(r.person),
+    date: String(r.date), title: String(r.title), sourcePath: String(r.path),
   }));
   return { needsMigration: false, total, items };
 }
-export type HealthCatalogKind = 'measurement' | 'procedure' | 'person' | 'medication' | 'symptom';
+export type HealthCatalogKind = 'measurement' | 'procedure' | 'medication' | 'symptom';
 export interface HealthCatalogEntry {
   id: number; name: string; unit: string; valueType: string; aliases: string[];
 }
 export const HEALTH_CATALOGS = {
   measurement: { table: 'markers', aliasTable: 'marker_aliases', owner: 'marker_id' },
   procedure: { table: 'medical_procedures', aliasTable: 'medical_procedure_aliases', owner: 'procedure_id' },
-  person: { table: 'people', aliasTable: '', owner: '' },
   medication: { table: 'medications', aliasTable: 'medication_aliases', owner: 'medication_id' },
   symptom: { table: 'symptoms', aliasTable: 'symptom_aliases', owner: 'symptom_id' },
 } as const;

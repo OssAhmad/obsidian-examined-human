@@ -7,11 +7,10 @@ EH form: false
 These four forms contain fictional test data. They are for manual import in a disposable database, not personal health history. No sample has been imported automatically.
 
 1. In Examined Human settings, create and select a new database such as `EH-medical-demo.db`. Keep a note of your original database path so you can switch back afterwards. A new database already has the health schema. For an existing official v1 database, use **Settings → Examined Human → General → Tools and maintenance → Medical database migration** and review its backup confirmation.
-2. Run **Manage health catalogs** and create these records. Leave aliases blank. The unit column is entered only for numeric measurements and medication. Select the listed value type for measurements.
+2. Open **Command Center → Health**, use Add to stage these records in an unimported Daily Form, then import that Daily Form and confirm its preview. Staging alone does not create database records. Leave aliases blank. The unit column is entered only for numeric measurements and medication. Select the listed value type for measurements. Use a separate setup Daily Form so the examples retain empty Admin Events for reimport.
 
 | Catalog | Canonical name | Unit | Measurement value type |
 | --- | --- | --- | --- |
-| People | EH example person | — | — |
 | Measurements | EH example glucose | mg/dL | number |
 | Measurements | EH example urine result | — | qualitative |
 | Measurements | EH example imaging impression | — | text |

@@ -10,11 +10,10 @@ Five fictional source notes are dated October 20, 21, 22, 24, and 25. Each conta
 
 1. Reload Examined Human in Wax Vault so the review build is running.
 2. Prefer a new disposable database such as `EH-medical-dashboard-review.db` in Settings → Examined Human → General. Remember your original path so you can switch back. New databases already include the medical tables. For an older database, use **Settings → Examined Human → General → Tools and maintenance → Medical database migration**. Migration is not a command-palette action.
-3. Use **Manage health catalogs** to define the records below. They match the earlier example vocabulary; do not create duplicates if those exact canonical records already exist. Leave aliases blank. Only numeric measurements and medication need units.
+3. Use **Command Center → Health** to inspect and stage the records below into an unimported Daily Form, then import that Daily Form and confirm its preview. Staging alone does not change the database. They match the earlier example vocabulary; do not create duplicates if those exact canonical records already exist. Leave aliases blank. Only numeric measurements and medication need units. Use a separate setup Daily Form so the review notes retain their original Admin Events.
 
 | Catalog | Canonical name | Unit | Measurement value type |
 | --- | --- | --- | --- |
-| People | EH example person | — | — |
 | Measurements | EH example glucose | mg/dL | number |
 | Measurements | EH example urine result | — | qualitative |
 | Measurements | EH example imaging impression | — | text |

@@ -2,7 +2,7 @@
 
 Examined Human is a local-first Obsidian plugin for planning, recording, and reviewing a life through one connected body of information.
 
-You write ordinary Markdown forms. Examined Human validates them, asks for confirmation before importing them, and turns the resulting history into a calendar and a set of dashboards for time, commitments, money, food, exercise, and milestones.
+You write ordinary Markdown forms. Examined Human validates them, asks for confirmation before importing them, and turns the resulting history into a calendar and a set of dashboards for time, commitments, money, food, exercise, milestones, and health records.
 
 The connecting idea is an **engagement**: anything you meaningfully engage with, such as a person, relationship, course, project, practice, responsibility, hobby, or long-term goal. Sessions, transactions, milestones, and plans can all point to the same engagement.
 
@@ -10,6 +10,19 @@ Examined Human runs on desktop and mobile. Your notes and database remain in you
 
 > Current release: **0.9.6**
 > Requires Obsidian **1.8.7 or newer**
+
+This README is the user manual and feature reference. The current working build includes features under review; see [CHANGELOG.md](CHANGELOG.md) for changes awaiting release. A version number alone does not identify which review features are installed.
+
+## Find your way
+
+- [Install](#installation) and [complete first-time setup](#first-time-setup-from-installation-to-a-working-plugin)
+- [Understand staging, importing, and correcting a day](#how-information-moves-from-a-note-into-the-plugin)
+- [Set up health catalogs and import Medical Forms](#health-records)
+- [Look up health Admin Event formats](#health-admin-event-reference)
+- [Switch dashboards and understand what they show](#dashboard-guide)
+- [Keep or remove imported forms](#what-to-do-with-forms-after-importing)
+- [Troubleshoot setup and health features](#troubleshooting-the-first-setup)
+- [Developer documentation](DEVELOPMENT.md)
 
 ## What you can do with it
 
@@ -20,7 +33,7 @@ The usual rhythm is:
 3. Preview and validate the form.
 4. Confirm the import.
 5. Review the result in the calendar and dashboards.
-6. Improve your canonical lists of engagements, foods, exercises, accounts, and aliases as your life changes.
+6. Improve your canonical lists of engagements, foods, exercises, accounts, health records, and aliases as your life changes.
 
 Daily history acts like a receipt: changing a note does not silently change its imported data. You can explicitly reimport a complete Daily Form for today or a past date after reviewing a red replacement warning and confirming deletion of the old day. Future Daily Forms can be reviewed but cannot be imported. Weekly plans and budgets can be updated by importing the same period again.
 
@@ -49,7 +62,7 @@ Do not copy `data.json` from another vault. It contains settings that belong to 
 
 ## First-time setup: from installation to a working plugin
 
-Complete these steps in order. The first six establish a real, usable installation. Step 7 is an optional disposable practice run.
+Complete these steps in order. The first six establish a real, usable installation. Step 7 is an optional disposable practice run; step 8 covers regular-use preferences.
 
 ### 1. Choose or create your database
 
@@ -119,11 +132,13 @@ Medical Forms are also available:
 - [Medical Form with explanations](<EH Forms/the medical form with explanations.md>)
 - [Minimal Medical Form](<EH Forms/the minimal medical form.md>)
 
+All eight forms also have [Persian versions and a Persian usage guide](<EH Forms/fa/README.md>). Persian names, notes, explanations, and examples are supported. Parser keywords, section headings, command/type codes, weekday labels, and numeric date/time syntax remain unchanged; the Persian guide explains these boundaries. This translates the templates, not the plugin interface or its calendar system.
+
 The Daily templates group Medication and Symptoms under Medical, and Transactions and Valuation Rates under Financial. Existing databases need the confirmed **Settings → Examined Human → General → Tools and maintenance → Medical database migration** action before importing health entries. Read [Health records](#health-records) for catalog setup, Medical import/reimport, and the plain records dashboard.
 
 Start with the explained forms. Use the minimal forms after the entry formats feel familiar.
 
-Copy the forms into your Obsidian template system or paste them into notes manually. If you do not use the Templater community plugin, replace expressions such as `<% tp.file.title %>` with the real ISO date yourself.
+Copy the forms into your Obsidian template system or paste them into notes manually. If you do not use the Templater community plugin, replace `EH form: <% "unimported" %>` with `EH form: unimported`, and replace date expressions such as `<% tp.file.title %>` with the real ISO date yourself. Weekly start/end expressions must also be replaced with actual dates.
 
 Keep these structural elements unchanged:
 
@@ -143,7 +158,9 @@ An empty database knows the allowed general types, but it does not know the name
 - an **engagement** is required for sessions, commitments, milestones, transactions, and budget targets;
 - an **account** is required for transactions;
 - a **food** is required for meal rows;
-- an **exercise** is required for structured Exercise Details.
+- an **exercise** is required for structured Exercise Details;
+- a **medication** with a dose unit or a **symptom** is required for the corresponding Daily health row;
+- a **measurement** with a value type (and a unit for numbers), or a **procedure**, is required for the corresponding Medical Form row.
 
 The quickest first seed is a Daily Form dated yesterday or earlier. Leave its ordinary sections blank and put your creation commands under **Admin Events → ENTRIES:**. For example, replacing these names and values with real ones:
 
@@ -158,7 +175,7 @@ If you only want to begin tracking time, the engagement row is enough. Do not in
 
 Open the seed note, run **Examined Human: Import Daily Form from Active File**, review the validation preview, and confirm the import. Creation rows are staged evidence until this import succeeds.
 
-The full Daily validator stages Admin Events in a disposable copy before resolving the rest of the form. This means the same form may create an engagement, food, account, exercise, type, or alias and then use it in its sessions, meals, transactions, or exercise details. The real database is still changed only after confirmation.
+The full Daily validator stages Admin Events in a disposable copy before resolving the rest of the form. This means the same form may create an engagement, food, account, exercise, medication, symptom, type, or alias and then use it in that day's entries. Import a setup Daily Form before importing a separate Medical Form that uses its new measurements or procedures. The real database is still changed only after confirmation.
 
 You can later use the **Command Center** to prepare new records and aliases through forms instead of typing commands manually.
 
@@ -175,6 +192,8 @@ After your minimum seed import succeeds, you may want to explore immediately wit
 7. Import the form and open every dashboard described below.
 8. Try a Weekly Form and a Budget Form, then reimport them after changing something so you can see how editable plans behave.
 9. When finished, restore the original Database path and select **Test connection** before returning to real notes.
+
+For health practice, follow the [fictional health examples](<docs/examples/health/00 Start here.md>) or the [combined Medical/Daily review set](<docs/examples/medical-dashboard-review/00 Start here.md>). First stage and import the required catalog definitions in the temporary database; then import the example forms yourself. Do not import fictional health records into your real history. Your Journal folder and discovered notes do not become isolated just because you switch databases, so select only the intended demo notes.
 
 The demo database is independent. Nothing seeded in your real database is automatically copied into it. You may keep the demo for later practice or delete it after switching back to the real database and verifying the connection.
 
@@ -202,7 +221,7 @@ Examined Human deliberately separates preparation from import:
 5. **Confirm:** only an explicit confirmation applies the validated change.
 6. **Review the result:** refresh and inspect the relevant dashboard.
 
-Dashboard buttons that say **Stage** do not finish an import. They add reviewable text to a chosen current or future Daily Form. The database changes only when the appropriate form import later succeeds.
+Dashboard buttons that say **Stage** do not finish an import. They add reviewable text to a chosen unimported Daily Form, which may be past, today, or future. A future form can receive staged changes, but cannot be finalized until its date arrives. The database changes only when the appropriate form import later succeeds.
 
 ### Daily Forms
 
@@ -255,19 +274,75 @@ Importing the same start and end dates again updates that budget.
 
 ### Command Center and other staging actions
 
-The Command Center manages your canonical foods, engagements, exercises, accounts, aliases, and valuation rates. Its actions are intentionally staged into a selected unimported Daily Form so you can read the exact change before importing it.
+The Command Center manages your canonical foods, engagements, exercises, accounts, health catalogs, aliases, and valuation rates. Its actions are intentionally staged into a selected unimported Daily Form so you can read the exact change before importing it.
 
 The Financial Dashboard uses the same pattern for opening balances and reconciliations: it stages a normal, clearly marked transaction in a Daily Form. The Daily Form import is the step that applies it.
 
 ## Health records
 
-Medical Forms and Daily Medication/Symptoms are supported by the native guarded importer. For an existing official Schema v1 database, open **Settings → Examined Human → General → Tools and maintenance → Medical database migration**, review the upgrade, and confirm. The plugin creates a verified backup, preserves legacy numeric measurements and IDs, and adds typed observations, report provenance, procedures, and canonical health catalogs. New databases already include these tables. The official SQLite schema marker remains v1.
+Medical Forms and Daily Medication/Symptoms use the plugin's normal review-and-confirm import workflow. New databases are ready for them. For an older database or an earlier medical review build, open **Settings → Examined Human → General → Tools and maintenance → Medical database migration**, review the upgrade, and confirm. It creates a verified backup and enables the current health features, including removal of the old People setup. Loading an updated plugin does not upgrade your database automatically. Technical migration details are in [DEVELOPMENT.md](DEVELOPMENT.md#medical-schema-and-single-owner-upgrade).
 
-Run **Manage health catalogs** to create people, measurements, procedures, medications, symptoms, and aliases. A measurement has a `number`, `qualitative`, or `text` value type; numeric measurements and medications require a canonical unit. The importer resolves names and aliases; it does not infer units or convert quantities. Each save is previewed and confirmed with a backup. A Medical Form requires a defined person: if there is exactly one person, it is selected automatically; with multiple people, add `person: canonical name` to the header.
+Each vault represents one owner; use separate vaults for different people's records. There is no People catalog or person field to set up.
 
-Open a source note and run **Import or reimport Medical Form from Active File**. The preview shows its person, dates, section states, measurements, units, notes, and procedures. Confirmation creates a durable import with a backup; the Markdown form is retained. Reimport from the same source note replaces that report after an explicit acknowledgement. Omitted measurements and procedures are deleted; other reports and shared catalogs are retained. The preview counts the old rows being replaced. Changed source text, a stale database snapshot, uncheckpointed WAL, or backup failure blocks persistence.
+Open **Command Center → Health** to inspect existing measurements, symptoms, medications, procedures, units, value types, and aliases. Search by name, alias, unit, or measurement type. Choose **Add** or **Edit and stage**, fill the required fields, then review and stage the command into an unimported Daily Form. Finally import that Daily Form and confirm its preview to apply the catalog change with a backup. Staging alone does not change the database. New medications and symptoms may be used elsewhere in that same Daily Form. An already-imported Daily Form must have empty Admin Events for reimport; stage new catalog changes in an unimported form instead.
 
-The source note path identifies an imported report. To move the note, obtain its ID from **Medical Dashboard** and add `report id: ID` to its header before reimporting from the new path. The ID must identify an existing native import, and its person cannot change. Reusing a source document already attached to another native report is refused; reports are never matched merely by title or date.
+### Set up and use Health, step by step
+
+1. Select and test the intended database in Settings. If Health asks for the medical migration, complete that separately confirmed Settings action first.
+2. Create or choose an unimported Daily Form dated today or earlier. Keep its `EH form: unimported` metadata and its **Admin Events → ENTRIES:** area. A setup-only Daily Form may leave its ordinary entries blank.
+3. Open the sidebar's **Command Center**, then **Health**, or run **Examined Human: Health catalogs**. Choose Measurements, Symptoms, Medications, or Procedures and search before creating a duplicate.
+4. Choose **Add measurement**, **Add symptom**, **Add medication**, or **Add procedure**. For an existing record, choose **Edit and stage**. Fill in the fields in the table below.
+5. Choose **Review and stage creation** or **Review and stage update**. If more than one unimported Daily Form is available, choose the destination. Read the exact proposed command and choose **Stage command**.
+6. Open that Daily Form and inspect its Admin Events. To log a new medication or symptom on the same date, add its actual intake or occurrence in the Medical section now. Use **Import Daily Form from Active File** or Daily Assessment, review the preview, and confirm.
+7. Refresh Command Center. Its lists show records actually in the selected database, not pending commands in notes. For a Medical report, import its source note only after the separate catalog-setup Daily import succeeds.
+
+| Catalog | Required fields | Optional fields |
+| --- | --- | --- |
+| Measurement | Canonical name; value type `number`, `qualitative`, or `text`; unit for `number` only | Aliases |
+| Medication | Canonical product name; dose unit | Aliases |
+| Symptom | Canonical name | Aliases |
+| Procedure | Canonical name | Aliases |
+
+The editor accepts one alias per line. Use equivalent spellings for the same record, not different medicines, strengths, body sites, or tests. Names cannot contain a pipe or line break; editor aliases also cannot contain commas or square brackets. Names and aliases resolve case-insensitively within their catalog. A health UPDATE replaces the complete alias list: retain every alias you still want; leaving it empty clears the list. There is no Health delete action in this build.
+
+A measurement requires a name and a `number`, `qualitative`, or `text` value type. Numeric measurements and medications also require a canonical unit; qualitative/text measurements have no numeric unit. Symptoms and procedures need only a canonical name. Aliases are optional, one per line in the editor; an update replaces the complete alias list shown. The importer resolves names and aliases; it does not infer units or convert quantities. Previously imported unit/type snapshots remain unchanged. Existing review databases need the Settings medical migration once to remove the old owner fields; new databases already use this single-owner setup.
+
+### Health Admin Event reference
+
+Command Center generates these rows for you. For manual entry or Batch staging, put them below **Admin Events → ENTRIES:** in a Daily Form, not in the Medical Form. Names below are placeholders, not a ready-made catalog.
+
+```text
+MEASUREMENT_CREATE | name | value_type | unit | [aliases]
+MEASUREMENT_UPDATE | existing measurement | new_name | value_type | unit | [aliases]
+MEDICATION_CREATE | name | dose_unit | [aliases]
+MEDICATION_UPDATE | existing medication | new_name | dose_unit | [aliases]
+SYMPTOM_CREATE | name | [aliases]
+SYMPTOM_UPDATE | existing symptom | new_name | [aliases]
+PROCEDURE_CREATE | name | [aliases]
+PROCEDURE_UPDATE | existing procedure | new_name | [aliases]
+```
+
+For UPDATE, the existing name may be a canonical name or a unique alias. Keep all fields, including blank units for qualitative/text measurements and the final alias field. Use `[alias one, alias two]` in command rows; an empty alias field or `[]` means no aliases. CREATE also accepts omission of its final alias field. There are no People commands.
+
+These fictional setup commands illustrate the empty fields. Import them only in a disposable database:
+
+```text
+MEASUREMENT_CREATE | Demo glucose | number | mg/dL | [Demo blood sugar]
+MEASUREMENT_CREATE | Demo imaging impression | text | | []
+MEDICATION_CREATE | Demo medicine 10 mg tablet | tablet | []
+SYMPTOM_CREATE | Demo headache | [Demo head pain]
+PROCEDURE_CREATE | Demo ultrasound | []
+```
+
+Full Daily validation applies these commands before resolving that form's health rows. They are not applied by a Medical import, a Meals-only import, or the Calendar's session projection. After a successful Daily import, remove already-executed Admin Events before any full-day reimport; their catalog changes remain in place. Stage later changes in another unimported Daily Form.
+
+### Import and correct a Medical report
+
+Open a source note and run **Import or reimport Medical Form from Active File**. The preview shows its title, dates, section states, measurements, units, notes, and procedures. Confirmation creates a durable import with a backup; the Markdown form is retained. Reimport from the same source note replaces that report after an explicit acknowledgement. Omitted measurements and procedures are deleted; other reports and shared catalogs are retained. The preview counts the old rows being replaced. Changed source text, a stale database snapshot, uncheckpointed WAL, or backup failure blocks persistence.
+
+The source note path identifies an imported report. To move the note, obtain its ID from **Medical Dashboard** and add `report id: ID` to its header before reimporting from the new path. The ID must identify an existing native import. Reusing a source document already attached to another native report is refused; reports are never matched merely by title or date.
+
+A Medical report does not require a Daily Form for its report date, a session, or an engagement. Its catalog definitions must already exist. Keep exactly one Medical Form per source note; that note may also contain a Daily, Weekly, or Budget Form, but each form has its own import action. Completing only the Daily import does not import the report. Medical source forms are always retained automatically.
 
 **Medical Dashboard** has an imported-record navigator on the right. Select a Medical report or a Daily medical log to see its entries in the main pane. Measurements, procedures, medication, and symptoms retain their imported order; there are no charts or laboratory-category groupings. The list is newest first and paginated at 50 entries. Selecting another record changes only the selected view. Refresh rebuilds the shared database boundary and preserves the selected record and scroll positions; background updates show a notice until you refresh.
 
@@ -306,16 +381,16 @@ The sections appear in both [Daily Form templates](<EH Forms/the daily form with
 
 | Section | Entry format | Meaning |
 | --- | --- | --- |
-| Medication | `time (hh:mm) \| medication \| amount \| notes` | One dose actually taken; its canonical record in the `medications` table supplies the amount's unit. |
+| Medication | `time (hh:mm) \| medication \| amount \| notes` | One dose actually taken; its canonical medication definition supplies the amount's unit. |
 | Symptoms | `time (hh:mm) \| symptom \| notes` | One symptom occurrence, with its context in the person's own words. |
 
-Every field in these rows is required. Times use 24-hour `HH:mm`; names can be canonical names or aliases. Notes hold context such as route for medication, or onset, duration, severity, and interference with work for symptoms. There is no separate symptom severity field and no optional-column variant. Use `none` in a notes field when there is no additional context. Missing facts must not be filled with guessed times, identities, or amounts.
+Every field in these rows is required. Times use 24-hour `HH:mm`; medication amounts must be positive numbers; names can be canonical names or aliases. Notes hold context such as route for medication, or onset, duration, severity, and interference with work for symptoms. There is no separate symptom severity field and no optional-column variant. Use `none` in a notes field when there is no additional context. Missing facts must not be filled with guessed times, identities, or amounts.
 
-Medication must be defined in a **canonical `medications` table with units**. Each canonical record requires a name and one dose unit, such as `tablet`, `mL`, or `mg`, and identifies the product's strength and formulation where relevant. Aliases point to the same canonical medication record. A bare medication name without a defined unit is insufficient for recording an amount.
+Medication must be defined in the **Medications catalog with a dose unit**. Each canonical record requires a name and one dose unit, such as `tablet`, `mL`, or `mg`, and identifies the product's strength and formulation where relevant. Aliases point to the same canonical medication record. A bare medication name without a defined unit is insufficient for recording an amount.
 
 For a product named `Example medicine 10 mg tablet` with dose unit `tablet`, an amount of `1` means one tablet, not one mg. An alias must identify the same product, not silently combine different strengths or formulations. The entering person or agent checks the canonical unit, converts only when the conversion is established, and retains the original amount and unit in notes when converted. Resolve missing catalog records or units instead of guessing. The stored intake record retains the unit used at entry so a later catalog edit cannot relabel historical doses. Prescriptions, planned doses, and skipped doses do not belong in Medication.
 
-The symptom catalog groups equivalent symptom names while retaining each entry's original notes. Headaches, runny nose, abdominal pain, drowsiness, brain fog, and everyday allergic symptoms or reactions belong here. A clinician's documented finding belongs in the Medical Form for that report. Repeated occurrences can have separate timestamped rows. Use **Manage health catalogs** for canonical health records and aliases; health catalog changes do not use Daily Admin Events.
+The symptom catalog groups equivalent symptom names while retaining each entry's original notes. Headaches, runny nose, abdominal pain, drowsiness, brain fog, and everyday allergic symptoms or reactions belong here. A clinician's documented finding belongs in the Medical Form for that report. Repeated occurrences can have separate timestamped rows. Use **Command Center → Health** to stage canonical health records and aliases as Daily Admin Events, then confirm a full Daily import.
 
 For example, these are symptom rows:
 
@@ -345,10 +420,9 @@ The header records shared context once:
 
 | Field | Definition |
 | --- | --- |
-| `report` | A descriptive title for this source report or consultation record. |
+| `report` | Required: a descriptive title for this source report or consultation record. |
 | `performed` | Sample collection, examination, or treatment date; use `YYYY-MM-DD`, optionally followed by `HH:mm`. A report covering several days can use `YYYY-MM-DD to YYYY-MM-DD`. |
 | `reported` | Date the report was issued or the clinician documented the findings, optionally followed by `HH:mm`; distinct from when it was received or entered. |
-| `person` | Canonical person name; required when the database contains more than one person. |
 | `report id` | Blank on initial import; use the stored report ID when reimporting a moved source note. |
 | `source` | Vault-relative path to the original report or consultation note. |
 
@@ -395,13 +469,15 @@ After an import succeeds, you have three valid choices:
 - **Remove only the imported form automatically.** Enable the separate Daily, Weekly, or Budget cleanup switch in Settings. After a confirmed database import, Examined Human removes the exact validated form block while preserving surrounding journal text and other forms.
 - **Delete or edit the source manually.** Imported information remains in the database, so the form is not required for ordinary dashboard display.
 
+Medical Forms have no automatic cleanup switch: import always retains them. You may remove a Medical source note manually, but its dashboard link will no longer reach the original note and you will need to reconstruct the complete form to reimport it. Keep the original attached report independently. Cleanup of an imported Weekly plan does not remove its stored future Calendar sessions.
+
 Remove source material only after confirming that the import succeeded and the information appears correctly. Deleting an unimported form also discards staged changes that have not yet been applied. If automatic cleanup notices that the form changed after validation or cannot identify one exact block, it safely leaves the note untouched; the completed database import is not falsely reported as failed.
 
 ## Dashboard guide
 
 Select the **Stoic portico icon** in Obsidian's right sidebar to open the **Examined Human** dashboard navigator. It is added when the plugin loads; the matching ribbon icon and **Examined Human: Open dashboard navigator** command also reveal it.
 
-Each dashboard has a colored icon. Select its name to replace the dashboard in the current EH tab. If the main tab contains a note, another plugin, or a pinned dashboard, EH opens a new tab instead. Selecting the dashboard already visible keeps its current display.
+Each dashboard has a simple Lucide line icon and a colored selection accent. Select its name to replace the dashboard in the current EH tab. If the main tab contains a note, another plugin, or a pinned dashboard, EH opens a new tab instead. Selecting the dashboard already visible keeps its current display.
 
 To open an additional tab, **Ctrl-click** on Windows/Linux or **Cmd-click** on macOS, middle-click, or use the **↗ button** beside the dashboard name. The same ↗ button is always available on mobile. The mobile sidebar closes after a selection so you can see the dashboard.
 
@@ -461,9 +537,17 @@ Use it to answer: **How consistently am I training, and what does the recorded p
 
 ### Command Center
 
-The Command Center is the maintenance workspace for engagements, foods, exercises, accounts, aliases, valuation rates, and batches of Admin Events. Search existing records, prepare changes, choose an unimported Daily Form, review the proposed rows, and stage them. Raw Admin Events can also maintain the type vocabularies with `SESSION_TYPE_ADD`, `SESSION_TYPE_REMOVE`, `ENGAGEMENT_TYPE_ADD`, and `ENGAGEMENT_TYPE_REMOVE`; removal deactivates a type for new input without deleting historical references.
+The Command Center is the maintenance workspace for engagements, foods, exercises, accounts, health catalogs, aliases, valuation rates, and batches of Admin Events. Search existing records, prepare changes, choose an unimported Daily Form, review the proposed rows, and stage them. Its **Health** tab lists measurements, symptoms, medications, and procedures with their names, units, types, and aliases. Add or edit there to stage the corresponding Daily Admin Events. Raw Admin Events can also maintain the type vocabularies with `SESSION_TYPE_ADD`, `SESSION_TYPE_REMOVE`, `ENGAGEMENT_TYPE_ADD`, and `ENGAGEMENT_TYPE_REMOVE`; removal deactivates a type for new input without deleting historical references.
 
 Use it to answer: **What canonical names does my system know, and what correction should I stage next?**
+
+### Medical Dashboard
+
+Choose **Medical** in the EH sidebar or run **Examined Human: Medical Dashboard**. The right-hand navigator lists imported Medical reports and imported Daily medical logs, newest first, with up to 50 items per page. On narrow screens the navigator moves above the details. Select an item to replace its details in place; this does not open a separate tab.
+
+A report shows its report ID, dates, recording states, measurements, raw values, original units, notes, and procedures. A Daily medical log shows actual medication intakes, dose units, symptom occurrences, and the distinction between `none` and unrecorded. Rows retain their imported order rather than being alphabetically regrouped. **Open source note** opens the source note; **Refresh** reloads all EH views while preserving selection and scroll positions. Unimported source forms do not appear as imported records, and the dashboard does not currently provide trends, charts, laboratory categories, or medical interpretation.
+
+Use it to answer: **What did this report or Daily medical log actually record, and where is its source?**
 
 ## A practical daily and weekly routine
 
@@ -517,6 +601,38 @@ That is expected. A Daily Form can be finalized only for today or a past date. F
 ### The database reports unfinished external changes
 
 Close or finish the write in the other SQLite application, then use **Examined Human: Reload EH.db and refresh all dashboards**. Do not replace the database file while another application still has unfinished changes.
+
+### Health says a migration is required, although the connection test passes
+
+The general connection test and the optional health feature have different requirements. Run **Settings → Examined Human → General → Tools and maintenance → Medical database migration** for the selected database, review and confirm, then refresh. Earlier medical review databases also need this action to remove their old People fields. New databases need no separate health upgrade. The current Daily templates contain Medical sections, so an older database requires the upgrade even when those sections have no entries. If the action says the database is already current but Health still fails, check the selected database path and reload the plugin.
+
+### I staged a health record, but it is missing or import still says “Unknown”
+
+Staging changes only the selected note. Open that Daily Form and complete its confirmed Daily import, then refresh Command Center. A new medication or symptom can be defined and used in that same Daily import. A separate Medical Form must wait until its setup Daily Form is imported. Future-dated setup forms cannot be finalized yet; use an unimported form dated today or earlier if the definition is needed now. Check that setup and report imports use the same selected database.
+
+### There is no Daily Form available for staging
+
+Create one from the Daily template, set a valid date and `EH form: unimported`, and ensure the discovery mode includes its location. Use **Discover forms** if needed. Keep an Admin Events section with a standalone `ENTRIES:` marker. An already-imported day is not a target for new Admin Events; use a different unimported day. The picker also omits unimported dates earlier than your earliest imported day; use a suitable later date (today works if it has not been finalized).
+
+### What belongs in a report, and what belongs in the Daily Form?
+
+Use Daily Medication for actual doses taken and Daily Symptoms for experiences such as a headache or reaction. Use one Medical Form for one source report or consultation, including all of that report's findings and performed procedures. A panel with many results is still one report; a written imaging impression is a text-valued measurement. Define the appropriate catalog records through Command Center first. Do not use blank or `none` to invent a negative finding, and do not enter prescriptions as actual doses taken.
+
+### Will changing a catalog unit change my old health records?
+
+No automatic conversion or rewriting occurs. Imported measurements keep their unit and value-type snapshots; medication intakes keep their dose-unit snapshots. Catalog names and aliases are shared, so renaming a canonical record can change its displayed name on older entries. For a genuinely different medicine, strength, formulation, test, or unit convention, prefer a distinct canonical record rather than relabeling one identity. Review the unit before entering or reimporting any amount.
+
+### Why is a day or report missing from Medical Dashboard?
+
+Refresh and check the selected database. A Daily medical log appears only after the full Daily Form is imported and at least one health section contains rows or explicit `none`; a day with both sections unrecorded has no entry in this list. A Medical Form requires its own separate import even when its source note also contains an imported Daily Form. Use **Older** and **Newer** when more than 50 records are available. Staged catalog definitions and unimported notes are not imported medical records.
+
+### Where are Manage health catalogs and the People selector?
+
+The **Health catalogs** command now opens **Command Center → Health**; the old direct-save dialog has been replaced by normal Daily staging. People selection has been removed. Each vault represents one owner; keep another person's records in a separate vault.
+
+### How do I open a second dashboard on a phone or read the update notes again?
+
+Use the **↗ button** beside a dashboard in the EH sidebar to open a new tab on mobile or desktop. Normal selection reuses an unpinned EH dashboard tab. Update notes appear after a changed review-build notice and can also be opened from Settings. The notice is width-limited on laptops and scrollable on smaller screens; dismissing it does not change any records.
 
 ## Data ownership and safety
 

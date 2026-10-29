@@ -273,14 +273,8 @@ CREATE TABLE exercise_muscles (
     role TEXT
 );
 
-CREATE TABLE people (
-    id INTEGER PRIMARY KEY,
-    name TEXT NOT NULL
-);
-
 CREATE TABLE reports (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    person_id INTEGER NOT NULL REFERENCES people(id),
     report_timestamp TEXT NOT NULL,
     report_type TEXT NOT NULL,
     provider TEXT,
@@ -729,6 +723,7 @@ CREATE TABLE symptom_entries (
 CREATE INDEX idx_medication_intakes_date ON medication_intakes(date);
 CREATE INDEX idx_symptom_entries_date ON symptom_entries(date);
 INSERT INTO schema_migrations (version, name) VALUES (6, 'medical forms with typed observations and report-scoped replacement');
+INSERT INTO schema_migrations (version, name) VALUES (7, 'single-owner medical records');
 
 COMMIT;
 PRAGMA foreign_keys = ON;

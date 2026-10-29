@@ -24,7 +24,11 @@ npm install
 - `src/logger/persistence/` owns reusable transaction and integrity verification infrastructure.
 - `src/native-logger/` contains deprecated compatibility reexports; new code must not import from it.
 - `src/plugin-services.ts` is the stable capability interface supplied to views and note-staging workflows.
-- `src/form-discovery.ts` discovers bounded Daily, Weekly, and Budget Forms in Markdown notes.
+- `src/form-discovery.ts` discovers bounded Daily, Weekly, Budget, and Medical Forms in Markdown notes.
+- `src/dashboard-navigation.ts` and `src/DashboardSidebarView.ts` own the dashboard registry, Stoic icon, shared-tab navigation, and compact activity summary.
+- `src/HealthCommandForms.ts` generates health catalog commands; `src/command-staging.ts` stages them through the same picker and confirmation as other Admin Events.
+- `src/logger/medical.ts`, `src/logger/daily-health.ts`, and `src/logger/admin/health-commands.ts` own report imports, Daily health rows, and health catalog Admin Events.
+- `src/read-models/medical.ts` owns medical catalog/report queries; `src/MedicalDashboardView.ts` renders them without SQL in the view.
 - `src/events.ts` owns the session domain model plus shared formatting and color policy.
 - `src/TimelineView.ts` renders the calendar viewport.
 - `src/*DashboardView.ts` and the assessment views render the analytical and import interfaces.
@@ -51,7 +55,7 @@ Do not add direct SQLite writes to a view or to the reader. Do not place raw SQL
 
 Database paths must remain vault-relative. Never read or replace main-database bytes while a nonempty SQLite WAL contains uncheckpointed frames. The database source boundary is rebuilt by visible Refresh actions, database/WAL fingerprint changes, and the unconditional periodic reload described in the architecture document.
 
-Canonical sessions win for dates represented by imported notes. Today's eligible Daily Form projection is refreshed automatically when the Calendar opens or refreshes; its intervals take precedence over conflicts while non-overlapping sessions from the imported Weekly Form remain visible. Future dates read only from the latest imported Weekly Form, and past dates remain canonical. Historical Daily Forms are immutable receipts. Weekly plans and budgets are replaceable by their period identity.
+Canonical sessions win for dates represented by imported notes. Today's eligible Daily Form projection is refreshed automatically when the Calendar opens or refreshes; its intervals take precedence over conflicts while non-overlapping sessions from the imported Weekly Form remain visible. Future dates read only from the latest imported Weekly Form, and past dates remain canonical. Imported Daily Forms are stable receipts until a separately confirmed full-day reimport replaces their date; editing Markdown alone does not change them. Weekly plans and budgets are replaceable by their period identity.
 
 Keep session titles engagement-first, duration formatted as `hh:mm`, `chor` distinct from `chore`, and optional exercise/milestone tables backward-compatible.
 
@@ -68,10 +72,21 @@ The primary domains are:
 - exercises, sets, muscles, milestones, and measurements;
 - weekly plans, commitments, and planned sessions;
 - note-source and import-component provenance.
+- source medical reports, typed measurements, procedures, health aliases, Daily medication intakes, and symptom occurrences.
 
 Schema and parser changes must preserve compatibility rules documented in `docs/ARCHITECTURE.md`. Add or update in-memory SQLite fixtures and parser tests for every changed contract. Never use a personal database or note as a committed fixture.
 
 Pre-1.0 legacy conversion remains an explicit, previewed, confirmed operation. It must preserve historical rows, create and verify a backup, and fail safely when the source is incompatible.
+
+### Medical schema and single-owner upgrade
+
+The current creation SQL includes medical extension 006 and the single-owner layout recorded as migration 007. `PRAGMA user_version` remains the official base value `1`; feature readiness is checked by schema capability, not that value alone. A newly created database has no `people` table or `reports.person_id`. Each vault represents one owner, with no owner selector, owner form field, or People Admin Events.
+
+`hasMedicalFoundation` checks the typed medical tables/columns introduced by 006. `hasMedicalSchema` additionally requires the old report owner column to be absent. `LoggerService.inspectMedicalUpgrade` returns readiness and the reviewed database checksum without writing. The Settings-only `upgradeMedical` action runs 006 when the foundation is missing, then 007 when `reports.person_id` still exists. Migration 007 drops the obsolete column and People table. No split-record or multi-owner routing is implemented.
+
+The upgrade uses the normal serialized durable transaction, reviewed checksum, verified original-byte backup, WAL refusal, foreign-key/integrity checks, concurrent-write checks, and post-write verification/restoration. It is never automatic on plugin load. Do not run it against a user's vault as part of a code or documentation update; the user reviews and confirms it in Settings. A base-database connection test is not proof of optional medical readiness.
+
+`measurements` stores raw `value_text`, nullable numeric `value`, optional comparison operator, `unit_at_time`, `value_type_at_time`, and source ordinal. Numeric results require a catalog unit; qualitative/text results have no numeric unit. `medication_intakes` stores the actual amount and `unit_at_time`. These snapshots are not relabeled by later catalog unit/type edits. Display names remain shared canonical names, so a rename can affect older displays. This is collection, not clinical interpretation, OCR, or automatic unit conversion.
 
 ## Form processing
 
@@ -80,6 +95,7 @@ Form discovery recognizes bounded Markdown blocks beginning with one of:
 - `#### EH Daily Form`
 - `#### EH Weekly Form`
 - `#### EH Budget Form`
+- `#### EH Medical Form`
 
 Each block ends at its matching `#### END`. A file may contain one form of each kind. Discovery normally scans opted-in notes whose YAML marker is `EH form: true` or `EH form: unimported`; the broader Journal-folder mode also considers unmarked notes.
 
@@ -92,7 +108,7 @@ Keep discovery, parsing, validation, and persistence separate:
 5. the guarded writer repeats conflict checks and applies the approved mutation;
 6. post-write integrity and replacement checks verify the result.
 
-Admin Events are applied to the disposable in-memory inspection database before dependent session, meal, exercise, transaction, milestone, or valuation references are validated. This lets one Daily Form introduce canonical records or aliases and use them in the same preview and confirmed import. `DailyAssessmentView` must render the Meals result embedded in this full inspection rather than treating a separate Meals-only inspection as authoritative. If standalone Meals validation fails while the staged full Daily inspection succeeds, the separate Meals action remains disabled because a Meals-only write cannot persist the Admin Event that owns the new food reference.
+Admin Events are applied to the disposable in-memory inspection database before dependent session, meal, exercise, transaction, milestone, valuation, medication, or symptom references are validated. In particular, `prepareDaily` resolves `inspectDailyHealth` after `applyAdminEvents`, not during initial parsing. This lets one Daily Form introduce canonical records or aliases and use them in the same preview and confirmed import. `DailyAssessmentView` must render the Meals result embedded in this full inspection rather than treating a separate Meals-only inspection as authoritative. If standalone Meals validation fails while the staged full Daily inspection succeeds, the separate Meals action remains disabled because a Meals-only write cannot persist the Admin Event that owns the new food reference.
 
 Daily session rows use one shared parser in `src/forms/session-row.ts` and accept exactly two shapes:
 
@@ -108,6 +124,40 @@ Daily metrics separate observation from inference. `mood`, `energy`, `stress`, `
 The forms in `EH Forms/` are part of the user-facing grammar. Update explained and minimal variants together when a field, command, or format changes.
 
 The explained templates describe lifecycle and interpretation rules. Minimal templates intentionally contain only the required structure, accepted formats, type lists, and empty entry areas. Do not reintroduce calculated Daily metric inputs into the minimal form merely to mirror database columns.
+
+`EH Forms/fa/` mirrors all eight templates in Persian, with the same filenames and a language-specific README. Translate human-facing prose and sample values, not parser tokens: preserve bounded headings, section names, labeled keys, `ENTRIES:`, metadata states, command/type codes, weekday grid labels, and ASCII numeric/date/time delimiters. Do not add RTL control characters or translated suffixes to parser headings. Keep the localized templates aligned with the English grammar and exercise both empty templates and Persian data through the actual import functions; no runtime locale branch is needed for Unicode names or notes.
+
+### Grouped Daily health and finance
+
+`dailyFormSections` maps `##### Medical` with `###### Medication` and `###### Symptoms`, and `##### Financial` with `###### Transactions` and `###### Valuation Rates`, onto the same leaf contracts as the legacy flat headings. Reject duplicate flat/grouped leaves, duplicate groups, unknown children, and group-level `ENTRIES:` markers. Preserve absolute source offsets for bounded staging. Do not change stored taxonomy just to group the presentation.
+
+Medication rows are `time | medication | amount | notes` (strict 24-hour `HH:mm`, positive amount, required dose unit resolved from the catalog). Symptom rows are `time | symptom | notes`. All row fields are nonempty. Each collection stores an independent state: `unrecorded` for missing/empty entries, `none` for one exclusive standalone `none`, or `recorded` for rows. A `none` notes field does not change collection state. Full Daily replacement deletes health children before their daily owner and retains separately imported Medical reports and shared catalogs. Reimport requires empty Admin Events; it does not replay catalog writes.
+
+### Health catalog commands and staging
+
+`queryCommandCatalog` exposes four catalogs with units, value types, and aliases behind `health.available`. Missing optional health schema yields unavailable/empty health lists without breaking Foods, Engagements, Exercises, or Accounts. Command Center displays persisted catalog state only; staged note text is not a pending catalog overlay.
+
+`HealthCommandForms.ts` builds `MEASUREMENT_CREATE/UPDATE`, `MEDICATION_CREATE/UPDATE`, `SYMPTOM_CREATE/UPDATE`, and `PROCEDURE_CREATE/UPDATE`. `command-registry.ts` defines exact arities. Measurement CREATE takes name/type/unit and optional aliases; UPDATE adds the existing name and requires the alias field. Medication CREATE takes name/unit and optional aliases; UPDATE adds the existing name and requires aliases. Symptom/procedure CREATE takes name and optional aliases; UPDATE takes existing name/new name/aliases. UPDATE resolves one canonical record by name or alias and replaces its complete alias list, including clearing it when empty. The writer checks case-insensitive canonical/alias collisions within the selected catalog.
+
+The editor validates delimiters, required names/units, measurement type, and one-alias-per-line input, then calls the shared `stageAdminCommands`. That path chooses a discovered unimported Daily Form, previews the exact commands, asks for staging confirmation, and writes only the bounded Admin Events note edit. It does not save the database or turn the editor's review into an import confirmation. A target may be past, today, or future, but a future Daily Form cannot yet finalize its commands. Final application uses the ordinary full Daily import, not Meals-only, Medical import, or Calendar planning synchronization. The legacy command ID `manage-health-catalogs` now opens Command Center → Health; no direct-save catalog modal remains.
+
+### Medical source imports and dashboard
+
+Keep exactly one Medical Form per source note, representing one source report with many compact observations/procedures. Header fields are `report`, `performed`, `reported`, `source`, and optional `report id`; no person field is parsed. `report` is required. Unknown dates/source paths may remain blank; known paths are vault-relative. Numeric comparisons are preserved, repeated measurements remain separate rows, and source order is retained. Compact report fields support `\\|`, `\\n`, and `\\\\` escapes. Context such as observation dates and specimen belongs in notes rather than new inferred fields.
+
+`medical_report_imports` links a native receipt to its report and source note path. The optional explicit report ID supports a moved source note, but must refer to an existing native import. A source document cannot be silently attached to another native report. Preview reports old row counts; confirmed reimport replaces only that report's measurements/procedures, not unrelated reports, Daily logs, or catalogs. Verify both source and reviewed database before persistence. Medical source forms are always retained, and native receipts participate in mixed-file completion; Daily and Medical forms in one note still require separate imports.
+
+The saved view type remains `examined-human-records` for existing workspaces; `RecordsView.ts` remains a compatibility reexport. Medical Dashboard lists only native report receipts and canonical Daily medical logs with a recorded or explicit-none collection. Paging is deterministic and bounded to 50 items, newest first. Details retain source ordinal order, expose source links, preserve selection/scroll on shared refresh, and move the navigator above details on narrow screens. No charts, laboratory grouping, or interpretation are implemented.
+
+## Dashboard navigation and presentation
+
+The shared registry has nine dashboards: Calendar, Daily/Weekly Assessment, Engagements, Finance, Nutrition, Exercise, Medical, and Command Center. A custom Stoic portico icon opens the right-sidebar navigator; dashboard rows use built-in Lucide icons and colored active accents. Register icons once rather than rendering emoji or requiring an icon plugin.
+
+Normal selection reuses the most recent unpinned EH dashboard leaf. Preserve notes, other plugins, and pinned dashboards by opening a fresh main leaf instead. Selecting the current dashboard preserves it. Ctrl/Cmd-click, middle-click, the visible ↗ action, and dashboard commands request a fresh tab. Navigation is serialized; the mobile right drawer collapses after navigation. Do not replace the sidebar leaf itself with a dashboard.
+
+The compact sidebar read model counts canonical time, sessions, participating engagements, and session dates across all history through today, excluding projections. Format duration as `hh:mm`. All visible Refresh buttons call the shared refresh boundary; background changes show a per-view notice without redrawing the reader. Preserve nested and outer scroll and selection. The ten-minute authoritative source check remains necessary even when metadata is unchanged.
+
+Daily Assessment and active-file previews share the same time-chart selector: engagement or presentation-only session-type grouping. Use the explicit type, falling back to engagement type; keep exact canonical Sleep separate. Do not rewrite persisted taxonomy to implement grouped chart labels. The release-notes modal and Health editor use scoped responsive widths and scrollable content with visible actions; other plugins' modal styling must remain untouched.
 
 ## Build and verification
 
@@ -196,8 +246,12 @@ Use synthetic notes and in-memory databases. Tests should cover both accepted in
 - both accepted Daily session row shapes and engagement-type fallback in canonical and planned calendar events;
 - inferred nutrition, activity, and configured-boundary sleep metrics;
 - unknown or ambiguous references;
-- historical immutability and current/future replacement;
+- stable imported receipts, confirmed full-day/report replacement, and current/future projections;
 - Admin Events and Command Center staging;
+- same-form medication/symptom creation and use, catalog alias replacement/collisions, unit/type snapshots, empty/unrecorded/none distinctions, and rejected People commands;
+- Medical source identity, moved-note IDs, report-scoped replacement, retained source forms, and bounded imported-order dashboard paging;
+- fresh single-owner schema, migration 006/007 readiness, and checksum-confirmed upgrade without automatic writes;
+- dashboard sidebar reuse/new-tab/mobile actions, canonical-only summaries, and responsive notice/editor layouts;
 - Meals thresholds, snack contribution, nutrition snapshots, and unresolved foods;
 - weekly commitments, grids, overlap rules, and Daily Note materialization;
 - budgets, transactions, transfers, balances, reconciliation, and valuation coverage;

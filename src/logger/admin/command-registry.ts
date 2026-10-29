@@ -7,6 +7,14 @@ function command(...argumentCounts: number[]): AdminCommandDefinition {
 }
 
 export const ADMIN_COMMANDS = {
+  MEASUREMENT_CREATE: command(3, 4),
+  MEASUREMENT_UPDATE: command(5),
+  PROCEDURE_CREATE: command(1, 2),
+  PROCEDURE_UPDATE: command(3),
+  MEDICATION_CREATE: command(2, 3),
+  MEDICATION_UPDATE: command(4),
+  SYMPTOM_CREATE: command(1, 2),
+  SYMPTOM_UPDATE: command(3),
   SESSION_TYPE_ADD: command(2, 3),
   SESSION_TYPE_REMOVE: command(1),
   ENGAGEMENT_TYPE_ADD: command(2, 3),

@@ -12,9 +12,11 @@ import type {
 } from './read-models/command-catalog.ts';
 import type { FinancialDashboardQueryResult } from './read-models/finance.ts';
 import type { CommandServices } from './plugin-services.ts';
+import { HEALTH_CATALOG_LABELS, openHealthEditor } from './HealthCommandForms.ts';
+import type { HealthCatalogEntry, HealthCatalogKind } from './read-models/medical.ts';
 
 export const EXAMINED_HUMAN_COMMAND_CENTER_VIEW_TYPE = 'examined-human-command-center';
-type CommandCenterTab = 'foods' | 'engagements' | 'exercises' | 'accounts' | 'valuation' | 'batch';
+type CommandCenterTab = 'foods' | 'engagements' | 'exercises' | 'accounts' | 'health' | 'valuation' | 'batch';
 
 function number(value: number | null, digits = 1): string {
   return value == null ? '—' : new Intl.NumberFormat(undefined, { maximumFractionDigits: digits }).format(value);
@@ -42,6 +44,7 @@ export class CommandCenterView extends ReadingView {
   private search = '';
   private grams = 100;
   private activeTab: CommandCenterTab = 'foods';
+  private healthKind: HealthCatalogKind = 'measurement';
 
   constructor(leaf: WorkspaceLeaf, private plugin: CommandServices) {
     super(leaf, plugin);
@@ -50,6 +53,15 @@ export class CommandCenterView extends ReadingView {
   getViewType(): string { return EXAMINED_HUMAN_COMMAND_CENTER_VIEW_TYPE; }
   getDisplayText(): string { return 'Examined Human — Command Center'; }
   getIcon(): string { return 'wrench'; }
+
+  async showHealthCatalog(kind: HealthCatalogKind = 'measurement'): Promise<void> {
+    this.activeTab = 'health';
+    this.healthKind = kind;
+    this.selectedEntityId = null;
+    this.search = '';
+    if (this.catalog) this.render();
+    else await this.refresh();
+  }
 
   async onOpen(): Promise<void> {
     this.startReadingUpdates();
@@ -113,6 +125,8 @@ export class CommandCenterView extends ReadingView {
       ['engagements', 'Engagements', this.catalog?.engagements.length ?? null],
       ['exercises', 'Exercises', this.catalog?.exercises.length ?? null],
       ['accounts', 'Accounts', this.catalog?.accounts.length ?? null],
+      ['health', 'Health', this.catalog?.health?.available
+        ? Object.values(this.catalog.health.entries).reduce((sum, entries) => sum + entries.length, 0) : null],
       ['valuation', 'Valuation', null],
       ['batch', 'Batch', null],
     ];
@@ -121,6 +135,10 @@ export class CommandCenterView extends ReadingView {
       button.addEventListener('click', () => { this.activeTab = tab; this.selectedEntityId = null; this.search = ''; this.render(); });
     }
 
+    if (this.activeTab === 'health') {
+      this.renderHealthTab();
+      return;
+    }
     if (this.activeTab === 'batch') {
       this.renderBatch();
       return;
@@ -157,6 +175,12 @@ export class CommandCenterView extends ReadingView {
       actions.createEl('button', { cls: 'mod-cta', text: 'Add food' }).addEventListener('click', () => {
         openFoodEditor(this.app, { plugin: this.plugin, onStaged: async () => this.refresh() });
       });
+    } else if (this.activeTab === 'health') {
+      const button = actions.createEl('button', { cls: 'mod-cta', text: `Add ${this.healthKind}` });
+      button.disabled = !catalog?.health?.available;
+      button.addEventListener('click', () => openHealthEditor(this.app, {
+        plugin: this.plugin, kind: this.healthKind, onStaged: async () => this.refresh(),
+      }));
     } else if (this.activeTab === 'valuation') {
       actions.createEl('button', { cls: 'mod-cta', text: 'Stage valuation rates' }).addEventListener('click', () => {
         new ValuationRateStageModal(this.app, this.plugin, async () => this.refresh()).open();
@@ -167,6 +191,78 @@ export class CommandCenterView extends ReadingView {
         openEntityEditor(this.app, { plugin: this.plugin, catalog, kind, onStaged: async () => this.refresh() });
       });
     }
+  }
+
+  private renderHealthTab(): void {
+    const health = this.catalog?.health;
+    if (!health?.available) {
+      this.contentEl.createDiv({ cls: 'examined-human-daily-empty-inline', text: 'Enable health catalogs in Settings → Examined Human → General → Tools and maintenance → Medical database migration. Other Command Center libraries remain available.' });
+      return;
+    }
+    const categories = this.contentEl.createDiv({ cls: 'examined-human-command-tabs examined-human-health-catalog-tabs', attr: { 'aria-label': 'Health catalogs' } });
+    for (const kind of Object.keys(HEALTH_CATALOG_LABELS) as HealthCatalogKind[]) {
+      const button = categories.createEl('button', {
+        text: `${HEALTH_CATALOG_LABELS[kind]} (${health.entries[kind].length})`,
+        cls: this.healthKind === kind ? 'is-selected' : '', attr: { 'aria-pressed': String(this.healthKind === kind) },
+      });
+      button.addEventListener('click', () => { void this.showHealthCatalog(kind); });
+    }
+    const entries = health.entries[this.healthKind];
+    if (!entries.some(entry => entry.id === this.selectedEntityId)) this.selectedEntityId = entries[0]?.id ?? null;
+    const layout = this.contentEl.createDiv({ cls: 'examined-human-command-layout' });
+    const sidebar = layout.createEl('aside', {
+      cls: 'examined-human-command-sidebar', attr: { 'aria-label': `${HEALTH_CATALOG_LABELS[this.healthKind]} library` },
+    });
+    const search = sidebar.createEl('input', {
+      type: 'search', value: this.search, cls: 'examined-human-engagement-search',
+      attr: { placeholder: 'Search names, aliases, or units…', 'aria-label': 'Search health catalog' },
+    });
+    const list = sidebar.createDiv({ cls: 'examined-human-command-food-list' });
+    const drawList = (): void => {
+      list.empty();
+      const needle = this.search.trim().toLocaleLowerCase();
+      const filtered = entries.filter(entry => [entry.name, entry.unit, entry.valueType, ...entry.aliases]
+        .some(value => value.toLocaleLowerCase().includes(needle)));
+      if (!filtered.length) list.createDiv({ cls: 'examined-human-daily-empty-inline', text: 'No matching catalog records. Use Add to stage a new record.' });
+      for (const entry of filtered) {
+        const button = list.createEl('button', { cls: `examined-human-command-food-item${entry.id === this.selectedEntityId ? ' is-selected' : ''}` });
+        button.createEl('strong', { cls: 'examined-human-command-item-name', text: entry.name });
+        button.createSpan({ cls: 'examined-human-command-item-meta', text: [entry.valueType, entry.unit, `${entry.aliases.length} aliases`].filter(Boolean).join(' · ') });
+        button.addEventListener('click', () => { this.selectedEntityId = entry.id; this.render(); });
+      }
+    };
+    search.addEventListener('input', () => { this.search = search.value; drawList(); });
+    drawList();
+    const main = layout.createEl('main', { cls: 'examined-human-command-main' });
+    const selected = entries.find(entry => entry.id === this.selectedEntityId);
+    if (!selected) {
+      main.createDiv({ cls: 'examined-human-daily-empty-inline', text: `No canonical ${HEALTH_CATALOG_LABELS[this.healthKind].toLowerCase()} yet. Stage the first record with Add ${this.healthKind}.` });
+      return;
+    }
+    this.renderHealthDetails(main, selected);
+  }
+
+  private renderHealthDetails(container: HTMLElement, entry: HealthCatalogEntry): void {
+    const title = container.createDiv({ cls: 'examined-human-command-food-title' });
+    title.createEl('h3', { text: entry.name });
+    const actions = title.createDiv({ cls: 'examined-human-command-food-actions' });
+    actions.createEl('button', { text: 'Edit and stage' }).addEventListener('click', () => openHealthEditor(this.app, {
+      plugin: this.plugin, kind: this.healthKind, entry, onStaged: async () => this.refresh(),
+    }));
+    const details = container.createEl('section', { cls: 'examined-human-daily-panel' });
+    details.createEl('h4', { text: 'Canonical details' });
+    const grid = details.createDiv({ cls: 'examined-human-daily-completeness-grid' });
+    const facts: Array<[string, string]> = [['Record ID', String(entry.id)], ['Name', entry.name]];
+    if (this.healthKind === 'measurement') facts.push(['Value type', entry.valueType]);
+    if (this.healthKind === 'measurement' || this.healthKind === 'medication') facts.push(['Unit', entry.unit || 'Not applicable']);
+    for (const [label, value] of facts) {
+      const card = grid.createDiv({ cls: 'examined-human-daily-mini-stat' });
+      card.createSpan({ text: label }); card.createEl('strong', { text: value });
+    }
+    const aliases = container.createEl('section', { cls: 'examined-human-daily-panel' });
+    aliases.createEl('h4', { text: 'Aliases' });
+    aliases.createDiv({ cls: 'examined-human-command-aliases', text: entry.aliases.join(', ') || 'No aliases. Add or remove aliases using Edit and stage.' });
+    container.createEl('p', { cls: 'examined-human-daily-validation-note', text: 'Catalog changes are staged in Admin Events and applied by a confirmed Daily import. Previously imported observation and dose unit snapshots are preserved.' });
   }
 
   private renderEntityTab(): void {

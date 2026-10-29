@@ -1,6 +1,8 @@
 import medicalUpgradeSql from '../../migrations/006_add_medical_forms_schema_v1.sql';
+import singleOwnerSql from '../../migrations/007_remove_people.sql';
+import { hasTableColumns } from '../read-models/sql.ts';
 import { inspectMedicalForm, writeMedicalForm, writeHealthCatalog, type MedicalInput, type CatalogInput } from './medical.ts';
-import { hasMedicalSchema, assertMedicalSchema } from '../read-models/medical.ts';
+import { hasMedicalSchema, hasMedicalFoundation, assertMedicalSchema } from '../read-models/medical.ts';
 import { assertSchemaV1 } from './database-utils.ts';
 import { App, normalizePath, TFile, TFolder } from 'obsidian';
 import type { Database } from 'sql.js';
@@ -255,7 +257,8 @@ export class LoggerService {
     return this.enqueue(() => this.mutateDatabase(databasePath, 'medical-upgrade', db => {
       assertSchemaV1(db);
       if (hasMedicalSchema(db)) throw new Error('Medical Form tables are already enabled.');
-      db.run(medicalUpgradeSql);
+      if (!hasMedicalFoundation(db)) db.run(medicalUpgradeSql);
+      if (hasTableColumns(db, 'reports', ['person_id'])) db.run(singleOwnerSql);
       assertMedicalSchema(db);
     }, 'durable', true, expectedDatabaseChecksum));
   }

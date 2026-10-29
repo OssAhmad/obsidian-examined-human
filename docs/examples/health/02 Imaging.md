@@ -11,7 +11,6 @@ report: EH example imaging report
 performed: 2026-10-19 to 2026-10-20
 reported: 2026-10-21
 source:
-person: EH example person
 report id:
 
 ##### Measurements

@@ -2961,7 +2961,14 @@
   font-size: var(--font-ui-small);
   white-space: normal;
 }
-.eh-navigation-icon { display: flex; flex-shrink: 0; color: var(--eh-dashboard-color); }
+.eh-navigation-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 22px;
+  color: var(--eh-dashboard-color);
+}
 .eh-navigation-icon svg { width: 18px; height: 18px; }
 .eh-navigation-label { overflow-wrap: anywhere; }
 .eh-navigation-row .eh-navigation-new-tab {
@@ -3013,4 +3020,67 @@
 @media (max-width: 600px) {
   .examined-human-medical-layout { grid-template-columns: minmax(0, 1fr); }
   .examined-human-medical-sidebar { position: static; grid-row: 1; max-height: 220px; border-inline-start: 0; padding-inline-start: 0; }
+}
+/* Keep notices and catalog editors readable on desktop and touch screens. */
+.modal.examined-human-release-notes-modal,
+.modal.examined-human-health-command-modal {
+  display: flex;
+  flex-direction: column;
+  width: min(640px, calc(100vw - 32px));
+  max-width: calc(100vw - 32px);
+  max-height: calc(100vh - 48px);
+  max-height: calc(100dvh - 48px);
+  padding: 24px;
+  box-sizing: border-box;
+}
+.examined-human-release-notes-modal .modal-content,
+.examined-human-health-command-modal .modal-content {
+  min-height: 0;
+  overflow-y: auto;
+  overflow-wrap: anywhere;
+  min-width: 0;
+  line-height: 1.55;
+}
+.examined-human-release-notes-modal h2 { margin-top: 0; }
+.examined-human-release-notes-modal li + li { margin-top: 10px; }
+.examined-human-release-notes-modal .examined-human-modal-actions,
+.examined-human-health-command-modal .examined-human-modal-actions {
+  position: sticky;
+  bottom: 0;
+  background: var(--background-primary);
+  padding-top: 12px;
+  margin-top: 16px;
+}
+.examined-human-health-command-modal textarea {
+  width: 100%;
+  min-height: 80px;
+  height: 96px;
+  max-height: 180px;
+  resize: vertical;
+}
+.examined-human-health-catalog-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+.examined-human-health-catalog-tabs [aria-pressed="true"] {
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+}
+@media (max-width: 600px) {
+  .modal.examined-human-release-notes-modal,
+  .modal.examined-human-health-command-modal {
+    padding: 18px 16px;
+    max-height: calc(100vh - 32px);
+    max-height: calc(100dvh - 32px);
+  }
+  .examined-human-health-command-modal .setting-item {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+  }
+  .examined-human-health-command-modal .setting-item-control { width: 100%; }
+  .examined-human-health-command-modal input,
+  .examined-human-health-command-modal select { width: 100%; min-width: 0; }
 }

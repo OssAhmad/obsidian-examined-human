@@ -11,7 +11,6 @@ test('five unimported review notes can populate both dashboards through the norm
   const db = createSchemaV1Database();
   try {
     for (const entry of [
-      { kind: 'person', name: 'EH example person' },
       { kind: 'measurement', name: 'EH example glucose', unit: 'mg/dL', valueType: 'number' },
       { kind: 'measurement', name: 'EH example urine result', valueType: 'qualitative' },
       { kind: 'measurement', name: 'EH example imaging impression', valueType: 'text' },

@@ -5,18 +5,19 @@ EH form: <% "unimported" %>
 # Examined Human Medical Form
 
 > [!info] Importing this form
-> Run **Settings → Examined Human → General → Tools and maintenance → Medical database migration** once for an existing database. Define its person, canonical measurements (with units and value types), procedures, and aliases through **Manage health catalogs**. Then run **Import or reimport Medical Form from Active File**, review the entries, and confirm. Reimport replaces only this report's entries after acknowledgement and a backup. The source note is retained. See the [README](../README.md#health-records).
+> Run **Settings → Examined Human → General → Tools and maintenance → Medical database migration** once for an existing database. In **Command Center → Health**, inspect existing measurements and procedures or stage new definitions (including units, value types, and aliases) into an unimported Daily Form. Import and confirm that Daily Form to apply the definitions. Then run **Import or reimport Medical Form from Active File**, review the entries, and confirm. Reimport replaces only this report's entries after acknowledgement and a backup. The source note is retained. See the [README](../README.md#health-records).
 
 Use one Medical Form for one source report: a laboratory report with many results, a consultation record, an imaging report, or a hospital discharge summary. A discharge summary containing several days of activity is still one report. Do not assemble a whole medical episode into one continuously updated form, and do not create a separate form for each result. Daily medication intakes and everyday symptoms belong in the Daily Form.
 
-The header describes the report once. Each measurement or procedure then needs only its compact row. Keep the original report, including any narrative that is not extracted into rows, at the referenced vault path. Keep each entry on one physical line; encode a literal pipe as `\|`, a line break inside a field as `\n`, and a literal backslash as `\\`. All fields are required; use `none` in notes when no extra context is needed.
+Each vault represents one owner: no person field or People catalog is required. This report does not require a Daily Form, session, or engagement on its performed/reported date. Catalog changes do require their own confirmed Daily import first; Medical Forms do not execute Admin Events. The same note may contain another kind of form, but importing its Daily Form does not import this Medical Form. Open Medical in the EH sidebar to browse imported reports and Daily medical logs; select a record to show it in place, or use the sidebar's ↗ button to open another dashboard tab. Medical import always retains this source form, independent of Daily/Weekly/Budget cleanup settings.
+
+The header describes the report once. Each measurement or procedure then needs only its compact row. Keep the original report, including any narrative that is not extracted into rows, at the referenced vault path. Keep each entry on one physical line; encode a literal pipe as `\|`, a line break inside a field as `\n`, and a literal backslash as `\\`. All row fields are required; use `none` in notes when no extra context is needed.
 
 #### EH Medical Form
 report:
 performed:
 reported:
 source:
-person:
 report id:
 
 HEADER DEFINITIONS:
@@ -24,8 +25,7 @@ HEADER DEFINITIONS:
 - `report`: a descriptive title, such as `October blood tests`, `Abdominal ultrasound`, or `Hospital discharge summary`.
 - `performed`: when the sample was collected, examination occurred, or reported treatment took place. Use `YYYY-MM-DD`, add `HH:mm` when known, or use `YYYY-MM-DD to YYYY-MM-DD` when the report covers several days. Leave it blank when unknown; do not substitute the report's issue date.
 - `reported`: when the report was issued or the clinician documented the findings. Use `YYYY-MM-DD`, adding `HH:mm` when known. This is distinct from when you received or entered the report. Leave it blank when unknown.
-- `person`: a canonical person name from **Manage health catalogs**. It may stay blank only when the database has exactly one person; otherwise it is required.
-- `report id`: leave blank for an initial import. Reimport normally finds the report by its source note path. If the note moves, copy its imported report ID from **Medical Dashboard** into this field to preserve its identity. Reimport cannot change the person.
+- `report id`: leave blank for an initial import. Reimport normally finds the report by its source note path. If the note moves, copy its imported report ID from **Medical Dashboard** into this field to preserve its identity.
 - `source`: the vault-relative path to the original report or consultation note. Add a page or location in row notes when useful. If the source has not been attached, leave this blank rather than inventing a path.
 
 For a complex report, include each known result or procedure date in its row's notes. The general header must not silently assign the discharge date to earlier measurements. Unknown dates remain unknown.
@@ -35,7 +35,7 @@ For a complex report, include each known result or procedure date in its row's n
 FORMAT:
 `measurement | value | notes`
 
-The measurement is a canonical catalog name or an alias for exactly that measurement. **Manage health catalogs** defines its value type (`number`, `qualitative`, or `text`) and unit where applicable. Numeric measurements require a unit; qualitative and text measurements have no numeric unit. Unknown or ambiguous names block import.
+The measurement is a canonical catalog name or an alias for exactly that measurement. **Command Center → Health** defines its value type (`number`, `qualitative`, or `text`) and unit where applicable. Numeric measurements require a unit; qualitative and text measurements have no numeric unit. Unknown or ambiguous names block import.
 
 The value can be a number, a number with a comparison operator such as `<0.01`, a qualitative result such as `no`, `negative`, `trace`, or `indeterminate`, or written text such as a clinician's assessment or imaging impression. The accepted values depend on the particular measurement. Do not convert a qualitative result into a numeric zero or convert an unperformed test into a negative result.
 

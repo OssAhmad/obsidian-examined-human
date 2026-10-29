@@ -8,7 +8,7 @@ EH form: <% "unimported" %>
 > Create the note through Templater so `EH form` becomes `unimported`. The date must be an ISO date (`YYYY-MM-DD`); the default below expects the note title to be that date. Keep the `#### EH Daily Form`, section headings, `ENTRIES:` markers, and final `#### END` unchanged. Daily Assessment can review today or a past day and import it after confirmation. A future form can be reviewed but not imported until its date arrives. If source cleanup is enabled in Settings, a successful import removes only this bounded form block and preserves the rest of the note.
 
 > [!info] Medication and Symptoms
-> These sections are included in full Daily import and reimport. Existing databases need **Settings → Examined Human → General → Tools and maintenance → Medical database migration** first. Define canonical medications with dose units, symptoms, and aliases through **Manage health catalogs**. Blank means unrecorded; standalone `none` means explicitly none. See the [README](../README.md#health-records).
+> These sections are included in full Daily import and reimport. Existing databases need **Settings → Examined Human → General → Tools and maintenance → Medical database migration** first, even when the Medical sections are empty. New databases are ready. Use **Command Center → Health** to inspect the selected database's records and stage medication/symptom creation or edits into this form's Admin Events; the full Daily import applies them before resolving the health rows. Staging does not itself change the database. One vault represents one owner; there is no People setup. Blank means unrecorded; standalone `none` means explicitly none. See the [README Health guide](../README.md#health-records).
 
 #### EH Daily Form
 date: <% tp.file.title %>
@@ -94,7 +94,7 @@ ENTRIES:
 FORMAT:
 `time (hh:mm) | medication | amount | notes`
 
-Record doses actually taken, one row per intake. All four fields are required. Use a 24-hour `HH:mm` time and the medication's canonical name or an alias. Each medication must have a canonical record in the `medications` table, with a required dose unit, such as `tablet`, `mL`, or `mg`. Aliases point to that same record. Its identity also distinguishes the product's strength and formulation. Product strength is distinct from the amount taken. The example below assumes `Example medicine 10 mg tablet` has a dose unit of `tablet`; an amount of `1` means one tablet, not one mg. Use **Manage health catalogs** to define medications and aliases before importing.
+Record doses actually taken, one row per intake. All four fields are required, and the amount must be positive. Use a 24-hour `HH:mm` time and the medication's canonical name or an alias. Each medication needs a catalog definition with a required dose unit, such as `tablet`, `mL`, or `mg`. Aliases point to that same record. Its identity also distinguishes the product's strength and formulation. Product strength is distinct from the amount taken. The example below assumes `Example medicine 10 mg tablet` has a dose unit of `tablet`; an amount of `1` means one tablet, not one mg. Use **Command Center → Health** to stage medications and aliases; a definition in this form's Admin Events can be used by its Medication rows in the same full Daily import.
 
 EXAMPLE (illustrative only; do not copy below `ENTRIES:` unless it is real):
 `08:30 | Example medicine 10 mg tablet | 1 | Taken with breakfast; oral.`
@@ -113,7 +113,7 @@ ENTRIES:
 FORMAT:
 `time (hh:mm) | symptom | notes`
 
-All three fields are required. Use a 24-hour `HH:mm` time and a canonical symptom name or alias. The symptom catalog keeps equivalent names together; use **Manage health catalogs** to define symptoms and aliases before importing. Preserve the person's own description in notes, including onset, duration, severity, interference with activities, or context when known. There is no separate severity field. Do not guess a time or infer a symptom from an unrelated observation.
+All three fields are required. Use a 24-hour `HH:mm` time and a canonical symptom name or alias. The symptom catalog keeps equivalent names together; use **Command Center → Health** to stage symptoms and aliases, including definitions used in this same form. Preserve your own description in notes, including onset, duration, severity, interference with activities, or context when known. There is no separate severity field. Do not guess a time or infer a symptom from an unrelated observation.
 
 EXAMPLES (do not copy these below `ENTRIES:` unless they are real):
 `10:30 | Headache | Started while working; distracting, but I continued.`
@@ -201,6 +201,19 @@ notes:
 ##### Admin Events
 
 The Command Center is the easiest way to create these rows. Use the formats below for review, manual entry, or bulk staging. Canonical names and aliases are case-insensitive. Fields are pipe-separated; keep empty optional fields between their pipes. Alias lists use `[alias one, alias two]`. During full Daily validation these commands are staged in a disposable database first, so a newly created food, engagement, account, exercise, type, or alias can be used elsewhere in this same form. Nothing reaches the real database until you confirm a successful import.
+
+HEALTH COMMANDS:
+
+- `MEASUREMENT_CREATE | name | value_type | unit | [aliases]`
+- `MEASUREMENT_UPDATE | measurement | new_name | value_type | unit | [aliases]`
+- `MEDICATION_CREATE | name | dose_unit | [aliases]`
+- `MEDICATION_UPDATE | medication | new_name | dose_unit | [aliases]`
+- `SYMPTOM_CREATE | name | [aliases]`
+- `SYMPTOM_UPDATE | symptom | new_name | [aliases]`
+- `PROCEDURE_CREATE | name | [aliases]`
+- `PROCEDURE_UPDATE | procedure | new_name | [aliases]`
+
+Use **Command Center → Health** to inspect the existing records and stage these commands. Measurement value types are `number`, `qualitative`, and `text`. Numeric measurements and medications require a unit; qualitative/text measurement units must be blank. Keep the empty unit field between pipes. Symptoms and procedures need only a name. Aliases are optional; an UPDATE replaces the whole alias list (an empty list clears it). Names and aliases must identify one record uniquely. Imported observation and dose unit snapshots remain unchanged. These commands run before health rows are resolved, so a medication or symptom created here can be used in this same Daily Form. Import this Daily Form before importing a separate Medical Form that uses its new catalog records. A vault represents one owner; no owner field is needed.
 
 ENGAGEMENT COMMANDS:
 

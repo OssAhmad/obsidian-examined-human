@@ -62,7 +62,7 @@ export class MedicalDashboardView extends ReadingView {
         main.createEl('p', { text: 'No imported medical records yet. Import a Medical Form or a Daily Form with Medical entries to begin.' });
       } else {
         main.createEl('h3', { text: item.title });
-        main.createEl('p', { cls: 'examined-human-medical-meta', text: `${item.date || 'Unknown date'}${item.person ? ` · ${item.person}` : ''}` });
+        main.createEl('p', { cls: 'examined-human-medical-meta', text: item.date || 'Unknown date' });
         main.createEl('button', { text: 'Open source note', cls: 'examined-human-toolbar-button' }).addEventListener('click', () => {
           void this.app.workspace.openLinkText(item.sourcePath, '');
         });

@@ -27,7 +27,7 @@ function fixture(items, overrides={}) {
   const view=new MedicalDashboardView({app},plugin);
   return {view,listeners,opened};
 }
-function report(id,date='2026-10-21') {return {key:`report:${id}`,kind:'report',reportId:id,date,title:`Report ${id}`,sourcePath:`Medical/${id}.md`,person:'Example'};}
+function report(id,date='2026-10-21') {return {key:`report:${id}`,kind:'report',reportId:id,date,title:`Report ${id}`,sourcePath:`Medical/${id}.md`};}
 function selected(view){return view.contentEl.all().find(el=>el.className==='examined-human-medical-report');}
 
 test('Medical Dashboard navigates reports on the right and renders selected entries inline in imported order',async()=>{
@@ -44,7 +44,7 @@ test('Medical Dashboard navigates reports on the right and renders selected entr
   assert.deepEqual(opened,['Medical/1.md']);await view.onClose();
 });
 test('Daily medical logs preserve none versus unrecorded; background changes retain the selected rendered report',async()=>{
-  const day={key:'daily:2026-10-25',kind:'daily',reportId:null,date:'2026-10-25',title:'Daily medical log',sourcePath:'Journal/2026-10-25.md',person:null};
+  const day={key:'daily:2026-10-25',kind:'daily',reportId:null,date:'2026-10-25',title:'Daily medical log',sourcePath:'Journal/2026-10-25.md'};
   const {view,listeners}=fixture([day]);await view.onOpen();
   assert.match(selected(view).text(),/Recording state: none/);assert.match(selected(view).text(),/Recording state: unrecorded/);
   const original=selected(view);for(const listener of listeners)listener('Updated data available');
@@ -58,9 +58,8 @@ test('empty and unmigrated databases show actionable dashboard states',async()=>
 });
 test('medical report pages retain all reports and are bounded with deterministic pagination',()=>{
   const db=createSchemaV1Database();try{
-    db.run("INSERT INTO people(name) VALUES ('Example')");
     for(let i=1;i<=55;i++){
-      db.run("INSERT INTO reports(id,person_id,report_timestamp,report_type,title,relative_path) VALUES (?,1,'2026-10-20','medical',?,'')",[i,`Report ${i}`]);
+      db.run("INSERT INTO reports(id,report_timestamp,report_type,title,relative_path) VALUES (?,'2026-10-20','medical',?,'')",[i,`Report ${i}`]);
       db.run("INSERT INTO medical_report_imports(report_id,source_file_path,source_checksum,measurements_state,procedures_state,plugin_version) VALUES (?,?,'test','unrecorded','none','test')",[i,`Medical/${i}.md`]);
     }
     const a=queryMedicalDashboardPage(db,0),b=queryMedicalDashboardPage(db,1);

@@ -27,7 +27,6 @@ export function writeHealthCatalog(db: Database, input: CatalogInput): number {
       throw new Error(`The name or alias already belongs to ${row.name}.`);
     }
   }
-  if (input.kind === 'person' && input.aliases.length) throw new Error('Person aliases are not supported.');
   if (input.kind === 'measurement' && !['number', 'qualitative', 'text'].includes(input.valueType)) throw new Error('Select a valid measurement value type.');
   if ((input.kind === 'medication' || (input.kind === 'measurement' && input.valueType === 'number')) && !unit) throw new Error('A canonical unit is required.');
   if (input.kind === 'measurement' && input.valueType !== 'number' && unit) throw new Error('Qualitative and text measurements have no numeric unit.');
@@ -46,7 +45,7 @@ export function writeHealthCatalog(db: Database, input: CatalogInput): number {
 }
 export function resolveHealth(db: Database, kind: HealthCatalogKind, raw: string) {
   const matches = queryHealthCatalog(db, kind).filter(r => [r.name, ...r.aliases].some(n => n.toLowerCase() === raw.trim().toLowerCase()));
-  if (matches.length !== 1) throw new Error(`${matches.length ? 'Ambiguous' : 'Unknown'} ${kind}: ${raw}. Use Manage health catalogs to define its canonical name and unit/type first.`);
+  if (matches.length !== 1) throw new Error(`${matches.length ? 'Ambiguous' : 'Unknown'} ${kind}: ${raw}. Use Command Center → Health to stage its canonical name and unit/type in a Daily Form, then import that form.`);
   return matches[0];
 }
 
@@ -97,7 +96,7 @@ export function inspectMedicalForm(db: Database, input: MedicalInput) {
   if (headings.some(n => !['measurements', 'procedures'].includes(n)) || new Set(headings).size !== headings.length) throw new Error('Medical Forms accept one Measurements and one Procedures section; unknown or duplicate sections must be corrected.');
   const sections = formSections(body);
   const header = body.split(/^##### /m)[0];
-  for (const field of ['report', 'person', 'report id', 'performed', 'reported', 'source']) {
+  for (const field of ['report', 'report id', 'performed', 'reported', 'source']) {
     if ((header.match(new RegExp(`^${field}:`, 'gmi')) ?? []).length > 1) throw new Error(`Duplicate medical header field: ${field}`);
   }
   const title = labeledValue(header, 'report');
@@ -107,16 +106,11 @@ export function inspectMedicalForm(db: Database, input: MedicalInput) {
   if (performed && reported && reported.slice(0, 10) < performed.split(' to ')[0].slice(0, 10)) throw new Error('Report issue date cannot precede the first performed date.');
   const source = labeledValue(header, 'source');
   if (source) normalizeVaultDatabasePath(source);
-  const people = queryHealthCatalog(db, 'person');
-  const personName = labeledValue(header, 'person');
-  const person = personName ? resolveHealth(db, 'person', personName) : people.length === 1 ? people[0] : null;
-  if (!person) throw new Error('Add a person using Manage health catalogs. When several people exist, add person: canonical name to the form header.');
   const rawId = labeledValue(header, 'report id');
   if (rawId && (!/^\d+$/.test(rawId) || !Number.isSafeInteger(Number(rawId)) || Number(rawId) < 1)) throw new Error('report id must be a positive imported report ID.');
-  const previous = queryRows(db, `SELECT i.*, r.person_id FROM medical_report_imports i JOIN reports r ON r.id=i.report_id
+  const previous = queryRows(db, `SELECT i.* FROM medical_report_imports i
     WHERE ${rawId ? 'i.report_id=?' : 'i.source_file_path=?'}`, [rawId ? Number(rawId) : input.filePath])[0];
   if (rawId && !previous) throw new Error('report id does not identify a report imported by this plugin.');
-  if (previous && Number(previous.person_id) !== person.id) throw new Error('Reimport cannot change the person of an existing medical report.');
   const other = queryRows(db, `SELECT report_id FROM medical_report_imports WHERE source_file_path=?`, [input.filePath])[0];
   if (other && Number(other.report_id) !== Number(previous?.report_id)) throw new Error('This source note already belongs to a different report.');
   if (source) {
@@ -137,7 +131,7 @@ export function inspectMedicalForm(db: Database, input: MedicalInput) {
     const [name, notes] = healthFields(line, 2); const procedure = resolveHealth(db, 'procedure', name);
     return { procedureId: procedure.id, name: procedure.name, notes, ordinal };
   });
-  return { title, performed, reported, source, person, measurements, procedures,
+  return { title, performed, reported, source, measurements, procedures,
     measurementState: measurementSection.state, procedureState: procedureSection.state,
     reportId: previous ? Number(previous.report_id) : null,
     previousMeasurements: previous ? Number(queryRows(db, 'SELECT COUNT(*) AS n FROM measurements WHERE report_id=?', [previous.report_id])[0].n) : 0,
@@ -156,7 +150,7 @@ export function writeMedicalForm(db: Database, input: MedicalInput) {
       db.run('DELETE FROM report_procedures WHERE report_id=?', [id]);
       db.run('UPDATE reports SET title=?, report_timestamp=?, relative_path=? WHERE id=?', [p.title, p.reported ?? p.performed ?? '', p.source ?? input.filePath, id]);
     } else {
-      db.run('INSERT INTO reports (person_id,report_timestamp,report_type,title,relative_path) VALUES (?,?,?,?,?)', [p.person.id, p.reported ?? p.performed ?? '', 'medical', p.title, p.source ?? input.filePath]);
+      db.run('INSERT INTO reports (report_timestamp,report_type,title,relative_path) VALUES (?,?,?,?)', [p.reported ?? p.performed ?? '', 'medical', p.title, p.source ?? input.filePath]);
       id = lastInsertId(db);
     }
     for (const m of p.measurements) db.run(`INSERT INTO measurements

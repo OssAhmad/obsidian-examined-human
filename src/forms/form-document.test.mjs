@@ -89,3 +89,24 @@ test('repository EH Form templates retain the current public grammar', async () 
     }
   }
 });
+
+test('README and both Daily templates document every supported health command without owner fields', async () => {
+  const commands = ['MEASUREMENT_CREATE', 'MEASUREMENT_UPDATE', 'MEDICATION_CREATE', 'MEDICATION_UPDATE',
+    'SYMPTOM_CREATE', 'SYMPTOM_UPDATE', 'PROCEDURE_CREATE', 'PROCEDURE_UPDATE'];
+  for (const path of ['README.md', 'EH Forms/the daily form with explanations.md', 'EH Forms/the minimal daily form.md']) {
+    const text = await readFile(new URL(`../../${path}`, import.meta.url), 'utf8');
+    for (const command of commands) assert.ok(text.includes(`${command} |`), `${path}: ${command}`);
+    assert.doesNotMatch(text, /^person:/mi, path);
+  }
+});
+
+test('minimal health templates contain formats and empty entry areas, not examples or explanatory callouts', async () => {
+  for (const [kind, fileName] of [['daily', 'the minimal daily form.md'], ['medical', 'the minimal medical form.md']]) {
+    const text = await readFile(new URL(`../../EH Forms/${fileName}`, import.meta.url), 'utf8');
+    assert.doesNotMatch(text, /> \[!info\]|EXAMPLES?\s*\(|^Use a canonical|^person:/mi, fileName);
+    const form = requireEhForm(text, kind);
+    for (const content of form.body.split(/^#{5,6} .+$/m)) {
+      if (findEntriesMarker(content)) assert.deepEqual(entryLines(content), [], fileName);
+    }
+  }
+});

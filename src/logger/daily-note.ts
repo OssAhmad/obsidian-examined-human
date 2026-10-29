@@ -425,7 +425,6 @@ function parseDaily(db: Database, sourceText: string, noteDate: string, threshol
   const formBody = dailyFormBody(sourceText, noteDate);
   const sections = sectionsFromForm(sourceText, noteDate);
   const metrics = metricMap(sections.get('daily metrics'), errors);
-  const health = inspectDailyHealth(db, dailyFormBody(sourceText, noteDate));
   const sessions: ParsedSession[] = entries(sections.get('sessions')).map((line, index) => {
     const fields = parseSessionRowFields(line);
     if (!fields) errors.push(`Invalid session row '${line}'; expected ${SESSION_ROW_FORMAT}.`);
@@ -476,7 +475,7 @@ function parseDaily(db: Database, sourceText: string, noteDate: string, threshol
     return { command: parts[0] ?? '', args: parts.slice(1), raw: line };
   });
   return {
-    health, metrics, sessions, transactions, exercises, milestones, valuationRates,
+    metrics, sessions, transactions, exercises, milestones, valuationRates,
     stoicism: { score, notes }, adminEvents,
     mealInspection: inspectMeals(db, formBody, thresholds),
   };
@@ -802,6 +801,13 @@ function prepareDaily(db: Database, input: DailyNoteInput): PreparedDailyNote {
     }
   }
   if (errors.length === 0) applyAdminEvents(db, parsed.adminEvents, input.noteDate, errors);
+  if (errors.length === 0) {
+    try {
+      parsed.health = inspectDailyHealth(db, dailyFormBody(input.sourceText, input.noteDate));
+    } catch (error) {
+      errors.push(error instanceof Error ? error.message : String(error));
+    }
+  }
   if (errors.length === 0) {
     parsed.mealInspection = inspectMeals(db, dailyFormBody(input.sourceText, input.noteDate), input.nutritionThresholds);
     errors.push(...parsed.mealInspection.errors);

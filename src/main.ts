@@ -1,6 +1,6 @@
 import { MedicalDashboardView, MEDICAL_DASHBOARD_VIEW_TYPE } from './MedicalDashboardView.ts';
 import { ReleaseNotesModal, RELEASE_NOTES_ID } from './ReleaseNotesModal.ts';
-import { importMedicalActiveFile, openHealthCatalog } from './MedicalForms.ts';
+import { importMedicalActiveFile } from './MedicalForms.ts';
 import { addIcon, moment, Notice, Platform, Plugin, TFile, type WorkspaceLeaf } from 'obsidian';
 import { ExaminedHumanDatabase } from './examined-human-database.ts';
 import { DailyAssessmentView, EXAMINED_HUMAN_DAILY_ASSESSMENT_VIEW_TYPE } from './DailyAssessmentView.ts';
@@ -97,7 +97,7 @@ export default class ExaminedHumanPlugin extends Plugin {
     this.registerView(MEDICAL_DASHBOARD_VIEW_TYPE, leaf => new MedicalDashboardView(leaf, this));
     this.registerView(DASHBOARD_SIDEBAR_VIEW_TYPE, leaf => new DashboardSidebarView(leaf, this));
     this.addCommand({ id: 'import-medical-form-from-active-file', name: 'Import or reimport Medical Form from Active File', callback: () => { void importMedicalActiveFile(this); } });
-    this.addCommand({ id: 'manage-health-catalogs', name: 'Manage health catalogs', callback: () => openHealthCatalog(this) });
+    this.addCommand({ id: 'manage-health-catalogs', name: 'Health catalogs', callback: () => { void this.activateHealthCatalogs(); } });
     this.addCommand({ id: 'open-medical-dashboard', name: 'Medical Dashboard', callback: () => { void this.activateMedicalDashboardView(); } });
     this.addRibbonIcon(STOA_ICON, 'Open Examined Human dashboards', () => { void this.activateDashboardSidebar(); });
     this.addCommand({
@@ -560,6 +560,12 @@ export default class ExaminedHumanPlugin extends Plugin {
 
   async activateCommandCenterView(): Promise<void> {
     await this.openDashboard(EXAMINED_HUMAN_COMMAND_CENTER_VIEW_TYPE, true);
+  }
+
+  async activateHealthCatalogs(): Promise<void> {
+    await this.activateCommandCenterView();
+    const leaf = this.app.workspace.getMostRecentLeaf();
+    if (leaf?.view instanceof CommandCenterView) await leaf.view.showHealthCatalog();
   }
 
   async activateEngagementDashboardView(): Promise<void> {
