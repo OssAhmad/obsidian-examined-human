@@ -9,7 +9,7 @@ Five fictional source notes are dated October 20, 21, 22, 24, and 25. Each conta
 ## Before importing
 
 1. Reload Examined Human in Wax Vault so the review build is running.
-2. Prefer a new disposable database such as `EH-medical-dashboard-review.db` in Settings → Examined Human → General. Remember your original path so you can switch back. New databases already include the medical tables. For an older database, use **Settings → Examined Human → General → Tools and maintenance → Medical database migration**. Migration is not a command-palette action.
+2. Prefer a new disposable database such as `EH-medical-dashboard-review.db` in Settings → Examined Human → General. Remember your original path so you can switch back. New databases already include the medical tables. For an older database, use **Settings → Examined Human → General → Tools and maintenance → Update to schema v1**. Migration is not a command-palette action.
 3. Use **Command Center → Health** to inspect and stage the records below into an unimported Daily Form, then import that Daily Form and confirm its preview. Staging alone does not change the database. They match the earlier example vocabulary; do not create duplicates if those exact canonical records already exist. Leave aliases blank. Only numeric measurements and medication need units. Use a separate setup Daily Form so the review notes retain their original Admin Events.
 
 | Catalog | Canonical name | Unit | Measurement value type |
@@ -25,8 +25,8 @@ Five fictional source notes are dated October 20, 21, 22, 24, and 25. Each conta
 
 1. Start with `2026-10-20.md`. Use **Import Daily Form from Active File**. Its two Admin Events create the fictional engagement and cash account used by the other notes. Review the source and confirmation before importing.
 2. In that same note run **Import or reimport Medical Form from Active File**. This is a separate import. Repeat both imports for October 21, 22, 24, and 25.
-3. Open **Medical Dashboard**. The imported-record list belongs on the right. Select a report and check that its table stays in the original row order; select a Daily medical log to see Medication and Symptoms. This build does not group measurements into laboratory categories.
-4. Open **Daily Assessment** and select the same dates. Check the Medical entries and their states, as well as the fictional transaction and valuation data from the nested Financial section.
+3. Open **Medical Dashboard**. Its left-hand list contains only imported EH Medical Forms. Select a report and check that its entries remain in original row order. Long names wrap and the list scrolls vertically only. Daily medication and symptoms are shown in Daily Assessment or Calendar Daily Logs.
+4. Open **Daily Assessment** and select the same dates, or click a date heading in Calendar to open its read-only Daily Log. Check Medical entries and their states, plus the nested Financial data. Calendar logs have no import controls; use Daily Assessment for imports.
 5. October 20 and 22 contain medication and symptoms. October 21 explicitly records `none` in both sections. October 24 leaves Medication blank, while October 25 leaves Symptoms blank. A blank must display as unrecorded, distinct from `none`.
 6. Medical reimport should replace only the selected report after acknowledgement. For Daily reimport of October 20, first remove its two already-executed Admin Events, leaving that section empty; the canonical engagement and account remain.
 

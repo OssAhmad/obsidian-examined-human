@@ -4,6 +4,8 @@ import financeFoundationSql from '../../migrations/002_add_finance_foundation_sc
 import valuationHistorySql from '../../migrations/003_add_valuation_history_schema_v1.sql';
 import mutableBudgetSql from '../../migrations/004_make_budget_plans_mutable_schema_v1.sql';
 import optionalSessionTypeSql from '../../migrations/005_make_session_type_optional_schema_v1.sql';
+import medicalUpgradeSql from '../../migrations/006_add_medical_forms_schema_v1.sql';
+import singleOwnerSql from '../../migrations/007_remove_people.sql';
 import {
   applyV5ToOfficialSchemaV1,
   previewSchemaV1Upgrade,
@@ -20,5 +22,7 @@ export function upgradeV5ToOfficialSchemaV1(db: Database): SchemaV1UpgradePrevie
     valuationHistorySql,
     mutableBudgetSql,
     optionalSessionTypeSql,
+    medicalUpgradeSql,
+    singleOwnerSql,
   );
 }

@@ -5,7 +5,7 @@ EH form: <% "unimported" %>
 # Examined Human Medical Form
 
 > [!info] Importing this form
-> Run **Settings → Examined Human → General → Tools and maintenance → Medical database migration** once for an existing database. In **Command Center → Health**, inspect existing measurements and procedures or stage new definitions (including units, value types, and aliases) into an unimported Daily Form. Import and confirm that Daily Form to apply the definitions. Then run **Import or reimport Medical Form from Active File**, review the entries, and confirm. Reimport replaces only this report's entries after acknowledgement and a backup. The source note is retained. See the [README](../README.md#health-records).
+> Run **Settings → Examined Human → General → Tools and maintenance → Update to schema v1** once for an existing database. In **Command Center → Health**, inspect existing measurements and procedures or stage new definitions (including units, value types, and aliases) into an unimported Daily Form. Import and confirm that Daily Form to apply the definitions. Then run **Import or reimport Medical Form from Active File**, review the entries, and confirm. Reimport replaces only this report's entries after acknowledgement and a backup. The source note is retained. See the [README](../README.md#health-records).
 
 Use one Medical Form for one source report: a laboratory report with many results, a consultation record, an imaging report, or a hospital discharge summary. A discharge summary containing several days of activity is still one report. Do not assemble a whole medical episode into one continuously updated form, and do not create a separate form for each result. Daily medication intakes and everyday symptoms belong in the Daily Form.
 

@@ -64,7 +64,7 @@ test('missing health schema leaves other Command Center libraries usable and off
     const { view, button } = fixture(db);
     await view.onOpen();
     await view.showHealthCatalog();
-    assert.match(view.contentEl.text(), /Settings.*Medical database migration/);
+    assert.match(view.contentEl.text(), /Settings.*Update to schema v1/);
     assert.equal(button('Add measurement').disabled, true);
     button('Foods (0)').trigger('click');
     assert.match(view.contentEl.text(), /No canonical foods yet/);

@@ -124,7 +124,7 @@ test('simple single-owner upgrade removes the obsolete owner table and report co
     db.run('DELETE FROM schema_migrations WHERE version=7; CREATE TABLE people(id INTEGER PRIMARY KEY, name TEXT NOT NULL); ALTER TABLE reports ADD COLUMN person_id INTEGER REFERENCES people(id);');
     assert.equal(hasMedicalSchema(db), false);
     const sql = await readFile(new URL('../../../migrations/007_remove_people.sql', import.meta.url), 'utf8');
-    runDatabaseTransaction(db, db => db.run(sql));
+    runDatabaseTransaction(db, db => db.run(sql), false);
     assert.equal(hasMedicalSchema(db), true);
     assert.deepEqual(queryRows(db, "SELECT name FROM sqlite_master WHERE name='people'"), []);
   } finally { db.close(); }

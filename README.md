@@ -134,7 +134,7 @@ Medical Forms are also available:
 
 All eight forms also have [Persian versions and a Persian usage guide](<EH Forms/fa/README.md>). Persian names, notes, explanations, and examples are supported. Parser keywords, section headings, command/type codes, weekday labels, and numeric date/time syntax remain unchanged; the Persian guide explains these boundaries. This translates the templates, not the plugin interface or its calendar system.
 
-The Daily templates group Medication and Symptoms under Medical, and Transactions and Valuation Rates under Financial. Existing databases need the confirmed **Settings → Examined Human → General → Tools and maintenance → Medical database migration** action before importing health entries. Read [Health records](#health-records) for catalog setup, Medical import/reimport, and the plain records dashboard.
+The Daily templates group Medication and Symptoms under Medical, and Transactions and Valuation Rates under Financial. Existing databases need the confirmed **Settings → Examined Human → General → Tools and maintenance → Update to schema v1** action before importing health entries. Read [Health records](#health-records) for catalog setup, Medical import/reimport, and the plain records dashboard.
 
 Start with the explained forms. Use the minimal forms after the entry formats feel familiar.
 
@@ -280,7 +280,7 @@ The Financial Dashboard uses the same pattern for opening balances and reconcili
 
 ## Health records
 
-Medical Forms and Daily Medication/Symptoms use the plugin's normal review-and-confirm import workflow. New databases are ready for them. For an older database or an earlier medical review build, open **Settings → Examined Human → General → Tools and maintenance → Medical database migration**, review the upgrade, and confirm. It creates a verified backup and enables the current health features, including removal of the old People setup. Loading an updated plugin does not upgrade your database automatically. Technical migration details are in [DEVELOPMENT.md](DEVELOPMENT.md#medical-schema-and-single-owner-upgrade).
+Medical Forms and Daily Medication/Symptoms use the plugin's normal review-and-confirm import workflow. New databases are ready for them. For an older database or an earlier medical review build, open **Settings → Examined Human → General → Tools and maintenance → Update to schema v1**, review the upgrade, and confirm. It creates a verified backup and enables the current health features, including removal of the old People setup. Loading an updated plugin does not upgrade your database automatically. Technical migration details are in [DEVELOPMENT.md](DEVELOPMENT.md#medical-schema-and-single-owner-upgrade).
 
 Each vault represents one owner; use separate vaults for different people's records. There is no People catalog or person field to set up.
 
@@ -344,7 +344,7 @@ The source note path identifies an imported report. To move the note, obtain its
 
 A Medical report does not require a Daily Form for its report date, a session, or an engagement. Its catalog definitions must already exist. Keep exactly one Medical Form per source note; that note may also contain a Daily, Weekly, or Budget Form, but each form has its own import action. Completing only the Daily import does not import the report. Medical source forms are always retained automatically.
 
-**Medical Dashboard** has an imported-record navigator on the right. Select a Medical report or a Daily medical log to see its entries in the main pane. Measurements, procedures, medication, and symptoms retain their imported order; there are no charts or laboratory-category groupings. The list is newest first and paginated at 50 entries. Selecting another record changes only the selected view. Refresh rebuilds the shared database boundary and preserves the selected record and scroll positions; background updates show a notice until you refresh.
+**Medical Dashboard** lists imported **EH Medical Forms only** in a left-hand navigator. Select a report to see its measurements and procedures in imported order. Long report names wrap; the navigator scrolls vertically only. There are no charts or laboratory-category groupings. The list is newest first and paginated at 50 reports. Daily medication and symptoms stay in Daily Assessment and the Calendar's Daily Log view. Refresh rebuilds the shared database boundary and preserves the selected report and scroll positions; background updates show a notice until you refresh.
 
 Four fictional [manual-import examples and catalog setup instructions](<docs/examples/health/00 Start here.md>) cover a laboratory report, an imaging report, a Daily Form with medication/symptoms, and a Daily Form with explicit `none`. Use a disposable database for those examples.
 
@@ -491,9 +491,11 @@ The calendar shows sessions on a horizontally scrollable sequence of days and a 
 
 Use it to answer: **When did I spend time, and what did I spend it on?**
 
+Click a date heading such as **SAT Oct 24** to open its **Daily Log** in a pop-up over the Calendar. It uses the same Daily Assessment report, including medication and symptoms, with no import, reimport, Meals import, or correction controls. The bottom note directs imports to Daily Assessment. Imported days show stored records; pending Daily Forms show their validated preview. The requested date is retained even outside the recent-note list. Closing the pop-up returns to the unchanged Calendar and its scroll position.
+
 ### Daily Assessment
 
-On wider desktop panes, the day timeline uses the Calendar's configured desktop day width, with the time chart, foods, transactions, and remaining details in a column on the right. Narrow panes and phones retain the full-width stacked report.
+On wider desktop panes, the day timeline uses the Calendar's configured desktop day width, with only the Time by engagement/session type summary on the right. Long time summaries scroll within that section. Foods, finance, exercises, medical entries, and notes remain full width below. Narrow panes and phones retain the full-width stacked report.
 
 The time chart can switch between **Time by engagement** and **Time by session type**, both here and in the active-file import preview. Session-type grouping uses the explicit session type, falling back to the engagement type when blank. Related types are combined: academic/course/certification/exam time becomes Study; career/startup time becomes Work; authorship/article/book/speech time becomes Writing; fitness becomes Exercise; relationship becomes Social; and Chore joins Maintenance. Reading, Research, Thinking, Practice, Meditation, and Leisure stay separate. An engagement named exactly Sleep always has its own Sleep category. This changes only the chart, not stored records or the inferred daily activity flags; totals use `hh:mm`.
 
@@ -543,7 +545,7 @@ Use it to answer: **What canonical names does my system know, and what correctio
 
 ### Medical Dashboard
 
-Choose **Medical** in the EH sidebar or run **Examined Human: Medical Dashboard**. The right-hand navigator lists imported Medical reports and imported Daily medical logs, newest first, with up to 50 items per page. On narrow screens the navigator moves above the details. Select an item to replace its details in place; this does not open a separate tab.
+Choose **Medical** in the EH sidebar or run **Examined Human: Medical Dashboard**. The left-hand navigator lists only imported EH Medical Forms, newest first, with up to 50 reports per page and vertical-only scrolling. On narrow screens the navigator moves above the details. Select an item to replace its details in place; this does not open a separate tab.
 
 A report shows its report ID, dates, recording states, measurements, raw values, original units, notes, and procedures. A Daily medical log shows actual medication intakes, dose units, symptom occurrences, and the distinction between `none` and unrecorded. Rows retain their imported order rather than being alphabetically regrouped. **Open source note** opens the source note; **Refresh** reloads all EH views while preserving selection and scroll positions. Unimported source forms do not appear as imported records, and the dashboard does not currently provide trends, charts, laboratory categories, or medical interpretation.
 
@@ -604,7 +606,7 @@ Close or finish the write in the other SQLite application, then use **Examined H
 
 ### Health says a migration is required, although the connection test passes
 
-The general connection test and the optional health feature have different requirements. Run **Settings → Examined Human → General → Tools and maintenance → Medical database migration** for the selected database, review and confirm, then refresh. Earlier medical review databases also need this action to remove their old People fields. New databases need no separate health upgrade. The current Daily templates contain Medical sections, so an older database requires the upgrade even when those sections have no entries. If the action says the database is already current but Health still fails, check the selected database path and reload the plugin.
+The general connection test and the optional health feature have different requirements. Run **Settings → Examined Human → General → Tools and maintenance → Update to schema v1** for the selected database, review and confirm, then refresh. Earlier medical review databases also need this action to remove their old People fields. New databases need no separate health upgrade. The current Daily templates contain Medical sections, so an older database requires the upgrade even when those sections have no entries. If the action says the database is already current but Health still fails, check the selected database path and reload the plugin.
 
 ### I staged a health record, but it is missing or import still says “Unknown”
 

@@ -166,7 +166,31 @@
   justify-content: center;
   padding: 6px 10px;
   text-align: center;
+  width: 100%;
+  border: 0;
+  border-right: 1px solid var(--background-modifier-border);
+  border-bottom: 1px solid var(--background-modifier-border);
+  border-radius: 0;
+  box-shadow: none;
+  cursor: pointer;
 }
+
+.examined-human-day-header:focus-visible { outline: 2px solid var(--interactive-accent); outline-offset: -3px; }
+.examined-human-daily-import-guidance { margin-top: 20px; color: var(--text-muted); }
+
+.examined-human-daily-log-modal {
+  width: min(1200px, 95vw);
+  max-height: 92vh;
+}
+
+.examined-human-daily-log-modal .modal-content {
+  min-height: 0;
+  max-height: calc(92vh - 70px);
+  overflow-y: auto;
+}
+
+.examined-human-daily-log-modal .examined-human-daily-toolbar { flex-wrap: wrap; gap: 12px; }
+.examined-human-daily-log-actions { display: flex; justify-content: flex-end; margin-top: 16px; }
 
 .examined-human-day-header--past {
   background: var(--background-primary);
@@ -1524,6 +1548,17 @@
 
 .examined-human-daily-report-details {
   min-width: 0;
+}
+
+.examined-human-daily-report-full-width {
+  min-width: 0;
+  width: 100%;
+}
+
+.examined-human-daily-report-details .examined-human-daily-engagement-chart {
+  max-height: min(48vh, 520px);
+  overflow-y: auto;
+  scrollbar-gutter: stable;
 }
 
 /* Use the available report width, not the window: narrow desktop panes stack too. */
@@ -3007,19 +3042,20 @@
 }
 .examined-human-records-toolbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; }
 
-/* Medical reports use a persistent right-hand navigator, with original entry order. */
+/* Medical reports use a persistent left-hand navigator, with original entry order. */
 .examined-human-medical-view { padding: 16px; }
 .examined-human-medical-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-.examined-human-medical-layout { display: grid; grid-template-columns: minmax(0, 1fr) 260px; gap: 20px; align-items: start; }
+.examined-human-medical-layout { display: grid; grid-template-columns: minmax(190px, 230px) minmax(0, 1fr); gap: 20px; align-items: start; }
 .examined-human-medical-report { min-width: 0; overflow: auto; }
 .examined-human-medical-meta { color: var(--text-muted); }
-.examined-human-medical-sidebar { position: sticky; top: 0; max-height: 80vh; overflow: auto; border-inline-start: 1px solid var(--background-modifier-border); padding-inline-start: 12px; }
-.examined-human-medical-sidebar .examined-human-daily-date-button { width: 100%; text-align: start; margin-bottom: 6px; }
+.examined-human-medical-sidebar { position: sticky; top: 0; max-height: 80vh; min-width: 0; overflow-y: auto; overflow-x: hidden; border-inline-end: 1px solid var(--background-modifier-border); padding-inline-end: 12px; }
+.examined-human-medical-sidebar .examined-human-daily-date-button { box-sizing: border-box; width: 100%; min-width: 0; height: auto; white-space: normal; overflow-wrap: anywhere; text-align: start; margin-bottom: 6px; }
+.examined-human-medical-sidebar .examined-human-daily-date-button span { max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
 .examined-human-medical-sidebar .is-selected { background: var(--background-modifier-active-hover); box-shadow: inset 3px 0 var(--interactive-accent); }
 .examined-human-medical-paging { display: flex; gap: 8px; margin-top: 10px; }
 @media (max-width: 600px) {
   .examined-human-medical-layout { grid-template-columns: minmax(0, 1fr); }
-  .examined-human-medical-sidebar { position: static; grid-row: 1; max-height: 220px; border-inline-start: 0; padding-inline-start: 0; }
+  .examined-human-medical-sidebar { position: static; grid-row: 1; max-height: 220px; border-inline-end: 0; padding-inline-end: 0; }
 }
 /* Keep notices and catalog editors readable on desktop and touch screens. */
 .modal.examined-human-release-notes-modal,

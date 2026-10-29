@@ -226,7 +226,8 @@ export class TimelineView extends ReadingView {
       const date = day.format('YYYY-MM-DD');
       const relation = date === today ? 'today' : date < today ? 'past' : 'future';
       const dayState = dayStates[date];
-      const dayHeader = grid.createDiv({
+      const dayHeader = grid.createEl('button', {
+        attr: { type: 'button', 'aria-label': `Open daily log for ${date}` },
         cls: [
           'examined-human-day-header',
           `examined-human-day-header--${relation}`,
@@ -234,6 +235,9 @@ export class TimelineView extends ReadingView {
         ].filter(Boolean).join(' '),
       });
       dayHeader.style.setProperty('--examined-human-grid-column', String(index + 2));
+      dayHeader.addEventListener('click', () => {
+        void this.plugin.openDailyLog(date).catch(error => new Notice(`Could not open daily log: ${String(error)}`));
+      });
       if (dayState) {
         dayHeader.setAttribute(
           'title',
@@ -243,8 +247,8 @@ export class TimelineView extends ReadingView {
               : 'This date is sourced from a planned journal note.'),
         );
       }
-      dayHeader.createDiv({ cls: 'examined-human-day-weekday', text: day.format('ddd') });
-      dayHeader.createDiv({ cls: 'examined-human-day-date', text: day.format('MMM D') });
+      dayHeader.createSpan({ cls: 'examined-human-day-weekday', text: day.format('ddd') });
+      dayHeader.createSpan({ cls: 'examined-human-day-date', text: day.format('MMM D') });
     }
 
     const hourGutter = grid.createDiv({ cls: 'examined-human-hour-gutter' });

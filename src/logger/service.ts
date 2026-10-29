@@ -1,9 +1,4 @@
-import medicalUpgradeSql from '../../migrations/006_add_medical_forms_schema_v1.sql';
-import singleOwnerSql from '../../migrations/007_remove_people.sql';
-import { hasTableColumns } from '../read-models/sql.ts';
 import { inspectMedicalForm, writeMedicalForm, writeHealthCatalog, type MedicalInput, type CatalogInput } from './medical.ts';
-import { hasMedicalSchema, hasMedicalFoundation, assertMedicalSchema } from '../read-models/medical.ts';
-import { assertSchemaV1 } from './database-utils.ts';
 import { App, normalizePath, TFile, TFolder } from 'obsidian';
 import type { Database } from 'sql.js';
 import { normalizeVaultDatabasePath } from '../database-path.ts';
@@ -247,20 +242,11 @@ export class LoggerService {
   }
 
   inspectMedicalUpgrade(databasePath: string) {
-    return this.inspectDatabase(databasePath, (db, databaseChecksum) => {
-      assertSchemaV1(db);
-      return { needed: !hasMedicalSchema(db), databaseChecksum };
-    });
+    return this.inspectSchemaV1Upgrade(databasePath);
   }
 
   upgradeMedical(databasePath: string, expectedDatabaseChecksum: string) {
-    return this.enqueue(() => this.mutateDatabase(databasePath, 'medical-upgrade', db => {
-      assertSchemaV1(db);
-      if (hasMedicalSchema(db)) throw new Error('Medical Form tables are already enabled.');
-      if (!hasMedicalFoundation(db)) db.run(medicalUpgradeSql);
-      if (hasTableColumns(db, 'reports', ['person_id'])) db.run(singleOwnerSql);
-      assertMedicalSchema(db);
-    }, 'durable', true, expectedDatabaseChecksum));
+    return this.upgradeToOfficialSchemaV1(databasePath, expectedDatabaseChecksum);
   }
 
   inspectHealthCatalog(databasePath: string, input: CatalogInput) {
@@ -333,18 +319,23 @@ export class LoggerService {
     });
   }
 
-  inspectSchemaV1Upgrade(databasePathSetting: string): Promise<SchemaV1UpgradePreview> {
-    return this.inspectDatabase(databasePathSetting, previewSchemaV1Upgrade);
+  inspectSchemaV1Upgrade(databasePathSetting: string): Promise<SchemaV1UpgradePreview & { databaseChecksum: string }> {
+    return this.inspectDatabase(databasePathSetting, (db, databaseChecksum) => ({ ...previewSchemaV1Upgrade(db), databaseChecksum }));
   }
 
-  upgradeToOfficialSchemaV1(databasePathSetting: string): Promise<SchemaV1UpgradeResult> {
+  upgradeToOfficialSchemaV1(databasePathSetting: string, expectedDatabaseChecksum: string): Promise<SchemaV1UpgradeResult> {
     return this.enqueue(async () => {
+      if (!expectedDatabaseChecksum) throw new Error('Preview and confirm the schema update before applying it.');
       const mutation = await this.mutateDatabase(
         databasePathSetting,
         'schema-v1-upgrade',
-        upgradeV5ToOfficialSchemaV1,
+        db => {
+          if (!previewSchemaV1Upgrade(db).needed) throw new Error('Already updated.');
+          return upgradeV5ToOfficialSchemaV1(db);
+        },
         'durable',
         false,
+        expectedDatabaseChecksum,
       );
       return {
         ...mutation.value,

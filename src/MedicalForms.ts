@@ -1,7 +1,6 @@
 import { App, Modal, Notice, Setting, TFile } from 'obsidian';
 import type ExaminedHumanPlugin from './main.ts';
 import type { MedicalPreview } from './logger/medical.ts';
-import { confirmWeeklyAction } from './WeeklyActionConfirmationModal.ts';
 
 export function recordsTable(container: HTMLElement, headings: string[], rows: string[][]): void {
   const wrapper = container.createDiv({ cls: 'examined-human-records-scroll' });
@@ -53,20 +52,6 @@ export async function importMedicalActiveFile(plugin: ExaminedHumanPlugin): Prom
     try { await plugin.refreshViews(); }
     catch (error) { new Notice(`Medical import succeeded, but refreshing views failed: ${error instanceof Error ? error.message : String(error)}`, 12_000); }
   } catch (error) { new Notice(`Medical import did not complete: ${error instanceof Error ? error.message : String(error)}`, 12_000); }
-}
-export async function upgradeMedicalDatabase(plugin: ExaminedHumanPlugin): Promise<void> {
-  try {
-    const preview = await plugin.logger.inspectMedicalUpgrade(plugin.settings.databasePath);
-    if (!preview.needed) { new Notice('Medical and Daily health tables are already enabled.'); return; }
-    if (!await confirmWeeklyAction(plugin.app, {
-      title: 'Medical database migration', confirmLabel: 'Back up and upgrade',
-      explanation: 'Enable single-owner Medical Forms, typed measurements, procedures, canonical health catalogs, and Daily Medication/Symptoms. This vault represents one person; no People catalog is needed.',
-      dryRunOutput: 'Existing numeric measurement IDs, values, report links, notes, and source ranges are preserved. Other domains are retained. The SQLite schema marker stays at official v1.',
-      warning: 'This creates a verified backup and upgrades the configured database after checking its reviewed checksum.',
-    })) return;
-    await plugin.logger.upgradeMedical(plugin.settings.databasePath, preview.databaseChecksum);
-    await plugin.refreshViews(); new Notice('Medical database upgrade completed.');
-  } catch (error) { new Notice(error instanceof Error ? error.message : String(error), 12_000); }
 }
 /** Compatibility entry point; catalog changes now use the normal staging flow. */
 export function openHealthCatalog(plugin: ExaminedHumanPlugin): void { void plugin.activateHealthCatalogs(); }

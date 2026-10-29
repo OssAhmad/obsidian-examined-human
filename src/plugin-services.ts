@@ -24,6 +24,7 @@ export interface ExaminedHumanPluginServices extends ReadingServices {
   knownForms(): FormDiscoveryResult['forms'];
   discoverFormsWithNotice(): Promise<void>;
   syncTodayPlanningFromDailyForm(): Promise<void>;
+  openDailyLog(date: string): Promise<void>;
   markImportedEhFormFileIfComplete(file: TFile): Promise<boolean>;
   removeImportedFormAfterImport(
     file: TFile,
@@ -57,6 +58,7 @@ export type TimelineServices = DashboardServices & Pick<
   ExaminedHumanPluginServices,
   'syncTodayPlanningFromDailyForm'
   | 'knownForms'
+  | 'openDailyLog'
 >;
 
 export type FinancialDashboardServices = DashboardServices & Pick<

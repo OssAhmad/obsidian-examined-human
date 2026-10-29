@@ -330,7 +330,7 @@ function renderTimeBreakdown(container: HTMLElement, events: CalendarEvent[], op
   selector.createEl('option', { value: 'engagement', text: 'Engagement' });
   selector.createEl('option', { value: 'session-type', text: 'Session type' });
   selector.value = options.timeGrouping ?? 'engagement';
-  const chart = section.createDiv({ cls: 'examined-human-daily-engagement-chart' });
+  const chart = section.createDiv({ cls: 'examined-human-daily-engagement-chart', attr: { tabindex: '0', 'aria-label': 'Daily time summary' } });
   const render = (): void => {
     const grouping: DailyTimeGrouping = selector.value === 'session-type' ? 'session-type' : 'engagement';
     title.setText(grouping === 'session-type' ? 'Time by session type' : 'Time by engagement');
@@ -509,16 +509,17 @@ export function renderDailyAssessmentReport(
   renderTimeline(app, columns, report.events, options);
   const details = columns.createDiv({ cls: 'examined-human-daily-report-details' });
   renderTimeBreakdown(details, report.events, options);
-  renderFoods(details, report.foods);
-  renderFinance(details, report.transactions, options.valuationLabel);
-  renderExercises(details, report.exercises);
+  const fullWidth = reportLayout.createDiv({ cls: 'examined-human-daily-report-full-width' });
+  renderFoods(fullWidth, report.foods);
+  renderFinance(fullWidth, report.transactions, options.valuationLabel);
+  renderExercises(fullWidth, report.exercises);
   if (report.health) {
-    const panel = details.createEl('section', { cls: 'examined-human-daily-panel' });
+    const panel = fullWidth.createEl('section', { cls: 'examined-human-daily-panel' });
     panel.createEl('h3', { text: 'Medication and symptoms' });
     panel.createEl('p', { text: `Medication: ${report.health.medicationState}; Symptoms: ${report.health.symptomsState}` });
     for (const i of report.health.intakes) panel.createEl('p', { text: `${i.time} | ${i.name} | ${i.amount} ${i.unit} | ${i.notes}` });
     for (const s of report.health.occurrences) panel.createEl('p', { text: `${s.time} | ${s.name} | ${s.notes}` });
   }
-  renderNotes(details, report);
+  renderNotes(fullWidth, report);
   return true;
 }

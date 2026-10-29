@@ -58,7 +58,7 @@ test('active-file import preview exposes the same working time selector', async 
   assert.equal(await pending, false);
 });
 
-test('report keeps the timeline beside an ordered detail column without changing report content', () => {
+test('only the time summary sits beside the timeline; remaining report sections use full width', () => {
   const root = new TestElement();
   renderDailyAssessmentReport({}, root, { date: '2026-08-20', imported: true, ready: false,
     errors: [], warnings: [], completeness: null, metrics: { notes: 'Daily reflection' },
@@ -71,8 +71,11 @@ test('report keeps the timeline beside an ordered detail column without changing
   assert.match(columns.children[0].text(), /Day timeline/);
   const details = columns.children[1];
   assert.equal(details.className, 'examined-human-daily-report-details');
-  assert.deepEqual(details.children.map((panel) => panel.all().find((element) => element.tag === 'h3').textContent),
-    ['Time by engagement', 'Foods consumed', 'Finance', 'Exercise details', 'Medication and symptoms', 'Notes']);
-  assert.match(details.text(), /Daily reflection/);
-  assert.match(details.text(), /Medication: none; Symptoms: none/);
+  assert.deepEqual(details.children.map((panel) => panel.all().find((element) => element.tag === 'h3').textContent), ['Time by engagement']);
+  const fullWidth = layout.children[1];
+  assert.equal(fullWidth.className, 'examined-human-daily-report-full-width');
+  assert.deepEqual(fullWidth.children.map((panel) => panel.all().find((element) => element.tag === 'h3').textContent),
+    ['Foods consumed', 'Finance', 'Exercise details', 'Medication and symptoms', 'Notes']);
+  assert.match(fullWidth.text(), /Daily reflection/);
+  assert.match(fullWidth.text(), /Medication: none; Symptoms: none/);
 });

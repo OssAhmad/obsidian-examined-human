@@ -12,6 +12,7 @@ import type { DailyTimeGrouping } from './daily-time.ts';
 import { backupMutationOutput } from './logger/service.ts';
 import { openReferenceRepair } from './CommandForms.ts';
 import { unresolvedReferencesFromErrors } from './unresolved-references.ts';
+import { isIsoDate } from './domain/date.ts';
 import {
   renderDailyAssessmentReport,
   reportFromAssessment,
@@ -19,6 +20,7 @@ import {
 } from './DailyAssessmentReport.ts';
 
 export const EXAMINED_HUMAN_DAILY_ASSESSMENT_VIEW_TYPE = 'examined-human-daily-assessment';
+export const DAILY_LOG_VIEW_TYPE = 'examined-human-daily-log';
 
 
 function formatDecimal(value: number): string {
@@ -38,20 +40,28 @@ export class DailyAssessmentView extends ReadingView {
   private renderGeneration = 0;
   private actionButton: HTMLButtonElement | null = null;
 
-  constructor(leaf: WorkspaceLeaf, private plugin: FormWorkflowServices) {
+  constructor(leaf: WorkspaceLeaf, private plugin: FormWorkflowServices, private readonly readOnly = false) {
     super(leaf, plugin);
   }
 
   getViewType(): string {
-    return EXAMINED_HUMAN_DAILY_ASSESSMENT_VIEW_TYPE;
+    return this.readOnly ? DAILY_LOG_VIEW_TYPE : EXAMINED_HUMAN_DAILY_ASSESSMENT_VIEW_TYPE;
   }
 
   getDisplayText(): string {
-    return 'Examined Human — Daily Assessment';
+    return this.readOnly ? 'Examined Human — Daily Log' : 'Examined Human — Daily Assessment';
   }
 
   getIcon(): string {
     return 'clipboard-check';
+  }
+
+  getState(): Record<string, unknown> { return { date: this.selectedDate }; }
+
+  async setState(state: unknown): Promise<void> {
+    const date = state && typeof state === 'object' && 'date' in state ? state.date : null;
+    if (typeof date === 'string' && isIsoDate(date)) this.selectedDate = date;
+    await this.refresh();
   }
 
   protected scrollContext(): string { return this.selectedDate ?? ''; }
@@ -64,6 +74,7 @@ export class DailyAssessmentView extends ReadingView {
   }
 
   async onClose(): Promise<void> {
+    this.renderGeneration++;
     this.stopReadingUpdates();
     this.contentEl.empty();
   }
@@ -79,12 +90,22 @@ export class DailyAssessmentView extends ReadingView {
       const items = await buildDailyNoteList(this.app, index, today, this.plugin.knownForms());
       if (generation !== this.renderGeneration) return;
       this.items = items;
-      if (!this.selectedDate || !items.some((item) => item.date === this.selectedDate)) {
+      if (!this.selectedDate || (!this.readOnly && !items.some((item) => item.date === this.selectedDate))) {
         this.selectedDate = items.find((item) => item.temporalState === 'current')?.date
           ?? items[0]?.date
-          ?? null;
+          ?? (this.readOnly ? today : null);
       }
       this.selectedItem = items.find((item) => item.date === this.selectedDate) ?? null;
+      // A calendar date can fall outside the bounded recent-note index or have
+      // no form at all. Keep that requested date instead of changing days.
+      if (this.readOnly && this.selectedDate && !this.selectedItem) {
+        const sources = this.plugin.knownForms().filter(form => form.kind === 'daily' && form.date === this.selectedDate);
+        if (sources.length > 1) throw new Error(`Two EH Daily Forms declare ${this.selectedDate}.`);
+        const source = sources[0];
+        this.selectedItem = { date: this.selectedDate, fileName: source?.fileName ?? '', filePath: source?.filePath ?? '',
+          status: 'needs-import', temporalState: this.selectedDate < today ? 'overdue' : this.selectedDate === today ? 'current' : 'future',
+          importedAt: null, sourceState: null };
+      }
       this.assessment = this.selectedDate
         ? await this.plugin.database.dailyAssessment(
           this.plugin.settings.databasePath,
@@ -97,6 +118,9 @@ export class DailyAssessmentView extends ReadingView {
           this.plugin.settings.sleepDayBoundaryHour,
         )
         : null;
+      if (this.readOnly && this.assessment?.imported && this.selectedItem) {
+        this.selectedItem = { ...this.selectedItem, status: 'imported', temporalState: 'imported' };
+      }
       this.inspection = null;
       this.mealInspection = null;
       this.standaloneMealInspection = null;
@@ -158,8 +182,8 @@ export class DailyAssessmentView extends ReadingView {
     const body = this.contentEl.createDiv({ cls: 'examined-human-daily-layout' });
     this.renderSidebar(body);
     const main = body.createEl('main', { cls: 'examined-human-daily-main' });
-    this.renderValidation(main);
-    if (this.inspection?.errors.length) return;
+    if (!this.readOnly) this.renderValidation(main);
+    if (!this.readOnly && this.inspection?.errors.length) return;
     const report = this.inspection
       ? reportFromInspection(this.inspection)
       : reportFromAssessment(this.selectedItem.date, this.assessment);
@@ -172,12 +196,13 @@ export class DailyAssessmentView extends ReadingView {
       initialScrollHour: this.plugin.settings.initialScrollHour,
       valuationLabel: this.plugin.settings.valuationUnitLabel,
     });
+    if (this.readOnly) main.createEl('p', { cls: 'examined-human-daily-import-guidance', text: 'For imports, please visit the Daily Assessment dashboard.' });
   }
 
   private renderHeader(): void {
     const header = this.contentEl.createDiv({ cls: 'examined-human-toolbar examined-human-daily-toolbar' });
     const identity = header.createDiv({ cls: 'examined-human-toolbar-identity' });
-    identity.createEl('h2', { text: 'Examined Human — Daily Assessment' });
+    identity.createEl('h2', { text: this.getDisplayText() });
     identity.createDiv({
       cls: 'examined-human-toolbar-status',
       text: this.selectedItem
@@ -185,6 +210,11 @@ export class DailyAssessmentView extends ReadingView {
         : 'Review journal data and safely import historical notes',
     });
     const actions = header.createDiv({ cls: 'examined-human-toolbar-actions' });
+    if (this.readOnly) {
+      actions.createEl('button', { text: 'Refresh', cls: 'examined-human-toolbar-button' })
+        .addEventListener('click', () => { void this.plugin.refreshViews(); });
+      return;
+    }
     this.actionButton = actions.createEl('button', { cls: 'examined-human-toolbar-button mod-cta' });
     if (!this.selectedItem) {
       this.actionButton.setText('Import');
@@ -459,6 +489,7 @@ export class DailyAssessmentView extends ReadingView {
   }
 
   private async handleNativeMealImport(): Promise<void> {
+    if (this.readOnly) return;
     const item = this.selectedItem;
     if (!item || item.status === 'imported') return;
     if (item.status === 'needs-import'
@@ -523,6 +554,7 @@ export class DailyAssessmentView extends ReadingView {
   }
 
   private async handleImport(): Promise<void> {
+    if (this.readOnly) return;
     const item = this.selectedItem;
     if (!item) return;
     if (item.temporalState === 'future') {

@@ -41,8 +41,6 @@ export class MedicalDashboardView extends ReadingView {
       const item = this.selectedItem;
       const report = item?.kind === 'report' && item.reportId != null
         ? await this.plugin.database.medicalReport(this.plugin.settings.databasePath, item.reportId) : null;
-      const health = item?.kind === 'daily'
-        ? await this.plugin.database.dailyHealth(this.plugin.settings.databasePath, item.date) : undefined;
       if (generation !== this.generation || (item?.key ?? null) !== this.selectedKey) return;
 
       this.contentEl.empty();
@@ -51,15 +49,16 @@ export class MedicalDashboardView extends ReadingView {
       toolbar.createEl('button', { text: 'Refresh', cls: 'examined-human-toolbar-button' })
         .addEventListener('click', () => { void this.plugin.refreshViews(); });
       if (index.needsMigration) {
-        this.contentEl.createEl('p', { text: 'Enable medical records in Settings → Examined Human → General → Tools and maintenance → Medical database migration.' });
+        this.contentEl.createEl('p', { text: 'Enable medical records in Settings → Examined Human → General → Tools and maintenance → Update to schema v1.' });
         return;
       }
 
       const layout = this.contentEl.createDiv({ cls: 'examined-human-medical-layout' });
+      const sidebar = layout.createEl('aside', { cls: 'examined-human-medical-sidebar', attr: { 'aria-label': 'Imported medical records, newest first' } });
       const main = layout.createEl('main', { cls: 'examined-human-medical-report', attr: { 'aria-label': 'Selected medical record' } });
       main.dataset.ehScrollKey = 'medical-report';
       if (!item) {
-        main.createEl('p', { text: 'No imported medical records yet. Import a Medical Form or a Daily Form with Medical entries to begin.' });
+        main.createEl('p', { text: 'No imported medical records yet. Import an EH Medical Form to begin.' });
       } else {
         main.createEl('h3', { text: item.title });
         main.createEl('p', { cls: 'examined-human-medical-meta', text: item.date || 'Unknown date' });
@@ -74,17 +73,9 @@ export class MedicalDashboardView extends ReadingView {
           main.createEl('h4', { text: 'Procedures' });
           main.createEl('p', { text: `Recording state: ${String(report.report.procedures_state)}` });
           recordsTable(main, ['Procedure', 'Notes'], report.procedures.map(p => [String(p.name), String(p.notes)]));
-        } else if (health) {
-          main.createEl('h4', { text: 'Medication' });
-          main.createEl('p', { text: `Recording state: ${health.medicationState}` });
-          recordsTable(main, ['Time', 'Medication', 'Amount', 'Unit', 'Notes'], health.intakes.map(i => [i.time, i.name, String(i.amount), i.unit, i.notes]));
-          main.createEl('h4', { text: 'Symptoms' });
-          main.createEl('p', { text: `Recording state: ${health.symptomsState}` });
-          recordsTable(main, ['Time', 'Symptom', 'Notes'], health.occurrences.map(s => [s.time, s.name, s.notes]));
         }
       }
 
-      const sidebar = layout.createEl('aside', { cls: 'examined-human-medical-sidebar', attr: { 'aria-label': 'Imported medical records, newest first' } });
       sidebar.dataset.ehScrollKey = 'medical-list';
       sidebar.createEl('h3', { text: 'Imported records' });
       sidebar.createEl('p', { text: `${index.total} records` });
@@ -94,7 +85,7 @@ export class MedicalDashboardView extends ReadingView {
           attr: { 'aria-pressed': String(entry.key === this.selectedKey) },
         });
         button.createSpan({ cls: 'examined-human-daily-date-primary', text: entry.title });
-        button.createSpan({ cls: 'examined-human-daily-date-secondary', text: `${entry.date || 'Unknown date'} · ${entry.kind === 'report' ? 'Medical report' : 'Daily medical'}` });
+        button.createSpan({ cls: 'examined-human-daily-date-secondary', text: `${entry.date || 'Unknown date'} · Medical report` });
         button.addEventListener('click', () => {
           if (entry.key === this.selectedKey) return;
           this.selectedKey = entry.key;

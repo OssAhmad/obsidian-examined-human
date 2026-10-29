@@ -34,9 +34,9 @@ test('five unimported review notes can populate both dashboards through the norm
       if (day === '24') assert.equal(report.measurements.length, 3);
     }
     const dashboard = queryMedicalDashboardPage(db, 0);
-    assert.equal(dashboard.total, 10);
+    assert.equal(dashboard.total, 5);
     assert.equal(dashboard.items.filter(item => item.kind === 'report').length, 5);
-    assert.equal(dashboard.items.filter(item => item.kind === 'daily').length, 5);
+    assert.ok(dashboard.items.every(item => item.kind === 'report'));
     assert.equal(queryDailyHealth(db, '2026-10-21').medicationState, 'none');
     assert.equal(queryDailyHealth(db, '2026-10-21').symptomsState, 'none');
     assert.equal(queryDailyHealth(db, '2026-10-24').medicationState, 'unrecorded');

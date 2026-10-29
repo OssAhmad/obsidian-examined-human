@@ -3,7 +3,8 @@ import { ReleaseNotesModal, RELEASE_NOTES_ID } from './ReleaseNotesModal.ts';
 import { importMedicalActiveFile } from './MedicalForms.ts';
 import { addIcon, moment, Notice, Platform, Plugin, TFile, type WorkspaceLeaf } from 'obsidian';
 import { ExaminedHumanDatabase } from './examined-human-database.ts';
-import { DailyAssessmentView, EXAMINED_HUMAN_DAILY_ASSESSMENT_VIEW_TYPE } from './DailyAssessmentView.ts';
+import { DailyAssessmentView, DAILY_LOG_VIEW_TYPE, EXAMINED_HUMAN_DAILY_ASSESSMENT_VIEW_TYPE } from './DailyAssessmentView.ts';
+import { DailyLogModal } from './DailyLogModal.ts';
 import { CommandCenterView, EXAMINED_HUMAN_COMMAND_CENTER_VIEW_TYPE } from './CommandCenterView.ts';
 import { EngagementDashboardView, EXAMINED_HUMAN_ENGAGEMENT_DASHBOARD_VIEW_TYPE } from './EngagementDashboardView.ts';
 import { ExerciseDashboardView, EXAMINED_HUMAN_EXERCISE_DASHBOARD_VIEW_TYPE } from './ExerciseDashboardView.ts';
@@ -62,6 +63,7 @@ function storedText(value: unknown, fallback: string): string {
 }
 
 export default class ExaminedHumanPlugin extends Plugin {
+  private dailyLogModal: DailyLogModal | null = null;
   settings: ExaminedHumanSettings = DEFAULT_SETTINGS;
   database!: ExaminedHumanDatabase;
   logger!: LoggerService;
@@ -89,6 +91,8 @@ export default class ExaminedHumanPlugin extends Plugin {
     this.registerView(EXAMINED_HUMAN_CALENDAR_VIEW_TYPE, (leaf) => new TimelineView(leaf, this));
     this.registerView(EXAMINED_HUMAN_WEEKLY_ASSESSMENT_VIEW_TYPE, (leaf) => new WeeklyAssessmentView(leaf, this));
     this.registerView(EXAMINED_HUMAN_DAILY_ASSESSMENT_VIEW_TYPE, (leaf) => new DailyAssessmentView(leaf, this));
+    // Restore tabs saved by the earlier review build; new calendar clicks open a modal.
+    this.registerView(DAILY_LOG_VIEW_TYPE, (leaf) => new DailyAssessmentView(leaf, this, true));
     this.registerView(EXAMINED_HUMAN_COMMAND_CENTER_VIEW_TYPE, (leaf) => new CommandCenterView(leaf, this));
     this.registerView(EXAMINED_HUMAN_ENGAGEMENT_DASHBOARD_VIEW_TYPE, (leaf) => new EngagementDashboardView(leaf, this));
     this.registerView(EXAMINED_HUMAN_FINANCIAL_DASHBOARD_VIEW_TYPE, (leaf) => new FinancialDashboardView(leaf, this));
@@ -558,6 +562,18 @@ export default class ExaminedHumanPlugin extends Plugin {
     await this.openDashboard(EXAMINED_HUMAN_DAILY_ASSESSMENT_VIEW_TYPE, true);
   }
 
+  async openDailyLog(date: string): Promise<void> {
+    this.dailyLogModal?.close();
+    const modal = new DailyLogModal(this.app, this, date, () => {
+      if (this.dailyLogModal === modal) this.dailyLogModal = null;
+    });
+    this.dailyLogModal = modal;
+    modal.open();
+    await modal.refresh();
+  }
+
+  onunload(): void { this.dailyLogModal?.close(); }
+
   async activateCommandCenterView(): Promise<void> {
     await this.openDashboard(EXAMINED_HUMAN_COMMAND_CENTER_VIEW_TYPE, true);
   }
@@ -646,7 +662,8 @@ export default class ExaminedHumanPlugin extends Plugin {
       .map(async (leaf) => {
         if (leaf.view instanceof WeeklyAssessmentView) await leaf.view.refresh();
       });
-    const dailyRefreshes = this.app.workspace.getLeavesOfType(EXAMINED_HUMAN_DAILY_ASSESSMENT_VIEW_TYPE)
+    const dailyRefreshes = [EXAMINED_HUMAN_DAILY_ASSESSMENT_VIEW_TYPE, DAILY_LOG_VIEW_TYPE]
+      .flatMap(type => this.app.workspace.getLeavesOfType(type))
       .map(async (leaf) => {
         if (leaf.view instanceof DailyAssessmentView) await leaf.view.refresh();
       });
@@ -677,6 +694,7 @@ export default class ExaminedHumanPlugin extends Plugin {
       if (leaf.view instanceof DashboardSidebarView) await leaf.view.refresh();
     });
     await Promise.all([
+      this.dailyLogModal?.refresh(),
       ...navigationRefreshes,
       ...recordsRefreshes,
       ...calendarRefreshes,

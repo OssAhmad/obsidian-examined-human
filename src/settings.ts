@@ -4,7 +4,6 @@ import type { FormDiscoveryCache, FormDiscoveryMode } from './form-discovery.ts'
 import { DEFAULT_JOURNAL_FOLDER, normalizeJournalFolder } from './journal-folder.ts';
 import { confirmWeeklyAction } from './WeeklyActionConfirmationModal.ts';
 import type ExaminedHumanPlugin from './main.ts';
-import { upgradeMedicalDatabase } from './MedicalForms.ts';
 import { ReleaseNotesModal } from './ReleaseNotesModal.ts';
 
 export interface ExaminedHumanSettings {
@@ -248,19 +247,7 @@ export class ExaminedHumanSettingTab extends PluginSettingTab {
           ),
         ]),
         group('general-tools', 'Tools and maintenance', 'Open administrative tools and maintain the official database schema.', [
-          definition(
-            'medical-schema-upgrade',
-            'Medical database migration',
-            'Enable Medical Forms and Daily health records. Review the migration and confirm a verified backup before it changes the database.',
-            { render: (setting: Setting) => {
-              setting.addButton(button => button.setButtonText('Review medical migration').onClick(async () => {
-                button.setDisabled(true);
-                try { await upgradeMedicalDatabase(this.plugin); }
-                finally { button.setDisabled(false); }
-              }));
-            } },
-          ),
-          definition('medical-dashboard', 'Open Medical Dashboard', 'Browse imported reports and Daily medical logs.',
+          definition('medical-dashboard', 'Open Medical Dashboard', 'Browse imported EH Medical Forms.',
             { action: () => this.plugin.activateMedicalDashboardView() }),
           definition('release-notes', 'What’s new', 'Read the notes for this build.',
             { action: () => new ReleaseNotesModal(this.app).open() }),
@@ -272,8 +259,8 @@ export class ExaminedHumanSettingTab extends PluginSettingTab {
           ),
           definition(
             'schema-upgrade',
-            'Upgrade database to current Schema v1',
-            'Preview and apply missing official Schema v1 foundations with a verified backup.',
+            'Update to schema v1',
+            'Apply all missing Schema v1 updates, including Medical Forms, with one reviewed update and verified backup.',
             { render: (setting: Setting) => this.renderSchemaUpgrade(setting) },
           ),
         ]),
@@ -542,26 +529,39 @@ export class ExaminedHumanSettingTab extends PluginSettingTab {
   }
 
   private renderSchemaUpgrade(setting: Setting): void {
-    setting.addButton((button) => button.setButtonText('Preview upgrade').onClick(async () => {
-      button.setDisabled(true);
-      try {
-        const preview = await this.plugin.logger.inspectSchemaV1Upgrade(this.plugin.settings.databasePath);
-        const confirmed = await confirmWeeklyAction(this.app, {
-          title: 'Upgrade to official Data Schema v1',
-          explanation: 'This guarded upgrade adds any missing official Schema v1 foundations. Existing data is preserved.',
-          confirmLabel: 'Upgrade database',
-          dryRunOutput: `Current SQLite schema marker: v${preview.currentSchemaVersion}\nTarget official schema marker: v${preview.targetSchemaVersion}\nRetired migration records to replace: ${preview.migrationEntryCount}\nFood Dictionary needed: ${preview.needsFoodDictionary ? 'yes' : 'already present'}\nFinance foundation needed: ${preview.needsFinanceFoundation ? 'yes' : 'already present'}\nMutable dated budgets needed: ${preview.needsMutableBudgets ? 'yes' : 'already present'}\nValuation history needed: ${preview.needsValuationHistory ? 'yes' : 'already present'}\nOptional canonical session types needed: ${preview.needsOptionalSessionTypes ? 'yes' : 'already present'}`,
-          warning: 'A backup, transaction, integrity checks, and post-write verification run before the upgraded database becomes the source of truth.',
-        });
-        if (!confirmed) return;
-        const result = await this.plugin.logger.upgradeToOfficialSchemaV1(this.plugin.settings.databasePath);
-        new Notice(`Upgraded ${result.databasePath} to official Data Schema v1. ${result.backupPath ? `Backup: ${result.backupPath}` : ''}`, 12_000);
-        await this.plugin.refreshViews();
-        this.updateDeclarativeOrLegacy();
-      } catch (error) {
-        new Notice(`Database upgrade was not performed: ${error instanceof Error ? error.message : String(error)}`, 12_000);
-      } finally { button.setDisabled(false); }
-    }));
+    setting.addButton(button => {
+      const databasePath = this.plugin.settings.databasePath;
+      const updateState = async () => {
+        try {
+          const preview = await this.plugin.logger.inspectSchemaV1Upgrade(databasePath);
+          if (databasePath !== this.plugin.settings.databasePath) return;
+          button.setButtonText(preview.needed ? 'Update to schema v1' : 'Already updated').setDisabled(!preview.needed);
+        } catch { button.setButtonText('Update to schema v1').setDisabled(false); }
+      };
+      button.setButtonText('Update to schema v1').setDisabled(true).onClick(async () => {
+        button.setDisabled(true);
+        try {
+          const preview = await this.plugin.logger.inspectSchemaV1Upgrade(databasePath);
+          if (!preview.needed) return;
+          const confirmed = await confirmWeeklyAction(this.app, {
+            title: 'Update to schema v1',
+            explanation: 'Apply all missing Schema v1 updates, including Medical Forms and Daily health. Existing records and report links are preserved.',
+            confirmLabel: 'Back up and update',
+            dryRunOutput: `Current SQLite schema marker: v${preview.currentSchemaVersion}\nTarget official schema marker: v${preview.targetSchemaVersion}\nFood Dictionary needed: ${preview.needsFoodDictionary ? 'yes' : 'already present'}\nFinance foundation needed: ${preview.needsFinanceFoundation ? 'yes' : 'already present'}\nMutable dated budgets needed: ${preview.needsMutableBudgets ? 'yes' : 'already present'}\nValuation history needed: ${preview.needsValuationHistory ? 'yes' : 'already present'}\nOptional canonical session types needed: ${preview.needsOptionalSessionTypes ? 'yes' : 'already present'}\nMedical Forms and Daily health needed: ${preview.needsMedicalFoundation ? 'yes' : 'already present'}\nSingle-owner medical records needed: ${preview.needsSingleOwnerMedical ? 'yes' : 'already present'}`,
+            warning: 'A backup, transaction, integrity checks, and post-write verification run before the updated database becomes the source of truth.',
+          });
+          if (!confirmed) return;
+          const result = await this.plugin.logger.upgradeToOfficialSchemaV1(databasePath, preview.databaseChecksum);
+          new Notice(`Updated ${result.databasePath} to schema v1. ${result.backupPath ? `Backup: ${result.backupPath}` : ''}`, 12_000);
+          await this.plugin.refreshViews();
+          this.updateDeclarativeOrLegacy();
+        } catch (error) {
+          new Notice(`Database update was not performed: ${error instanceof Error ? error.message : String(error)}`, 12_000);
+        } finally { await updateState(); }
+      });
+      void updateState();
+      return button;
+    });
   }
 
   private updateDeclarativeOrLegacy(): void {

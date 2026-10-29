@@ -19,11 +19,11 @@ export function hasMedicalFoundation(db: Database): boolean {
   return Object.entries(HEALTH_SCHEMA).every(([table, columns]) => hasTableColumns(db, table, columns));
 }
 export function assertMedicalSchema(db: Database): void {
-  if (!hasMedicalSchema(db)) throw new Error('Go to Settings → Examined Human → General → Tools and maintenance → Medical database migration before importing health entries.');
+  if (!hasMedicalSchema(db)) throw new Error('Go to Settings → Examined Human → General → Tools and maintenance → Update to schema v1 before importing health entries.');
 }
 
 export interface MedicalDashboardItem {
-  key: string; kind: 'report' | 'daily'; reportId: number | null;
+  key: string; kind: 'report'; reportId: number;
   date: string; title: string; sourcePath: string;
 }
 export function queryMedicalDashboardPage(db: Database, page: number) {
@@ -32,15 +32,11 @@ export function queryMedicalDashboardPage(db: Database, page: number) {
       COALESCE(i.reported, i.performed, NULLIF(r.report_timestamp, ''), '') AS date,
       COALESCE(r.title, 'Medical report') AS title, i.source_file_path AS path
     FROM medical_report_imports i JOIN reports r ON r.id=i.report_id
-    UNION ALL
-    SELECT 'daily:' || h.date, 'daily', NULL, h.date, 'Daily medical log',
-      (SELECT n.file_path FROM imported_notes n WHERE n.note_date=h.date ORDER BY n.id DESC LIMIT 1)
-    FROM daily_health h WHERE (h.medication_state<>'unrecorded' OR h.symptoms_state<>'unrecorded')
-      AND EXISTS (SELECT 1 FROM imported_notes n WHERE n.note_date=h.date)`;
+`;
   const total = Number(queryRows(db, `SELECT COUNT(*) AS n FROM (${sources})`)[0].n);
   const offset = Math.max(0, Math.floor(page)) * 50;
   const items = queryRows(db, `SELECT * FROM (${sources}) ORDER BY date DESC, kind, key LIMIT 50 OFFSET ?`, [offset]).map(r => ({
-    key: String(r.key), kind: String(r.kind) as MedicalDashboardItem['kind'], reportId: r.report_id == null ? null : Number(r.report_id),
+    key: String(r.key), kind: 'report' as const, reportId: Number(r.report_id),
     date: String(r.date), title: String(r.title), sourcePath: String(r.path),
   }));
   return { needsMigration: false, total, items };

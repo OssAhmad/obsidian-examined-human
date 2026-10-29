@@ -78,3 +78,47 @@ test('existing review database upgrades to single-owner schema only after checks
   } finally { updated.close(); }
   assert.equal((await service.inspectMedicalUpgrade('EH.db')).needed, false);
 });
+
+test('unified schema update handles the legacy table-level person foreign key and preserves linked results and report sequence', async () => {
+  const { service, state } = harness();
+  const db = new SQL.Database(state.bytes);
+  db.run(`PRAGMA foreign_keys=OFF;
+    DELETE FROM schema_migrations WHERE version=7;
+    CREATE TABLE people(id INTEGER PRIMARY KEY, name TEXT NOT NULL);
+    INSERT INTO people VALUES(1, 'Fictional owner');
+    CREATE TABLE reports_legacy (
+      id INTEGER PRIMARY KEY AUTOINCREMENT, person_id INTEGER NOT NULL,
+      report_timestamp TEXT NOT NULL, report_type TEXT NOT NULL, provider TEXT,
+      title TEXT, relative_path TEXT NOT NULL, FOREIGN KEY(person_id) REFERENCES people(id));
+    INSERT INTO reports_legacy SELECT id,1,report_timestamp,report_type,provider,title,relative_path FROM reports;
+    DROP TABLE reports;
+    ALTER TABLE reports_legacy RENAME TO reports;
+    CREATE INDEX custom_report_provider ON reports(provider);
+    INSERT INTO reports(id,person_id,report_timestamp,report_type,relative_path) VALUES(44,1,'','lab','');
+    DELETE FROM reports WHERE id=44;`);
+  const measurements = queryRows(db, 'SELECT * FROM measurements');
+  const receipts = queryRows(db, 'SELECT * FROM medical_report_imports');
+  state.bytes = db.export(); db.close();
+  const original = state.bytes.slice();
+  const preview = await service.inspectSchemaV1Upgrade('EH.db');
+  assert.equal(preview.needsMedicalFoundation, false);
+  assert.equal(preview.needsSingleOwnerMedical, true);
+  assert.deepEqual(state.bytes, original);
+  await assert.rejects(service.upgradeToOfficialSchemaV1('EH.db', 'stale'), /changed after preview/);
+  await service.upgradeToOfficialSchemaV1('EH.db', preview.databaseChecksum);
+  assert.equal(state.writes, 1);
+  assert.deepEqual([...state.backups.values()][0], original);
+  const updated = new SQL.Database(state.bytes);
+  try {
+    assert.deepEqual(queryRows(updated, 'SELECT * FROM measurements'), measurements);
+    assert.deepEqual(queryRows(updated, 'SELECT * FROM medical_report_imports'), receipts);
+    assert.equal(queryRows(updated, "SELECT name FROM sqlite_master WHERE name='custom_report_provider'").length, 1);
+    assert.deepEqual(queryRows(updated, 'PRAGMA foreign_key_check'), []);
+    updated.run("INSERT INTO reports(report_timestamp,report_type,relative_path) VALUES('','lab','')");
+    assert.equal(queryRows(updated, 'SELECT MAX(id) AS id FROM reports')[0].id, 45);
+  } finally { updated.close(); }
+  assert.equal((await service.inspectSchemaV1Upgrade('EH.db')).needed, false);
+  const writes = state.writes;
+  await assert.rejects(service.upgradeToOfficialSchemaV1('EH.db', (await service.inspectSchemaV1Upgrade('EH.db')).databaseChecksum), /Already updated/);
+  assert.equal(state.writes, writes);
+});

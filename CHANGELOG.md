@@ -4,6 +4,8 @@
 
 ### Added
 
+- Calendar date headings open read-only Daily Log pop-ups over the Calendar using the shared Daily Assessment report, including medication and symptoms, with import guidance at the bottom
+
 - Persian versions of all eight explained/minimal forms under `EH Forms/fa/`, with a Persian guide to preserved parser keywords and supported input formats
 - Health libraries in Command Center for browsing and staging measurement, symptom, medication, and procedure CREATE/UPDATE commands in Daily Admin Events
 - Stoic-portico sidebar tab with simple Lucide line icons for every EH dashboard, colored active-dashboard highlighting, and a compact recorded-time/session/engagement summary
@@ -15,12 +17,21 @@
 
 ### Changed
 
+- Medical Dashboard lists EH Medical Forms only; its imported-report navigator is on the left, wraps long titles, and scrolls vertically only
+
+- Unified every pending database migration under Settings → Update to schema v1, with Already updated shown when complete
+- Kept only the scrollable time summary beside the Daily timeline; food, finance, exercise, medical entries, and notes use full width below
+
 - Removed People setup and report owner fields: one vault represents one owner; the existing confirmed medical migration updates review databases
 - Moved medical database migration into Settings → Examined Human → General → Tools and maintenance; removed its command-palette action
 - Grouped Medication and Symptoms under Medical, and Transactions and Valuation Rates under Financial in Daily Forms; older flat headings remain supported
 - Replaced the former all-forms records grid with selection-based medical report browsing; no charts or automatic laboratory grouping
 
 ### Fixed
+
+- Open the full Calendar day report in a pop-up instead of a workspace tab, preserving Calendar position and read-only controls
+
+- Fixed the person_id migration failure for legacy report tables with table-level foreign keys while preserving report IDs, linked records, indexes, and numbering
 
 - Bounded the release-notes notice and Health editor for laptop and mobile viewports
 - Resolve Daily health entries after staged Admin Events so newly defined medications and symptoms work in the same Daily import

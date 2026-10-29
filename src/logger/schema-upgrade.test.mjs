@@ -15,6 +15,8 @@ const financeSql = await readFile(new URL('../../migrations/002_add_finance_foun
 const valuationSql = await readFile(new URL('../../migrations/003_add_valuation_history_schema_v1.sql', import.meta.url), 'utf8');
 const mutableBudgetSql = await readFile(new URL('../../migrations/004_make_budget_plans_mutable_schema_v1.sql', import.meta.url), 'utf8');
 const optionalSessionTypeSql = await readFile(new URL('../../migrations/005_make_session_type_optional_schema_v1.sql', import.meta.url), 'utf8');
+const medicalSql = await readFile(new URL('../../migrations/006_add_medical_forms_schema_v1.sql', import.meta.url), 'utf8');
+const singleOwnerSql = await readFile(new URL('../../migrations/007_remove_people.sql', import.meta.url), 'utf8');
 const SQL = await initSqlJs({ wasmBinary });
 
 function legacyV5Database() {
@@ -25,6 +27,15 @@ function legacyV5Database() {
     CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, name TEXT NOT NULL, applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
     INSERT INTO schema_migrations (version, name) VALUES
       (1, 'legacy one'), (2, 'legacy two'), (3, 'legacy three'), (4, 'legacy four'), (5, 'legacy five');
+    CREATE TABLE people (id INTEGER PRIMARY KEY, name TEXT NOT NULL);
+    CREATE TABLE reports (id INTEGER PRIMARY KEY AUTOINCREMENT, person_id INTEGER NOT NULL,
+      report_timestamp TEXT NOT NULL, report_type TEXT NOT NULL, provider TEXT, title TEXT,
+      relative_path TEXT NOT NULL, FOREIGN KEY(person_id) REFERENCES people(id));
+    CREATE TABLE markers (id INTEGER PRIMARY KEY, name TEXT NOT NULL, unit TEXT, reference_range TEXT);
+    CREATE TABLE measurements (id INTEGER PRIMARY KEY, report_id INTEGER NOT NULL REFERENCES reports(id),
+      marker_id INTEGER NOT NULL REFERENCES markers(id), value REAL NOT NULL, notes TEXT,
+      reference_range_at_time TEXT, flag TEXT);
+    CREATE TABLE daily_metrics (date TEXT PRIMARY KEY);
     CREATE TABLE imported_notes (note_date TEXT NOT NULL);
     CREATE TABLE session_types (id INTEGER PRIMARY KEY, code TEXT NOT NULL UNIQUE, label TEXT NOT NULL, description TEXT, is_active INTEGER NOT NULL DEFAULT 1, sort_order INTEGER NOT NULL DEFAULT 0);
     INSERT INTO session_types (id, code, label) VALUES (1, 'study', 'Study');
@@ -84,11 +95,11 @@ test('one-time v5 upgrade preserves legacy meal rows and resets official schema 
     assert.deepEqual(preview, {
       currentSchemaVersion: 5, targetSchemaVersion: 1, migrationEntryCount: 5,
       needsFoodDictionary: true, needsFinanceFoundation: true, needsValuationHistory: true, needsMutableBudgets: true,
-      needsOptionalSessionTypes: true,
+      needsOptionalSessionTypes: true, needsMedicalFoundation: true, needsSingleOwnerMedical: true, needed: true,
     });
     db.run('PRAGMA foreign_keys = OFF');
     db.run('BEGIN IMMEDIATE');
-    applyV5ToOfficialSchemaV1(db, upgradeSql, financeSql, valuationSql, mutableBudgetSql, optionalSessionTypeSql);
+    applyV5ToOfficialSchemaV1(db, upgradeSql, financeSql, valuationSql, mutableBudgetSql, optionalSessionTypeSql, medicalSql, singleOwnerSql);
     assert.equal(db.exec('PRAGMA foreign_key_check').length, 0);
     db.run('COMMIT');
     db.run('PRAGMA foreign_keys = ON');
@@ -97,7 +108,7 @@ test('one-time v5 upgrade preserves legacy meal rows and resets official schema 
     assertValuationHistorySchema(db);
     assertOptionalSessionTypeSchema(db);
     assert.equal(db.exec('PRAGMA user_version')[0].values[0][0], 1);
-    assert.deepEqual(db.exec('SELECT version, name FROM schema_migrations')[0].values, [[1, 'official schema v1: food, finance, valuation, mutable budgets, and optional session types']]);
+    assert.deepEqual(db.exec('SELECT version, name FROM schema_migrations')[0].values, [[1, 'official schema v1: food, finance, valuation, mutable budgets, and optional session types'], [6, 'medical forms with typed observations and report-scoped replacement'], [7, 'single-owner medical records']]);
     assert.deepEqual(db.exec('SELECT food, food_id, amount_g FROM daily_meals')[0].values, [['Legacy eggs', null, null]]);
     assert.deepEqual(db.exec('SELECT id, session_type_id FROM sessions')[0].values, [[7, 1]]);
     assert.deepEqual(db.exec('SELECT session_id FROM session_exercises')[0].values, [[7]]);
@@ -118,11 +129,11 @@ test('current Schema v1 can upgrade only the optional session-type foundation', 
     assert.deepEqual(previewSchemaV1Upgrade(db), {
       currentSchemaVersion: 1, targetSchemaVersion: 1, migrationEntryCount: 1,
       needsFoodDictionary: false, needsFinanceFoundation: false, needsValuationHistory: false,
-      needsMutableBudgets: false, needsOptionalSessionTypes: true,
+      needsMutableBudgets: false, needsOptionalSessionTypes: true, needsMedicalFoundation: true, needsSingleOwnerMedical: true, needed: true,
     });
     db.run('PRAGMA foreign_keys = OFF');
     db.run('BEGIN IMMEDIATE');
-    applyV5ToOfficialSchemaV1(db, upgradeSql, financeSql, valuationSql, mutableBudgetSql, optionalSessionTypeSql);
+    applyV5ToOfficialSchemaV1(db, upgradeSql, financeSql, valuationSql, mutableBudgetSql, optionalSessionTypeSql, medicalSql, singleOwnerSql);
     assert.equal(db.exec('PRAGMA foreign_key_check').length, 0);
     db.run('COMMIT');
     db.run('PRAGMA foreign_keys = ON');

@@ -196,7 +196,7 @@ export class CommandCenterView extends ReadingView {
   private renderHealthTab(): void {
     const health = this.catalog?.health;
     if (!health?.available) {
-      this.contentEl.createDiv({ cls: 'examined-human-daily-empty-inline', text: 'Enable health catalogs in Settings → Examined Human → General → Tools and maintenance → Medical database migration. Other Command Center libraries remain available.' });
+      this.contentEl.createDiv({ cls: 'examined-human-daily-empty-inline', text: 'Enable health catalogs in Settings → Examined Human → General → Tools and maintenance → Update to schema v1. Other Command Center libraries remain available.' });
       return;
     }
     const categories = this.contentEl.createDiv({ cls: 'examined-human-command-tabs examined-human-health-catalog-tabs', attr: { 'aria-label': 'Health catalogs' } });
