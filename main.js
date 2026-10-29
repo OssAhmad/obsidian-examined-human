@@ -2532,7 +2532,7 @@ var MedicalDashboardView = class extends ReadingView {
 
 // src/ReleaseNotesModal.ts
 var import_obsidian3 = require("obsidian");
-var RELEASE_NOTES_ID = "calendar-log-popup-review-2026-10-29";
+var RELEASE_NOTES_ID = "0.9.8";
 var RELEASE_NOTES = [
   "Click a Calendar date heading to open its Daily Log in a pop-up over the Calendar, including medication and symptoms, using the shared assessment report. Import controls stay in Daily Assessment.",
   "Fixed medical updates for older report tables with a separate person_id foreign key. Reports and linked measurements are preserved.",
@@ -2554,7 +2554,7 @@ var ReleaseNotesModal = class extends import_obsidian3.Modal {
     this.modalEl.addClass("examined-human-release-notes-modal");
     this.contentEl.empty();
     this.contentEl.createEl("h2", { text: "What\u2019s new in Examined Human" });
-    this.contentEl.createEl("p", { text: "Medical Dashboard and sidebar review build \u2014 awaiting owner review before release." });
+    this.contentEl.createEl("p", { text: "Version 0.9.8 \u2014 Medical Forms and Daily Logs" });
     const list = this.contentEl.createEl("ul");
     RELEASE_NOTES.forEach((text) => {
       list.createEl("li", { text });

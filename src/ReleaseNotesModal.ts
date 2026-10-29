@@ -1,7 +1,7 @@
 import { App, Modal } from 'obsidian';
 
-// Review build only. The owner will choose a published version after Wax testing.
-export const RELEASE_NOTES_ID = 'calendar-log-popup-review-2026-10-29';
+// A versioned ID shows these notes once for this release.
+export const RELEASE_NOTES_ID = '0.9.8';
 export const RELEASE_NOTES = [
   'Click a Calendar date heading to open its Daily Log in a pop-up over the Calendar, including medication and symptoms, using the shared assessment report. Import controls stay in Daily Assessment.',
   'Fixed medical updates for older report tables with a separate person_id foreign key. Reports and linked measurements are preserved.',
@@ -21,7 +21,7 @@ export class ReleaseNotesModal extends Modal {
     this.modalEl.addClass('examined-human-release-notes-modal');
     this.contentEl.empty();
     this.contentEl.createEl('h2', { text: 'What’s new in Examined Human' });
-    this.contentEl.createEl('p', { text: 'Medical Dashboard and sidebar review build — awaiting owner review before release.' });
+    this.contentEl.createEl('p', { text: 'Version 0.9.8 — Medical Forms and Daily Logs' });
     const list = this.contentEl.createEl('ul');
     RELEASE_NOTES.forEach(text => { list.createEl('li', { text }); });
     this.contentEl.createDiv({ cls: 'examined-human-modal-actions' }).createEl('button', { text: 'Close', cls: 'mod-cta' }).addEventListener('click', () => this.close());

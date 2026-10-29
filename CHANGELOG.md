@@ -2,42 +2,32 @@
 
 ## [Unreleased]
 
+## [0.9.8] - 2026-10-29
+
 ### Added
 
-- Calendar date headings open read-only Daily Log pop-ups over the Calendar using the shared Daily Assessment report, including medication and symptoms, with import guidance at the bottom
-
-- Persian versions of all eight explained/minimal forms under `EH Forms/fa/`, with a Persian guide to preserved parser keywords and supported input formats
-- Health libraries in Command Center for browsing and staging measurement, symptom, medication, and procedure CREATE/UPDATE commands in Daily Admin Events
-- Stoic-portico sidebar tab with simple Lucide line icons for every EH dashboard, colored active-dashboard highlighting, and a compact recorded-time/session/engagement summary
-- In-place dashboard switching, Ctrl/Cmd-click and middle-click new tabs, and an always-visible new-tab button for desktop and mobile; dashboard commands open separate tabs
-- Medical Dashboard with imported reports and Daily medical logs in a right-hand navigator; selected entries retain their imported order in plain tables
-- Medical Form import and confirmed report-scoped reimport, supporting numeric limits, qualitative results, written findings, procedures, and canonical health catalogs with unit snapshots
-- Daily Medication and Symptoms import, explicit `none` recording states, and full-day replacement support
-- In-app “What’s new” notes after an update, also available from Settings
+- Medical Forms for source reports, with numeric and comparator-prefixed measurements, qualitative results, written findings, procedures, and confirmed report-scoped reimport with backups
+- Medical Dashboard for imported EH Medical Forms, with a left-hand report list, wrapping titles, vertical-only navigation, and entries displayed in their imported order
+- Daily Medication and Symptoms records with canonical names and dose units, preserving the distinction between unrecorded sections and explicit `none`
+- Calendar date headings that open read-only Daily Log pop-ups over the Calendar, including medication and symptoms, with guidance to use Daily Assessment for imports
+- Health libraries in Command Center for browsing and staging measurement, medication, symptom, and procedure definitions and aliases as Daily Admin Events
+- A Stoic-portico sidebar navigator for every EH dashboard, with colored selection accents, a recorded-activity summary, in-place switching, and desktop/mobile options for opening additional tabs
+- Persian versions of all eight explained/minimal forms under `EH Forms/fa/`, with a guide to preserved parser keywords and supported formats
+- In-app “What’s new” notes shown after an update and available from Settings
 
 ### Changed
 
-- Medical Dashboard lists EH Medical Forms only; its imported-report navigator is on the left, wraps long titles, and scrolls vertically only
-
-- Unified every pending database migration under Settings → Update to schema v1, with Already updated shown when complete
-- Kept only the scrollable time summary beside the Daily timeline; food, finance, exercise, medical entries, and notes use full width below
-
-- Removed People setup and report owner fields: one vault represents one owner; the existing confirmed medical migration updates review databases
-- Moved medical database migration into Settings → Examined Human → General → Tools and maintenance; removed its command-palette action
-- Grouped Medication and Symptoms under Medical, and Transactions and Valuation Rates under Financial in Daily Forms; older flat headings remain supported
-- Replaced the former all-forms records grid with selection-based medical report browsing; no charts or automatic laboratory grouping
+- Unified all pending database migrations under Settings → Examined Human → General → Tools and maintenance → Update to schema v1; the button shows Already updated when all required updates are present
+- Removed People setup and report owner fields for the single-owner vault model; existing databases receive the change through the same confirmed schema update
+- Grouped Medication and Symptoms under Medical, and Transactions and Valuation Rates under Financial in Daily Forms, while retaining support for older flat headings
+- Added engagement/session-type time grouping to Daily Assessment and its import preview; only the scrollable time summary sits beside the shortened timeline, with the remaining sections full width below
 
 ### Fixed
 
-- Open the full Calendar day report in a pop-up instead of a workspace tab, preserving Calendar position and read-only controls
-
-- Fixed the person_id migration failure for legacy report tables with table-level foreign keys while preserving report IDs, linked records, indexes, and numbering
-
-- Bounded the release-notes notice and Health editor for laptop and mobile viewports
-- Resolve Daily health entries after staged Admin Events so newly defined medications and symptoms work in the same Daily import
-- Kept grouped health and finance entries bounded to their own subsection during parsing, staging, and reimport; duplicate flat/grouped entries are rejected
-
-> Review build only. Wax Vault testing and owner approval precede the version bump, tag, and public release.
+- Fixed the `person_id` migration failure in legacy report tables with table-level foreign keys while preserving report IDs, linked records, indexes, and numbering
+- Resolved Daily health entries after staged Admin Events so new medication and symptom definitions work within the same Daily import
+- Kept grouped health and finance parsing, staging, and reimport bounded to the correct subsection, rejecting duplicate flat/grouped entries
+- Kept release notes, Health editors, and Daily Log pop-ups within laptop and mobile viewports
 
 ## [0.9.6] - 2026-09-12
 
